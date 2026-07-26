@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">Folio</title>
+  <defs>
+    <linearGradient id="cover" x1="40" y1="28" x2="216" y2="228" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366f1" />
+      <stop offset="1" stop-color="#4338ca" />
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#f5f5f3" />
+  <path d="M61 38h126c12.15 0 22 9.85 22 22v145c0 7.18-5.82 13-13 13H61c-7.73 0-14-6.27-14-14V52c0-7.73 6.27-14 14-14Z" fill="url(#cover)" />
+  <path d="M73 38v180" stroke="#312e81" stroke-width="12" />
+  <path d="M105 83h67M105 116h54M105 149h62" stroke="#fff" stroke-linecap="round" stroke-width="12" opacity=".92" />
+  <path d="M61 218h135c7.18 0 13-5.82 13-13v8c0 7.18-5.82 13-13 13H61c-7.73 0-14-6.27-14-14v-8c0 7.73 6.27 14 14 14Z" fill="#312e81" opacity=".35" />
+</svg>
+
