@@ -1,715 +1,2466 @@
 # FOLIO
 
-# Volume 4 – Technical Architecture & Engineering Specification
+# =============================================================================
 
-### Version 2.0
+# Technical Architecture & Engineering Specification
 
----
+# Version : 2.1
 
-# 1. Architecture Philosophy
+# Status : Approved for Implementation
 
-The software must be:
+# 
 
-- Fast
-- Offline-first
-- Easy to maintain
-- Modular
-- Extensible
-- Cross-platform ready
+# This document defines the complete software architecture of Folio.
 
-The architecture should allow future additions like cloud sync or AI without requiring a rewrite.
+# It serves as the single source of truth for all engineering decisions.
 
----
+# 
 
-# 2. Technology Stack
+# Audience
 
-## Desktop Framework
+# 
 
-Electron
+# Software Engineers
 
-Reason:
+# Codex
 
-- Mature ecosystem
-- Windows support
-- Large developer community
-- Easy packaging
-- Can later support macOS and Linux
+# Technical Architects
 
----
+# Future Contributors
 
-## Frontend
+# 
 
-React 19
+# =============================================================================
 
-Reason:
+# Revision History
 
-- Component-based architecture
-- Large ecosystem
-- Easy state management
-- Excellent tooling
+| Version | Date | Description |
+| --- | --- | --- |
+| 2.0 | Initial Draft | Initial architecture |
+| 2.1 | Current | Major architectural redesign after engineering review |
 
----
+# Table of Contents
 
-## Language
+1. Architecture Philosophy
+2. Technology Stack
+3. High-Level Architecture
+4. Electron Process Architecture
+5. Project Structure
+6. Domain Model
+7. Object Capability Model
+8. State Management
+9. Persistence Architecture
+10. Native File Format
+11. Search Architecture
+12. Rendering Architecture
+13. Undo / Redo
+14. Autosave
+15. Security
+16. Performance
+17. Testing
+18. Build Pipeline
+19. Release Pipeline
+20. Development Roadmap
 
-TypeScript
+# ==============================================================================
+Chapter 1
+Architecture Philosophy
 
-Reason:
+## 1.1 Purpose
 
-- Type safety
-- Better maintainability
-- Easier debugging
-- Better Codex output
+Folio is designed as a premium notebook application rather than a productivity
+suite.
 
----
+The architecture must support three goals above everything else:
 
-## Styling
+1. Excellent writing experience
+2. Long-term maintainability
+3. Predictable performance
 
-Tailwind CSS
-
-Component Library
-
-shadcn/ui
-
-Animation
-
-Framer Motion
-
----
-
-## Drawing Engine
-
-HTML5 Canvas
-
-Vector-based stroke system
-
-Reason:
-
-Fast
-
-Hardware accelerated
-
-Supports pressure-sensitive drawing
-
-Supports zoom
-
-Supports thousands of strokes
+Every architectural decision should improve at least one of these goals
+without significantly degrading the others.
 
 ---
 
-## Local Database
+## 1.2 Core Principles
 
-SQLite
+### Principle 1
 
-Used for:
+The Notebook is the Product.
 
-Notebook index
+Users should always feel they are interacting with a notebook rather than
+a collection of software features.
 
-Metadata
+The notebook remains the central object throughout the application.
 
-Search
+### Principle 2
 
-Settings
+Offline First
 
-Recent files
+The application must function without an internet connection.
 
----
+No feature should require cloud services for normal operation.
 
-## Assets
+Internet connectivity may be used in future versions for synchronization,
+but the local notebook remains the authoritative copy.
 
-Notebook pages
+### Principle 3
 
-Images
+Files are the Source of Truth
 
-Thumbnails
+Notebook content is never stored exclusively inside SQLite.
 
-Stored inside project folders.
+Notebook files always represent the canonical data.
 
----
+SQLite only exists to accelerate operations.
 
-# 3. High-Level Architecture
+If SQLite becomes corrupted it can always be rebuilt from notebook files.
 
-```
-+------------------------------------------------------+
-|                   Electron Desktop                   |
-+------------------------------------------------------+
-|                  React Application                   |
-+------------------------------------------------------+
-|               UI Components Layer                    |
-+------------------------------------------------------+
-| Notebook Manager | Editor | Toolbar | Search         |
-+------------------------------------------------------+
-|           Core Application Services                  |
-|  File System | Rendering | Storage | History         |
-+------------------------------------------------------+
-| SQLite | Local Files | Assets | Export Engine        |
-+------------------------------------------------------+
-```
+### Principle 4
 
----
+Reliability before Features
 
-# 4. Project Structure
+A notebook that never loses user data is more valuable than one containing
+twenty additional features.
 
-```
-folio/
+Persistence, recovery and autosave are therefore implemented before advanced
+editing features.
 
-├── src/
-│
-├── app/
-│
-├── components/
-│     Button
-│     Toolbar
-│     Sidebar
-│     Notebook
-│     Page
-│     Canvas
-│
-├── features/
-│     notebooks
-│     editor
-│     search
-│     export
-│     bookmarks
-│     settings
-│
-├── services/
-│     fileSystem
-│     autosave
-│     storage
-│     renderer
-│     history
-│
-├── hooks/
-│
-├── stores/
-│
-├── utils/
-│
-├── types/
-│
-├── assets/
-│
-└── styles/
-```
+### Principle 5
 
-Every feature should live in its own module.
+Composition over Inheritance
 
-Avoid one giant "editor.tsx" file.
+Objects should not inherit behavior they do not require.
 
----
+Instead they compose capabilities from small reusable interfaces.
 
-# 5. Core Modules
+This dramatically reduces coupling.
 
-The application is divided into independent systems.
+### Principle 6
 
-### Notebook Module
+Strict Layer Separation
 
-Responsible for:
+Business logic
 
-Notebook creation
+must never know
 
-Rename
-
-Delete
-
-Metadata
-
-Covers
-
-Import
-
-Export
-
----
-
-### Page Module
-
-Responsible for:
-
-Page navigation
-
-Page creation
-
-Templates
-
-Ordering
-
-Bookmarks
-
----
-
-### Canvas Module
-
-Responsible for:
+how UI works.
 
 Rendering
 
-Drawing
+must never know
+
+how persistence works.
+
+Storage
+
+must never know
+
+how drawing works.
+
+Every layer communicates only through well-defined interfaces.
+
+---
+
+## 1.3 Architectural Goals
+
+The architecture is optimized for
+
+- Maintainability
+- Extensibility
+- Predictability
+- Testability
+- Performance
+- Fault tolerance
+- Accessibility
+- Security
+
+---
+
+## 1.4 Non Goals
+
+The following are intentionally outside Version 2.
+
+- Real-time collaboration
+- Cloud synchronization
+- AI assistants
+- Browser version
+- Mobile version
+- Plugin ecosystem
+
+The architecture should allow these in the future but they are not
+implementation targets.
+
+---
+
+## 1.5 Engineering Priorities
+
+Priority 1
+Data Integrity
+
+Priority 2
+Low Latency Ink
+
+Priority 3
+Reliable Autosave
+
+Priority 4
+Responsive UI
+
+Priority 5
+Modular Codebase
+
+Priority 6
+Visual Polish
+
+==============================================================================
+
+Chapter 2
+Technology Stack
+
+==============================================================================
+
+## 2.1 Overview
+
+The selected technologies prioritize long-term stability, TypeScript support,
+desktop performance and developer productivity.
+
+| Layer | Technology |
+| --- | --- |
+| Desktop Runtime | Electron |
+| Frontend | React 19 |
+| Language | TypeScript |
+| Styling | TailwindCSS |
+| UI Components | shadcn/ui |
+| Animations | Framer Motion |
+| State | Zustand |
+| Drawing | HTML5 Canvas |
+| Database | SQLite |
+| Search | SQLite FTS |
+| Build | Vite |
+| Testing | Vitest + Playwright |
+| Linting | ESLint |
+| Formatting | Prettier |
+
+---
+
+## 2.2 Why Electron
+
+Electron provides
+
+- Native desktop integration
+- Stable Windows APIs
+- File system access
+- Automatic updates
+- Cross-platform future
+
+Although Electron consumes more memory than native applications, the trade-off
+is acceptable for maintainability and ecosystem maturity.
+
+---
+
+## 2.3 Why React
+
+React provides
+
+- Mature ecosystem
+- Component architecture
+- Excellent TypeScript support
+- Predictable rendering
+- Large community
+
+The notebook itself is not rendered using the DOM.
+
+React manages application UI only.
+
+Canvas renders notebook pages.
+
+---
+
+## 2.4 Why TypeScript
+
+Entire project uses strict TypeScript.
+
+Benefits
+
+- Compile-time validation
+- Better refactoring
+- Strong contracts
+- Better Codex generation
+- Fewer runtime bugs
+
+Rules
+
+Strict Mode
+
+No implicit any
+
+No disabled compiler checks
+
+---
+
+## 2.5 Why SQLite
+
+SQLite is NOT the notebook database.
+
+SQLite stores
+
+- Search index
+- Recent files
+- Cached thumbnails
+- Metadata cache
+
+Notebook pages remain stored as JSON files.
+
+SQLite can be deleted without data loss.
+
+---
+
+## 2.6 Rendering Technology
+
+Notebook pages are rendered with
+
+HTML5 Canvas
+
+Reasons
+
+- High performance
+- Freeform drawing
+- Stylus support
+- Smooth zoom
+- Low latency
+
+React never renders page objects directly.
+
+==============================================================================
+
+Chapter 3
+High-Level System Architecture
+
+==============================================================================
+
+The application follows a layered architecture.
+
+```
+                +----------------------+
+                |     React UI         |
+                +----------+-----------+
+                           |
+                +----------v-----------+
+                | Application Services |
+                +----------+-----------+
+                           |
+                +----------v-----------+
+                | Domain Model         |
+                +----------+-----------+
+                           |
+                +----------v-----------+
+                | Persistence Layer    |
+                +----------+-----------+
+                           |
+           +---------------+----------------+
+           |                                |
+  Notebook Files                    SQLite Cache
+           |                                |
+           +---------------+----------------+
+                           |
+                      Local Storage
+```
+
+Rules
+
+Every layer depends only on the layer below.
+
+No circular dependencies are allowed.
+
+==============================================================================
+
+Chapter 4
+Electron Architecture
+
+==============================================================================
+
+Electron consists of three isolated processes.
+
++-------------------------------------------------------------+
+
+Main Process
+
+---
+
+Window Creation
+
+---
+
+Native Menus
+
+---
+
+File Dialogs
+
+---
+
+Auto Updates
+
+---
+
+OS Integration
+
+---
+
++-------------------------------------------------------------+
+
+---
+
+```
+                ▲
+
+                │ IPC
+
+                ▼
+```
+
++-------------------------------------------------------------+
+
+Preload
+
+---
+
+Safe API Bridge
+
+---
+
+Input Validation
+
+---
+
+IPC Wrappers
+
+---
+
++-------------------------------------------------------------+
+
+---
+
+```
+                ▲
+
+                │
+
+                ▼
+```
+
++-------------------------------------------------------------+
+
+Renderer
+
+---
+
+React
+
+---
+
+Canvas
+
+---
+
+Editor
+
+---
+
+Panels
+
+---
+
+UI
+
+---
+
++-------------------------------------------------------------+
+
+---
+
+Security Rules
+
+Renderer
+
+- No direct filesystem access
+- No Node.js APIs
+- No unrestricted IPC
+
+Main Process
+
+- Owns filesystem
+- Owns dialogs
+- Owns native APIs
+
+Preload
+
+- Exposes minimal API surface
+- Validates requests
+- Rejects malformed payloads
+
+==============================================================================
+
+Chapter 5
+Project Structure
+
+==============================================================================
+
+folio/
+
+│
+
+├── apps/
+
+│   └── desktop/
+
+│
+
+├── packages/
+
+│   ├── ui/
+
+│   ├── editor/
+
+│   ├── domain/
+
+│   ├── persistence/
+
+│   ├── rendering/
+
+│   ├── search/
+
+│   ├── shared/
+
+│   └── testing/
+
+│
+
+├── assets/
+
+├── docs/
+
+├── scripts/
+
+├── tools/
+
+└── tests/
+
+Package Responsibilities
+
+ui/
+Reusable React components.
+
+editor/
+Editor orchestration.
+
+domain/
+Business models.
+
+rendering/
+Canvas rendering engine.
+
+persistence/
+Notebook loading and saving.
+
+search/
+SQLite indexing.
+
+shared/
+Utility functions.
+
+testing/
+Test helpers and fixtures.
+
+---
+
+Architecture Decision Record 001
+
+Decision
+
+Notebook files are the canonical source of truth.
+
+Reason
+
+This allows notebooks to remain readable, portable,
+recoverable and independent from SQLite.
+
+Consequences
+
+Pros
+
+- Human readable
+• Easier backup
+• Easy import/export
+• Better corruption recovery
+
+Cons
+
+- Slightly slower searches
+
+Resolution
+
+Accepted
+
+Status
+
+Permanent
+
+---
+
+# =============================================================================
+
+# Chapter 6
+
+# Domain Model
+
+# =============================================================================
+
+## 6.1 Overview
+
+The Domain Model defines the core business objects used throughout Folio.
+
+These objects represent notebook data only.
+
+They do not contain UI logic.
+
+They do not know how they are rendered.
+
+They do not know how they are saved.
+
+This separation allows the same data model to be reused by different rendering
+engines or future platforms.
+
+---
+
+## 6.2 Domain Hierarchy
+
+```
+Workspace
+│
+├── Notebook
+│   ├── Metadata
+│   ├── Sections
+│   ├── Assets
+│   └── Settings
+│
+├── Section
+│   └── Pages
+│
+├── Page
+│   └── Page Objects
+│
+└── Assets
+```
+
+---
+
+## 6.3 Notebook
+
+A Notebook is the highest-level user document.
+
+Responsibilities
+
+- Store notebook metadata
+- Organize sections
+- Manage notebook settings
+- Reference notebook assets
+
+Properties
+
+```tsx
+Notebook
+
+id
+name
+createdAt
+updatedAt
+cover
+theme
+sections[]
+settings
+```
+
+---
+
+## 6.4 Section
+
+A Section groups related pages.
+
+Responsibilities
+
+- Organize pages
+- Preserve ordering
+- Store section metadata
+
+Properties
+
+```tsx
+Section
+
+id
+title
+pages[]
+color
+icon
+```
+
+---
+
+## 6.5 Page
+
+A Page represents one physical notebook page.
+
+Pages are fixed size.
+
+Pages can be zoomed.
+
+Pages cannot become infinite canvases.
+
+Properties
+
+```tsx
+Page
+
+id
+width
+height
+background
+objects[]
+createdAt
+updatedAt
+```
+
+---
+
+## 6.6 Page Object
+
+Everything drawn or inserted onto a page is represented as a PageObject.
+
+Examples
+
+- Ink stroke
+- Text
+- Image
+- Shape
+- Sticky note
+- Table
+
+Every object has a unique identifier.
+
+Every object can be serialized.
+
+---
+
+## 6.7 Object Categories
+
+Drawing Objects
+
+- Pen Stroke
+- Highlighter
+
+Text Objects
+
+- Rich Text
+- Heading
+
+Media Objects
+
+- Image
+
+Layout Objects
+
+- Table
+- Sticky Note
+
+Graphics
+
+- Rectangle
+- Circle
+- Line
+- Arrow
+
+Future
+
+- Audio
+- Video
+- Formula
+- Code Block
+
+---
+
+# =============================================================================
+
+# Chapter 7
+
+# Object Capability System
+
+# =============================================================================
+
+## 7.1 Overview
+
+Instead of creating a deep inheritance hierarchy, Folio uses composition.
+
+Every object owns only the capabilities it needs.
+
+Example
+
+Instead of
+
+```
+Object
+    ↓
+GraphicObject
+    ↓
+Rectangle
+```
+
+Folio uses
+
+```
+Rectangle
+
++ Renderable
+
++ Movable
+
++ Resizable
+
++ Serializable
+
++ Selectable
+```
+
+This keeps the architecture modular.
+
+---
+
+## 7.2 Available Capabilities
+
+Selectable
+
+Allows user selection.
+
+---
+
+Movable
+
+Allows dragging.
+
+---
+
+Resizable
+
+Allows resizing.
+
+---
+
+Rotatable
+
+Allows rotation.
+
+---
+
+Editable
+
+Allows editing.
+
+---
+
+Serializable
+
+Allows save/load.
+
+---
+
+Renderable
+
+Allows drawing on canvas.
+
+---
+
+Lockable
+
+Prevents editing.
+
+---
+
+Groupable
+
+Allows grouping.
+
+---
+
+Searchable
+
+Allows indexing.
+
+---
+
+## 7.3 Example
+
+Ink Stroke
+
+Capabilities
+
+✓ Renderable
+
+✓ Serializable
+
+✓ Selectable
+
+✓ Lockable
+
+✗ Resizable
+
+✗ Editable
+
+---
+
+Image
+
+Capabilities
+
+✓ Renderable
+
+✓ Serializable
+
+✓ Selectable
+
+✓ Resizable
+
+✓ Rotatable
+
+✓ Lockable
+
+---
+
+Rich Text
+
+Capabilities
+
+✓ Renderable
+
+✓ Serializable
+
+✓ Editable
+
+✓ Selectable
+
+✓ Searchable
+
+---
+
+Benefits
+
+- Less duplicated code
+- Easier testing
+- Easier maintenance
+- Better scalability
+
+---
+
+# =============================================================================
+
+# Chapter 8
+
+# State Management
+
+# =============================================================================
+
+## 8.1 Philosophy
+
+React state is not used to store notebook data.
+
+Notebook data lives in dedicated stores.
+
+React displays state.
+
+It does not own state.
+
+---
+
+## 8.2 Zustand Stores
+
+The application uses multiple stores instead of one global store.
+
+Stores
+
+Notebook Store
+
+Current notebook
+
+---
+
+Editor Store
 
 Selection
 
 Zoom
 
-Pan
+Clipboard
 
-Objects
-
----
-
-### Text Module
-
-Responsible for:
-
-Rich text
-
-Formatting
-
-Lists
-
-Tables
-
-Links
+History
 
 ---
 
-### Search Module
+UI Store
 
-Responsible for:
+Theme
 
-Indexing
+Panels
 
-Searching
+Dialogs
 
-Highlighting
-
-Results
+Notifications
 
 ---
 
-### Export Module
-
-Responsible for:
-
-PDF
-
-Images
-
-Native format
-
----
-
-### Settings Module
-
-Responsible for:
-
-Themes
-
-Shortcuts
+Settings Store
 
 Preferences
 
-Updates
+Shortcuts
+
+Appearance
 
 ---
 
-# 6. Object-Based Design
+Search Store
 
-Every item on the page is treated as an object.
+Index
+
+Results
+
+Filters
+
+---
+
+## 8.3 Data Flow
 
 ```
+User Action
+
+↓
+
+Store Update
+
+↓
+
+Business Logic
+
+↓
+
+Canvas Refresh
+
+↓
+
+React UI Update
+```
+
+---
+
+## 8.4 Rules
+
+Never mutate objects directly.
+
+Always use store actions.
+
+All updates should be predictable.
+
+---
+
+# =============================================================================
+
+# Chapter 9
+
+# Persistence Architecture
+
+# =============================================================================
+
+## 9.1 Overview
+
+Persistence is responsible for safely storing notebook data.
+
+Notebook files are the authoritative data source.
+
+SQLite is not.
+
+---
+
+## 9.2 Storage Layout
+
+```
+Notebook/
+
+metadata.json
+
+sections/
+
+pages/
+
+assets/
+
+thumbnails/
+
+search.db
+```
+
+---
+
+## 9.3 Save Pipeline
+
+```
+User Edit
+
+↓
+
+Command
+
+↓
+
+Update Domain Model
+
+↓
+
+Mark Dirty
+
+↓
+
+Autosave Queue
+
+↓
+
+Write JSON
+
+↓
+
+Update Search Index
+```
+
+---
+
+## 9.4 Loading Pipeline
+
+```
+Open Notebook
+
+↓
+
+Read metadata.json
+
+↓
+
+Read Sections
+
+↓
+
+Read Pages
+
+↓
+
+Load Assets
+
+↓
+
+Build Search Index
+
+↓
+
+Display Notebook
+```
+
+---
+
+## 9.5 Autosave
+
+Autosave runs after user inactivity.
+
+Rules
+
+- Never interrupt editing
+- Save only changed files
+- Save asynchronously
+- Never block UI
+
+---
+
+## 9.6 Recovery
+
+Unexpected shutdown
+
+↓
+
+Recovery detects unfinished session
+
+↓
+
+Restore latest autosave
+
+↓
+
+Verify integrity
+
+↓
+
+Open notebook
+
+---
+
+# =============================================================================
+
+# Chapter 10
+
+# Native .folio File Format
+
+# =============================================================================
+
+## 10.1 Overview
+
+Internally a notebook is a folder.
+
+For sharing or backup it becomes a .folio archive.
+
+Example
+
+```
+My Notes/
+
+metadata.json
+
+sections/
+
+pages/
+
+assets/
+
+search.db
+```
+
+Export
+
+```
+My Notes.folio
+```
+
+---
+
+## 10.2 Why This Design
+
+Advantages
+
+- Easy backup
+- Easy debugging
+- Portable
+- Human-readable metadata
+- Fast loading
+- Corruption recovery
+
+---
+
+## 10.3 File Types
+
+metadata.json
+
+Notebook information
+
+---
+
+page.json
+
+Stores one page.
+
+---
+
+assets/
+
+Images
+
+Attachments
+
+Future media
+
+---
+
+search.db
+
+SQLite search index
+
+Safe to rebuild.
+
+---
+
+## 10.4 Import
+
+```
+.folio
+
+↓
+
+Extract
+
+↓
+
+Validate
+
+↓
+
+Rebuild Search Index
+
+↓
+
+Open Notebook
+```
+
+---
+
+## 10.5 Export
+
+```
+Notebook Folder
+
+↓
+
+Flush Pending Saves
+
+↓
+
+Compress
+
+↓
+
+Generate .folio
+
+↓
+
+Verify Archive
+
+↓
+
+Finish
+```
+
+---
+
+## 
+
+# =============================================================================
+
+# Chapter 11
+
+# Search Architecture
+
+# =============================================================================
+
+## 11.1 Overview
+
+Folio provides fast, local search across notebooks without requiring an internet
+connection.
+
+Search is powered by SQLite Full-Text Search (FTS).
+
+The search database is treated as a cache. If it becomes corrupted or deleted,
+it is automatically rebuilt from notebook files.
+
+---
+
+## 11.2 Search Goals
+
+- Instant search results
+- Low memory usage
+- Incremental indexing
+- Offline operation
+- Support future filters
+
+---
+
+## 11.3 Indexed Content
+
+The following content is indexed:
+
+- Notebook name
+- Section names
+- Page titles
+- Rich text
+- Sticky notes
+- Tags
+- Object metadata
+
+The following content is not indexed in Version 2:
+
+- Handwritten ink
+- Images
+- PDFs
+- Audio
+- Video
+
+---
+
+## 11.4 Search Flow
+
+```
+Notebook Saved
+        │
+        ▼
+Detect Modified Files
+        │
+        ▼
+Update Search Index
+        │
+        ▼
+SQLite FTS
+        │
+        ▼
+Ready for Search
+```
+
+---
+
+## 11.5 Search Query Flow
+
+```
+User Types
+
+↓
+
+Debounce (200 ms)
+
+↓
+
+SQLite FTS Query
+
+↓
+
+Rank Results
+
+↓
+
+Highlight Matches
+
+↓
+
+Display Results
+```
+
+---
+
+## 11.6 Future Improvements
+
+Future versions may include:
+
+- OCR search
+- Handwriting recognition
+- Semantic search
+- AI-powered search
+- Cross-notebook search ranking
+
+---
+
+# =============================================================================
+
+# Chapter 12
+
+# Rendering Architecture
+
+# =============================================================================
+
+## 12.1 Overview
+
+The rendering engine is responsible for displaying notebook pages.
+
+React renders the application interface.
+
+Canvas renders notebook content.
+
+This separation improves performance and allows smooth zooming and panning.
+
+---
+
+## 12.2 Rendering Pipeline
+
+```
+Notebook
+
+↓
+
 Page
 
 ↓
 
-Objects
+Page Objects
+
+↓
+
+Renderer
+
+↓
+
+Canvas
+
+↓
+
+Display
+```
+
+---
+
+## 12.3 Render Cycle
+
+```
+User Action
+
+↓
+
+Update Object
+
+↓
+
+Mark Dirty Region
+
+↓
+
+Render Queue
+
+↓
+
+Canvas Draw
+
+↓
+
+Frame Complete
+```
+
+---
+
+## 12.4 Dirty Rendering
+
+The renderer should avoid redrawing the entire page whenever possible.
+
+Instead:
+
+- Detect changed objects
+- Calculate affected region
+- Clear affected region
+- Redraw affected objects
+
+Benefits:
+
+- Higher FPS
+- Lower CPU usage
+- Better battery life
+
+---
+
+## 12.5 Object Rendering Order
+
+Objects are rendered from bottom to top.
+
+Example
+
+```
+Background
+
+↓
+
+Grid
+
+↓
+
+Images
+
+↓
+
+Shapes
+
+↓
+
+Ink
 
 ↓
 
 Text
 
-Image
-
-Stroke
-
-Shape
-
-Table
-
-Sticky Note
-
-Bookmark
-
-Audio (future)
-```
-
-Every object must support:
+↓
 
 Selection
 
-Move
+↓
 
-Copy
+Guides
 
-Paste
+↓
 
-Resize (where applicable)
-
-Delete
-
-Lock
-
-Grouping
-
-Layer ordering
-
-Serialization
-
-This avoids creating special-case logic for each content type.
+Temporary Preview
+```
 
 ---
 
-# 7. State Management
+## 12.6 Zoom
 
-Use a centralized state store (for example, Zustand).
+Zoom affects rendering only.
 
-Separate:
+Notebook data is never modified.
 
-- UI state
-- Notebook state
-- Editor state
-- Settings state
-- History state
+Supported range:
 
-Keep transient UI state separate from persisted notebook data.
+- Minimum: 25%
+- Default: 100%
+- Maximum: 800%
 
 ---
 
-# 8. Rendering Pipeline
+## 12.7 Pan
 
-Drawing follows this flow:
+Panning moves the viewport.
 
-```
-Stylus
-
-↓
-
-Input Manager
-
-↓
-
-Stroke Processor
-
-↓
-
-Stroke Smoothing
-
-↓
-
-Canvas Renderer
-
-↓
-
-GPU
-
-↓
-
-Screen
-```
-
-Only redraw the regions that changed rather than repainting the entire canvas whenever possible.
+The page itself never moves.
 
 ---
 
-# 9. History System
+## 12.8 Rendering Rules
 
-Every edit creates a history command.
+- Rendering must be deterministic.
+- Objects render in a fixed order.
+- Rendering must not modify object data.
+- Rendering should avoid unnecessary allocations.
+- Rendering should support high-DPI displays.
 
-Example:
+---
+
+# =============================================================================
+
+# Chapter 13
+
+# Undo / Redo Architecture
+
+# =============================================================================
+
+## 13.1 Overview
+
+Undo and Redo are implemented using the Command Pattern.
+
+Every user action is stored as a command.
+
+Commands know how to:
+
+- Execute
+- Undo
+- Redo
+
+---
+
+## 13.2 Command Flow
 
 ```
-Add Text
+User Action
 
 ↓
 
-History Stack
+Create Command
 
 ↓
 
+Execute
+
+↓
+
+Push to Undo Stack
+```
+
+---
+
+## 13.3 Undo
+
+```
 Undo
 
 ↓
 
+Pop Undo Stack
+
+↓
+
+Reverse Action
+
+↓
+
+Push Redo Stack
+```
+
+---
+
+## 13.4 Redo
+
+```
 Redo
+
+↓
+
+Pop Redo Stack
+
+↓
+
+Execute Again
+
+↓
+
+Push Undo Stack
 ```
 
-Prefer a command-based history instead of saving entire page snapshots after every edit.
+---
+
+## 13.5 Command Examples
+
+- Draw Stroke
+- Delete Stroke
+- Insert Text
+- Move Object
+- Resize Object
+- Rotate Object
+- Change Color
+- Add Image
+- Delete Page
+- Rename Section
 
 ---
 
-# 10. File Structure
+## 13.6 Rules
 
-Each notebook is a folder.
+Commands should:
 
-Example:
+- Be reversible
+- Be independent
+- Contain enough data to undo
+- Never depend on UI state
+
+---
+
+## 13.7 History Limits
+
+Version 2 stores history only for the current editing session.
+
+History is cleared when the notebook is closed.
+
+Persistent history may be added in a future release.
+
+---
+
+# =============================================================================
+
+# Chapter 14
+
+# Autosave & Recovery
+
+# =============================================================================
+
+## 14.1 Autosave
+
+Autosave protects users from accidental data loss.
+
+It runs automatically in the background.
+
+No manual action is required.
+
+---
+
+## 14.2 Autosave Trigger
+
+Autosave occurs when:
+
+- User stops typing
+- User stops drawing
+- Page changes
+- Application loses focus
+- Notebook closes
+
+---
+
+## 14.3 Autosave Pipeline
 
 ```
-Physics Notebook/
+Edit
 
-cover.png
+↓
 
-thumbnail.png
+Mark Dirty
 
-metadata.json
+↓
 
-pages/
+Wait for Idle
 
-001.page
+↓
 
-002.page
+Write Modified Files
 
-003.page
+↓
 
-assets/
+Update Metadata
 
-image1.png
+↓
 
-image2.jpg
-
-audio/
-
-(optional)
-
-history/
+Clear Dirty Flag
 ```
 
-This makes notebooks portable and easier to recover if something becomes corrupted.
-
 ---
 
-# 11. Page Format
+## 14.4 Recovery
 
-Each page stores structured data, for example:
+If the application closes unexpectedly:
 
 ```
-{
-  "pageId":"001",
-  "background":"ruled",
-  "objects": [
-    {
-      "type":"text",
-      "id":"obj1"
-    },
-    {
-      "type":"stroke",
-      "id":"obj2"
-    },
-    {
-      "type":"image",
-      "id":"obj3"
-    }
-  ]
-}
+Launch
+
+↓
+
+Detect Recovery Data
+
+↓
+
+Validate Files
+
+↓
+
+Restore Notebook
+
+↓
+
+Continue Editing
 ```
 
-Avoid storing everything in one large blob.
+---
+
+## 14.5 Recovery Rules
+
+- Never overwrite valid data.
+- Restore only complete files.
+- Remove temporary recovery files after successful recovery.
 
 ---
 
-# 12. Autosave
+# =============================================================================
 
-Trigger autosave:
+# Chapter 15
 
-- After a few seconds of inactivity
-- When switching pages
-- Before closing the app
-- Before export
+# Security Architecture
 
-Use atomic writes (write to a temporary file, then replace the original) to reduce the chance of data corruption.
+# =============================================================================
 
----
+## 15.1 Goals
 
-# 13. Search Engine
+Security in Folio focuses on protecting the user's local data.
 
-Index:
-
-Notebook titles
-
-Page titles
-
-Text
-
-Tags
-
-Bookmarks
-
-Recent notebooks
-
-Search should operate on the local index rather than scanning every file on each query.
+The application does not collect notebook content.
 
 ---
 
-# 14. Performance Strategy
+## 15.2 Renderer Security
 
-Targets:
+The renderer process:
 
-- Startup under 2 seconds
-- Notebook open under 500 ms
-- Page switch under 100 ms
-- Smooth scrolling
-- Smooth zoom
-- Low-latency drawing
-
-Strategies:
-
-- Lazy-load notebooks
-- Cache thumbnails
-- Virtualize long page lists
-- Load images on demand
-- Defer non-essential work until after the UI is responsive
+- Cannot access the file system directly.
+- Cannot access Node.js APIs.
+- Cannot execute arbitrary system commands.
 
 ---
 
-# 15. Error Handling
+## 15.3 Main Process Responsibilities
 
-Never crash because of a malformed notebook.
+The main process handles:
 
-If one page is corrupted:
-
-- Skip the page
-- Show an error message
-- Keep the rest of the notebook usable
-
-Log recoverable errors for debugging.
+- File access
+- Native dialogs
+- Window management
+- Operating system integration
 
 ---
 
-# 16. Security
+## 15.4 IPC Rules
 
-Even though this is a local app:
+Communication between renderer and main process must occur through validated IPC.
 
-- Validate imported files
-- Sanitize pasted HTML
-- Restrict file access to intended locations
-- Avoid executing arbitrary scripts from notebook content
+Rules:
 
----
-
-# 17. Logging
-
-Maintain logs for:
-
-- Crashes
-- Autosave failures
-- Export failures
-- File import issues
-
-Use concise, readable log messages.
+- Validate all incoming data.
+- Reject unknown messages.
+- Return structured responses.
+- Never expose unrestricted APIs.
 
 ---
 
-# 18. Testing Strategy
+## 15.5 Privacy
 
-Before each release:
+Version 2 stores notebook data locally.
+
+No analytics are collected.
+
+No notebook content is uploaded.
+
+Internet access is not required for normal use.
+
+---
+
+## 15.6 Future Security Enhancements
+
+Possible future additions:
+
+- Notebook encryption
+- Password-protected notebooks
+- Digital signatures
+- Secure cloud synchronization
+
+---
+
+## 
+
+# =============================================================================
+
+# Chapter 16
+
+# Performance Architecture
+
+# =============================================================================
+
+## 16.1 Overview
+
+Performance is one of the primary design goals of Folio.
+
+Users should experience smooth writing, drawing, zooming, and navigation even
+when working with large notebooks.
+
+Performance optimizations should never compromise data integrity or code
+maintainability.
+
+---
+
+## 16.2 Performance Goals
+
+Target performance for Version 2:
+
+| Operation | Target |
+| --- | --- |
+| Application Launch | < 3 seconds |
+| Open Notebook | < 2 seconds |
+| Page Switch | < 100 ms |
+| Zoom | Smooth |
+| Pan | Smooth |
+| Object Selection | Instant |
+| Autosave | Non-blocking |
+| Search | < 200 ms |
+
+---
+
+## 16.3 Optimization Principles
+
+- Avoid unnecessary rendering.
+- Avoid unnecessary file writes.
+- Load only required data.
+- Cache frequently used resources.
+- Perform heavy work asynchronously.
+
+---
+
+## 16.4 Lazy Loading
+
+Notebook resources should be loaded only when needed.
+
+Examples:
+
+- Page thumbnails
+- Images
+- Large attachments
+
+Benefits
+
+- Faster startup
+- Lower memory usage
+
+---
+
+## 16.5 Memory Management
+
+Resources no longer in use should be released.
+
+Examples
+
+- Image cache
+- Thumbnail cache
+- Temporary buffers
+
+Avoid retaining references to deleted objects.
+
+---
+
+## 16.6 Background Tasks
+
+The following operations should run without blocking the UI:
+
+- Autosave
+- Search indexing
+- Thumbnail generation
+- Export
+- Import
+
+---
+
+## 16.7 Future Optimizations
+
+Potential improvements:
+
+- GPU rendering
+- Virtual page rendering
+- Incremental painting
+- Object pooling
+
+---
+
+# =============================================================================
+
+# Chapter 17
+
+# Testing Strategy
+
+# =============================================================================
+
+## 17.1 Objective
+
+Testing ensures application reliability and prevents regressions.
+
+Version 2 focuses on practical automated testing rather than exhaustive
+coverage.
+
+---
+
+## 17.2 Test Levels
+
+### Unit Tests
+
+Verify individual functions.
+
+Examples
+
+- Utility functions
+- Serialization
+- Object validation
+
+---
+
+### Integration Tests
+
+Verify communication between modules.
+
+Examples
+
+- Save and Load
+- Search Index
+- Autosave
+
+---
+
+### UI Tests
+
+Verify user interactions.
+
+Examples
+
+- Create Notebook
+- Draw Stroke
+- Insert Image
+- Undo
+- Redo
+
+---
+
+### Manual Testing
+
+Before every release verify:
 
 - Create notebook
-- Delete notebook
-- Duplicate notebook
-- Draw 1,000+ strokes
-- Insert images
-- Export PDF
-- Undo/redo stress test
-- Open a large notebook
-- Verify autosave and recovery
-
-Automate unit tests where practical and keep a short manual checklist for user-facing workflows.
+- Save notebook
+- Reopen notebook
+- Draw
+- Type
+- Export
+- Import
 
 ---
 
-# 19. Versioning
+## 17.3 Critical Features
 
-Use semantic versioning:
+The following features should always be tested before release:
 
-```
-2.0.0
-
-Major → New architecture
-
-Minor → New features
-
-Patch → Bug fixes
-```
-
-Embed a document version inside each notebook format to simplify future migrations.
+- Save
+- Load
+- Autosave
+- Recovery
+- Search
+- Export
+- Import
+- Undo
+- Redo
 
 ---
 
-# 20. Development Roadmap
+## 17.4 Error Logging
+
+Errors should be logged for debugging.
+
+Logs should include:
+
+- Timestamp
+- Module
+- Error Message
+- Stack Trace (Development Mode)
+
+Sensitive notebook content should not be written to logs.
+
+---
+
+# =============================================================================
+
+# Chapter 18
+
+# Build Pipeline
+
+# =============================================================================
+
+## 18.1 Development Build
+
+Development workflow:
+
+```
+Developer
+
+↓
+
+Install Dependencies
+
+↓
+
+Run Development Server
+
+↓
+
+Electron Launch
+
+↓
+
+Hot Reload
+
+↓
+
+Development
+```
+
+---
+
+## 18.2 Production Build
+
+Production workflow:
+
+```
+Source Code
+
+↓
+
+Type Check
+
+↓
+
+Lint
+
+↓
+
+Build React
+
+↓
+
+Package Electron
+
+↓
+
+Generate Installer
+```
+
+---
+
+## 18.3 Build Requirements
+
+Every production build must:
+
+- Pass TypeScript compilation
+- Pass linting
+- Include required assets
+- Include application icons
+- Package Electron correctly
+
+---
+
+## 18.4 Build Artifacts
+
+Generated files include:
+
+- Executable
+- Installer
+- Source Maps (Development)
+- Release Notes
+
+---
+
+# =============================================================================
+
+# Chapter 19
+
+# Release Pipeline
+
+# =============================================================================
+
+## 19.1 Release Steps
+
+```
+Complete Development
+
+↓
+
+Testing
+
+↓
+
+Bug Fixes
+
+↓
+
+Build
+
+↓
+
+Final Verification
+
+↓
+
+Release
+```
+
+---
+
+## 19.2 Pre-Release Checklist
+
+Before release verify:
+
+- No TypeScript errors
+- No lint errors
+- No console errors
+- Save/Load works
+- Autosave works
+- Search works
+- Export works
+- Import works
+- Installer works
+
+---
+
+## 19.3 Versioning
+
+Suggested version format:
+
+Major.Minor.Patch
+
+Examples
+
+- 2.0.0
+- 2.1.0
+- 2.1.1
+
+---
+
+# =============================================================================
+
+# Chapter 20
+
+# Development Roadmap
+
+# =============================================================================
 
 ## Phase 1
 
+Foundation
+
 - Electron setup
 - React setup
-- Tailwind
-- SQLite
 - Project structure
+- Build configuration
+
+---
 
 ## Phase 2
 
-- Notebook library
-- Notebook creation
-- Local storage
+Application Shell
+
+- Window
+- Sidebar
+- Toolbar
+- Navigation
+- Settings
+
+---
 
 ## Phase 3
 
-- Editor shell
-- Canvas
-- Rich text
+Domain Model
+
+- Notebook
+- Section
+- Page
+- Page Objects
+
+---
 
 ## Phase 4
 
-- Pen engine
-- Shapes
-- Images
-- Tables
+Persistence
+
+- Folder structure
+- Save
+- Load
+- Autosave
+- Recovery
+
+---
 
 ## Phase 5
 
-- Search
-- Export
-- Autosave
+Canvas Engine
+
+- Viewport
+- Rendering
+- Zoom
+- Pan
+- Selection
+
+---
 
 ## Phase 6
 
-- Polish
-- Performance
+Writing Experience
+
+- Rich Text
+- Pen
+- Highlighter
+- Eraser
+
+---
+
+## Phase 7
+
+Objects
+
+- Images
+- Shapes
+- Tables
+- Sticky Notes
+
+---
+
+## Phase 8
+
+Search
+
+- SQLite Index
+- Search UI
+- Filters
+
+---
+
+## Phase 9
+
+Import / Export
+
+- PDF
+- Image
+- Native .folio
+
+---
+
+## Phase 10
+
+Polish
+
 - Animations
-- Bug fixing
+- Accessibility
+- Performance
+- Bug Fixes
 
 ---
 
-# 21. Code Standards
+# =============================================================================
 
-- Keep components focused on a single responsibility.
-- Prefer composition over inheritance.
-- Avoid deeply nested component trees.
-- Use descriptive TypeScript interfaces.
-- Write reusable hooks for shared logic.
-- Keep business logic out of UI components.
-- Add comments only where intent is not obvious from the code.
+# Final Architecture Decisions
+
+# =============================================================================
+
+## Decision 1
+
+Notebook files are the source of truth.
+
+SQLite is only a cache and search index.
 
 ---
 
-# 22. Folder Ownership
+## Decision 2
 
-Each folder has a clear responsibility:
+Notebook pages are fixed-size pages.
 
-- `components/` → Reusable UI
-- `features/` → Business logic
-- `services/` → Infrastructure (storage, autosave, export)
-- `stores/` → Global state
-- `types/` → Shared models
-- `utils/` → Pure helper functions
-- `assets/` → Static resources
+Infinite canvas is not supported in Version 2.
 
-This separation keeps the codebase understandable as it grows.
+---
+
+## Decision 3
+
+Canvas renders notebook content.
+
+React renders application UI.
+
+---
+
+## Decision 4
+
+Composition is preferred over inheritance.
+
+Objects own only the capabilities they require.
+
+---
+
+## Decision 5
+
+Persistence is implemented before advanced editor features.
+
+Preventing data loss has higher priority than adding functionality.
+
+---
+
+## Decision 6
+
+The application is Windows-first but designed so future macOS and Linux support
+is possible with minimal architectural changes.
+
+---
+
+# Architecture Summary
+
+This document defines the technical architecture for Folio Version 2.
+
+The architecture is built around five fundamental principles:
+
+- Offline-first operation
+- Notebook files as the source of truth
+- Clear separation between UI, domain, rendering, and persistence
+- Modular object-based design
+- Reliable, maintainable, and extensible implementation
+
+Future features such as cloud synchronization, collaboration, handwriting
+recognition, plugins, and AI assistance are intentionally excluded from Version
+2 but can be added without major architectural changes.
+
+---
+
+# End of Volume 4
