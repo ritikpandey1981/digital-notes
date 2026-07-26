@@ -12,6 +12,17 @@ export {
   DialogTitle,
   DialogTrigger,
 } from "./components/dialog";
+export {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuPortal,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "./components/dropdown-menu";
 export { Input } from "./components/input";
 export { ScrollArea, ScrollBar } from "./components/scroll-area";
 export { cn } from "./lib/utils";

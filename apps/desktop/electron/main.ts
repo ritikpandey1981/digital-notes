@@ -13,11 +13,13 @@ function resolveAssetPath(fileName: string): string {
 
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
+    title: "Folio",
     width: 1200,
     height: 800,
     minWidth: 960,
     minHeight: 640,
     show: false,
+    autoHideMenuBar: true,
     backgroundColor: "#f5f5f3",
     icon: resolveAssetPath("app-icon.png"),
     webPreferences: {
@@ -46,6 +48,16 @@ function createMainWindow(): void {
   });
 
   const developmentServerUrl = process.env.VITE_DEV_SERVER_URL;
+  mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
+    const allowedUrl = developmentServerUrl
+      ? new URL(navigationUrl).origin === new URL(developmentServerUrl).origin
+      : navigationUrl.startsWith("file://");
+
+    if (!allowedUrl) {
+      event.preventDefault();
+    }
+  });
+
   if (developmentServerUrl) {
     void mainWindow.loadURL(developmentServerUrl);
   } else {

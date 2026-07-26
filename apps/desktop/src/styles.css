@@ -2,43 +2,193 @@
 @import "tailwindcss";
 @source "../../../packages/ui/src";
 
-@theme {
+@theme inline {
   --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
-  --color-folio-workspace: #f5f5f3;
-  --color-folio-paper: #fffdf8;
-  --color-folio-ink: #1e1e1e;
-  --color-folio-muted: #6b6b68;
-  --color-folio-accent: #4f46e5;
-  --color-folio-accent-hover: #4338ca;
+  --color-folio-workspace: var(--folio-workspace);
+  --color-folio-paper: var(--folio-paper);
+  --color-folio-ink: var(--folio-ink);
+  --color-folio-muted: var(--folio-muted);
+  --color-folio-accent: var(--folio-accent);
+  --color-folio-accent-hover: var(--folio-accent-hover);
+  --color-folio-accent-soft: var(--folio-accent-soft);
+  --color-folio-sidebar: var(--folio-sidebar);
+  --color-folio-menubar: var(--folio-menubar);
+  --color-folio-status: var(--folio-status);
+  --color-folio-surface: var(--folio-surface);
+  --color-folio-surface-muted: var(--folio-surface-muted);
+  --color-folio-hover: var(--folio-hover);
+  --color-folio-border: var(--folio-border);
+  --color-folio-glass: var(--folio-glass);
+  --color-folio-page: var(--folio-page);
+  --color-folio-page-ink: var(--folio-page-ink);
+  --color-folio-page-muted: var(--folio-page-muted);
+  --color-folio-page-rule: var(--folio-page-rule);
+  --color-folio-page-mark: var(--folio-page-mark);
 }
 
 @layer base {
+  :root,
+  [data-theme="light"] {
+    --folio-workspace: #f1f1ef;
+    --folio-paper: #fffdf8;
+    --folio-ink: #20201e;
+    --folio-muted: #777772;
+    --folio-accent: #4f46e5;
+    --folio-accent-hover: #4338ca;
+    --folio-accent-soft: #eeedff;
+    --folio-sidebar: rgb(250 250 248 / 0.94);
+    --folio-menubar: rgb(255 255 255 / 0.76);
+    --folio-status: rgb(250 250 248 / 0.92);
+    --folio-surface: #ffffff;
+    --folio-surface-muted: #f7f7f5;
+    --folio-hover: rgb(37 37 34 / 0.065);
+    --folio-border: rgb(37 37 34 / 0.11);
+    --folio-glass: rgb(255 255 255 / 0.82);
+    --folio-page: #fffdf8;
+    --folio-page-ink: #282721;
+    --folio-page-muted: #8c897e;
+    --folio-page-rule: rgb(102 118 151 / 0.16);
+    --folio-page-mark: #4b4a43;
+  }
+
+  [data-theme="dark"] {
+    --folio-workspace: #181818;
+    --folio-paper: #252525;
+    --folio-ink: #f1f1ee;
+    --folio-muted: #a3a39d;
+    --folio-accent: #7771ff;
+    --folio-accent-hover: #8a85ff;
+    --folio-accent-soft: rgb(99 102 241 / 0.17);
+    --folio-sidebar: rgb(31 31 31 / 0.96);
+    --folio-menubar: rgb(35 35 35 / 0.78);
+    --folio-status: rgb(30 30 30 / 0.94);
+    --folio-surface: #292929;
+    --folio-surface-muted: #222222;
+    --folio-hover: rgb(255 255 255 / 0.075);
+    --folio-border: rgb(255 255 255 / 0.105);
+    --folio-glass: rgb(39 39 39 / 0.86);
+    --folio-page: #252525;
+    --folio-page-ink: #f4f2ea;
+    --folio-page-muted: #aaa79c;
+    --folio-page-rule: rgb(180 191 218 / 0.12);
+    --folio-page-mark: #e2dfd5;
+  }
+
   * {
-    border-color: color-mix(in srgb, currentColor 12%, transparent);
+    box-sizing: border-box;
   }
 
   html {
     font-family: var(--font-sans);
     background: var(--color-folio-workspace);
+    color: var(--color-folio-ink);
   }
 
   body {
     min-width: 320px;
     min-height: 100vh;
     margin: 0;
+    overflow: hidden;
+    background: var(--color-folio-workspace);
+    text-rendering: optimizeLegibility;
   }
 
   button,
   input {
     font: inherit;
   }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--folio-accent) 24%, transparent);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--folio-muted) 45%, transparent);
+    background-clip: padding-box;
+  }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-folio-workspace: #181818;
-    --color-folio-paper: #252525;
-    --color-folio-ink: #f4f4f2;
-    --color-folio-muted: #a3a3a0;
+@layer components {
+  .shell-icon-button {
+    @apply flex size-8 items-center justify-center rounded-lg text-folio-muted transition-colors duration-150 hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent;
+  }
+
+  .sidebar-nav-item {
+    @apply flex h-10 w-full items-center gap-3 rounded-xl px-[17px] text-left text-[13px] font-medium text-folio-muted transition-colors duration-150 hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent;
+  }
+
+  .sidebar-nav-item-active {
+    @apply bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft hover:text-folio-accent;
+  }
+
+  .notebook-stage {
+    position: relative;
+    height: min(72vh, 680px);
+    max-height: calc(100vh - 178px);
+    aspect-ratio: 210 / 297;
+    min-height: 390px;
+  }
+
+  .notebook-page-stack {
+    position: absolute;
+    inset: 10px -11px -10px 11px;
+    border: 1px solid var(--folio-border);
+    border-radius: 21px;
+    background: color-mix(in srgb, var(--folio-page) 92%, var(--folio-workspace));
+    box-shadow:
+      0 1px 0 color-mix(in srgb, var(--folio-page-ink) 7%, transparent),
+      0 18px 48px color-mix(in srgb, #000 13%, transparent);
+  }
+
+  .notebook-page {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    overflow: hidden;
+    flex-direction: column;
+    border: 1px solid var(--folio-border);
+    border-radius: 21px;
+    background: var(--folio-page);
+    box-shadow:
+      0 2px 5px color-mix(in srgb, #000 7%, transparent),
+      0 22px 70px color-mix(in srgb, #000 12%, transparent);
+  }
+
+  .paper-lines {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 27px,
+      var(--folio-page-rule) 28px
+    );
+    background-position: 0 14px;
+  }
+}
+
+@media (max-height: 720px) {
+  .notebook-stage {
+    min-height: 360px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
