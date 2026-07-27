@@ -107,6 +107,15 @@ importers:
 
   packages/editor: {}
 
+  packages/history:
+    dependencies:
+      '@folio/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@folio/persistence':
+        specifier: workspace:*
+        version: link:../persistence
+
   packages/persistence:
     dependencies:
       '@folio/domain':
