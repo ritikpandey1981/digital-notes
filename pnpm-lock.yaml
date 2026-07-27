@@ -106,10 +106,22 @@ importers:
         specifier: ^9.0.1
         version: 9.1.0
 
+  packages/document:
+    dependencies:
+      '@folio/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@folio/ink':
+        specifier: workspace:*
+        version: link:../ink
+
   packages/domain: {}
 
   packages/editor:
     dependencies:
+      '@folio/document':
+        specifier: workspace:*
+        version: link:../document
       '@folio/ink':
         specifier: workspace:*
         version: link:../ink

@@ -5,6 +5,7 @@ import {
   type RenderTheme,
 } from "@folio/rendering";
 import { useEffect, useRef } from "react";
+import { InkDocumentSession } from "./InkDocumentSession";
 
 export interface CanvasSurfaceProps {
   readonly className?: string;
@@ -52,6 +53,7 @@ export function CanvasSurface({
     let pointerInput: PointerInputController | null = null;
     let strokeRenderer: StrokeRenderer | null = null;
     let inkLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
+    const documentSession = new InkDocumentSession();
 
     try {
       controller.mount(host);
@@ -71,8 +73,18 @@ export function CanvasSurface({
         viewport,
       });
       const activeStrokeRenderer = strokeRenderer;
+      const updateDocumentDiagnostics = (): void => {
+        const snapshot = documentSession.snapshot();
+        if (inkLayer !== null) {
+          inkLayer.canvas.dataset.documentObjectCount = String(snapshot.objectCount);
+          inkLayer.canvas.dataset.documentInkObjectCount = String(snapshot.inkObjectCount);
+          inkLayer.canvas.dataset.documentObjectsImmutable = String(snapshot.allObjectsImmutable);
+        }
+        host.dataset.documentObjectCount = String(snapshot.objectCount);
+      };
       inkLayer.setResizeHandler(() => activeStrokeRenderer.redraw());
       activeStrokeRenderer.redraw();
+      updateDocumentDiagnostics();
       pointerInput = new PointerInputController({
         coordinateConverter,
         getCanvasBounds: () => {
@@ -89,13 +101,18 @@ export function CanvasSurface({
         },
         onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),
         onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
-        onStrokeFinalized: (stroke) => activeStrokeRenderer.finalizeStroke(stroke),
+        onStrokeFinalized: (stroke) => {
+          const object = documentSession.completeStroke(stroke);
+          activeStrokeRenderer.finalizeStroke(object.stroke);
+          updateDocumentDiagnostics();
+        },
         onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
         onError: (error) => onError?.(error),
       });
       pointerInput.attach(inkLayer.canvas);
       host.dataset.rendererState = "ready";
       host.dataset.inkState = "ready";
+      host.dataset.documentState = "ready";
       onControllerReady?.(controller);
       onDiagnostics?.(controller.snapshot());
       themeObserver = new MutationObserver(() => {
@@ -111,12 +128,14 @@ export function CanvasSurface({
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error("Canvas initialization failed.");
       host.dataset.rendererState = "error";
+      host.dataset.documentState = "error";
       onError?.(error);
     }
 
     return () => {
       themeObserver?.disconnect();
       pointerInput?.destroy();
+      documentSession.clear();
       strokeRenderer?.destroy();
       inkLayer?.destroy();
       controller.destroy();

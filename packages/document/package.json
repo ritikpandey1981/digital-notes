@@ -1,0 +1,14 @@
+{
+  "name": "@folio/document",
+  "version": "0.1.0",
+  "private": true,
+  "sideEffects": false,
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@folio/domain": "workspace:*",
+    "@folio/ink": "workspace:*"
+  }
+}

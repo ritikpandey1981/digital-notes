@@ -1,0 +1,60 @@
+import { InkObject } from "@folio/document";
+import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
+import { describe, expect, it } from "vitest";
+import { InkDocumentSession } from "../InkDocumentSession";
+
+function stroke(id: string) {
+  const builder = new StrokeBuilder({
+    id,
+    timestamp: 0,
+    smoother: new StrokeSmoother({ mode: "none" }),
+  });
+  builder.addPoint({
+    x: 1,
+    y: 2,
+    timestamp: 0,
+    pressure: 0.5,
+    tiltX: 0,
+    tiltY: 0,
+    twist: 0,
+    pointerType: "mouse",
+    button: 0,
+    buttons: 1,
+  });
+  return builder.finalize();
+}
+
+describe("InkDocumentSession", () => {
+  it("converts every finalized stroke into exactly one immutable InkObject", () => {
+    let id = 0;
+    const session = new InkDocumentSession({
+      createId: () => `object-${++id}`,
+      now: () => "2026-07-27T08:00:00.000Z",
+    });
+    const firstStroke = stroke("stroke-1");
+    const first = session.completeStroke(firstStroke);
+    const second = session.completeStroke(stroke("stroke-2"));
+
+    expect(first).toBeInstanceOf(InkObject);
+    expect(first.stroke).toBe(firstStroke);
+    expect(session.collection.objects).toEqual([first, second]);
+    expect(session.collection.objects.map(({ zIndex }) => zIndex)).toEqual([0, 1]);
+    expect(session.snapshot()).toEqual({
+      objectCount: 2,
+      inkObjectCount: 2,
+      allObjectsImmutable: true,
+    });
+  });
+
+  it("clears all session objects without touching the immutable strokes", () => {
+    const session = new InkDocumentSession({
+      createId: () => "object",
+      now: () => "2026-07-27T08:00:00.000Z",
+    });
+    const source = stroke("stroke");
+    session.completeStroke(source);
+    session.clear();
+    expect(session.snapshot().objectCount).toBe(0);
+    expect(Object.isFrozen(source)).toBe(true);
+  });
+});

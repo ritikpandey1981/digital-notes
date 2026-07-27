@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron } from "@playwright/test";
 
-test("launches the shell with the Phase 7 session ink lifecycle", async () => {
+test("launches the shell with the Phase 8 document object lifecycle", async () => {
   const repositoryRoot = process.cwd();
   const electronApp = await electron.launch({
     args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
@@ -22,14 +22,19 @@ test("launches the shell with the Phase 7 session ink lifecycle", async () => {
     await expect(window.getByRole("complementary", { name: "Sidebar" })).toBeVisible();
     await expect(window.getByLabel("Notebook workspace")).toBeVisible();
     const canvasHost = window.getByTestId("canvas-host");
+    const canvasSurface = window.getByTestId("canvas-surface");
     await expect(canvasHost).toHaveAttribute("data-canvas-state", "ready");
     const canvas = canvasHost.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = canvasHost.locator("canvas[data-folio-layer='ink']");
     await expect(canvas).toBeVisible();
     await expect(inkCanvas).toBeVisible();
     await expect(canvasHost).toHaveAttribute("data-ink-state", "ready");
+    await expect(canvasSurface).toHaveAttribute("data-document-state", "ready");
     await expect(canvas).toHaveAttribute("data-render-count", /[1-9]\d*/);
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "0");
+    await expect(inkCanvas).toHaveAttribute("data-document-object-count", "0");
+    await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "0");
+    await expect(inkCanvas).toHaveAttribute("data-document-objects-immutable", "true");
     await canvas.evaluate((element) => element.setAttribute("data-mount-probe", "retained"));
     await inkCanvas.evaluate((element) => element.setAttribute("data-ink-mount-probe", "retained"));
     await expect(window.getByText("Page 1 of 12")).toBeVisible();
@@ -69,6 +74,9 @@ test("launches the shell with the Phase 7 session ink lifecycle", async () => {
     await window.mouse.move(start.x + 95, start.y - 10, { steps: 5 });
     await window.mouse.up();
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
+    await expect(inkCanvas).toHaveAttribute("data-document-object-count", "1");
+    await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "1");
+    await expect(canvasSurface).toHaveAttribute("data-document-object-count", "1");
     expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeInk);
     expect(Number(await inkCanvas.getAttribute("data-ink-render-count"))).toBeGreaterThan(
       inkRenderBefore,
@@ -88,6 +96,15 @@ test("launches the shell with the Phase 7 session ink lifecycle", async () => {
       })
       .toBe(0);
 
+    await window.mouse.move(start.x + 20, start.y + 70);
+    await window.mouse.down();
+    await window.mouse.move(start.x + 70, start.y + 90, { steps: 5 });
+    await window.mouse.up();
+    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
+    await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
+    await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "2");
+    await expect(inkCanvas).toHaveAttribute("data-document-objects-immutable", "true");
+
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(window.getByRole("contentinfo")).toContainText("Pen");
 
@@ -101,7 +118,8 @@ test("launches the shell with the Phase 7 session ink lifecycle", async () => {
     await window.getByRole("button", { name: "Collapse sidebar" }).click();
     await expect(canvas).toHaveAttribute("data-mount-probe", "retained");
     await expect(inkCanvas).toHaveAttribute("data-ink-mount-probe", "retained");
-    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
+    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
+    await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
 
     const beforeResize = Number(await canvas.getAttribute("data-render-count"));
     const inkBeforeResize = Number(await inkCanvas.getAttribute("data-ink-render-count"));
@@ -119,7 +137,8 @@ test("launches the shell with the Phase 7 session ink lifecycle", async () => {
       .toBe(0);
     await expect(canvas).toHaveAttribute("data-mount-probe", "retained");
     await expect(inkCanvas).toHaveAttribute("data-ink-mount-probe", "retained");
-    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
+    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
+    await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
     await expect
       .poll(async () => Number(await inkCanvas.getAttribute("data-ink-render-count")))
       .toBeGreaterThan(inkBeforeResize);
@@ -129,6 +148,8 @@ test("launches the shell with the Phase 7 session ink lifecycle", async () => {
     const freshInkCanvas = window.locator("canvas[data-folio-layer='ink']");
     await expect(freshInkCanvas).toBeVisible();
     await expect(freshInkCanvas).toHaveAttribute("data-ink-stroke-count", "0");
+    await expect(freshInkCanvas).toHaveAttribute("data-document-object-count", "0");
+    await expect(freshInkCanvas).toHaveAttribute("data-document-ink-object-count", "0");
     await expect(window.getByText("Page 1 of 12")).toBeVisible();
   } finally {
     await electronApp.close();
