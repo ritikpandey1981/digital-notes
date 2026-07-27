@@ -1,14 +1,14 @@
+import { CanvasSurface } from "@folio/editor";
 import { memo } from "react";
-import { WorkspacePlaceholder } from "./WorkspacePlaceholder";
 
 export const CanvasHost = memo(function CanvasHost() {
   return (
     <div
       className="absolute inset-0 overflow-hidden"
       data-testid="canvas-host"
-      data-canvas-state="placeholder"
+      data-canvas-state="ready"
     >
-      <WorkspacePlaceholder />
+      <CanvasSurface className="size-full" />
     </div>
   );
 });
