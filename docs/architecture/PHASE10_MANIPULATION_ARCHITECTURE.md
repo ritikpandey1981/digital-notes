@@ -231,14 +231,15 @@ sequenceDiagram
     participant Preview
     participant Document
 
-    Browser->>Editor: pointercancel, capture loss, mode change, or teardown
+    Browser->>Editor: pointercancel, capture loss, mode/context change, or teardown
     Editor->>Controller: cancelManipulation(pointerId)
     Controller-->>Editor: Cancelling -> Idle
     Editor->>Preview: setPreview(null)
+    Editor->>Browser: release pointer capture
     Note over Document: No replacement and no mutation
 ```
 
-Failed preconditions are ignored. A removed object, changed selection context, or rejected commit returns safely to Idle.
+Failed preconditions are ignored. A removed, hidden, or locked object, changed selection context, or rejected commit returns safely to Idle. Editor-owned pointer capture is explicitly released on commit, cancel, context change, and teardown.
 
 ## Public APIs
 
@@ -263,4 +264,4 @@ No resize, rotation, scale, snapping, alignment, history, persistence, clipboard
 
 ## Design rationale and performance
 
-Origin-relative math is deterministic and avoids drift. Immutable state references make notification ownership explicit. Object lookup uses existing maps, sessions retain identity rather than documents, stroke preview retains one immutable geometry reference, animation-frame scheduling coalesces pointer bursts, and old/current dirty bounds avoid full-page repaint. Focused tests exercise documents containing 100, 1,000, and 5,000 objects without inventing wall-clock benchmark claims.
+Origin-relative math is deterministic and avoids drift. Immutable state references make notification ownership explicit. Object lookup uses existing maps, sessions retain identity rather than documents, stroke preview retains one immutable geometry reference, animation-frame scheduling coalesces pointer bursts, duplicate dirty bounds are discarded, and old/current dirty bounds avoid full-page repaint. Focused tests exercise documents containing 100, 1,000, and 5,000 objects without inventing wall-clock benchmark claims.

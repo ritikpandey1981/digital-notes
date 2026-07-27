@@ -7,7 +7,7 @@ export function pagePoint(x: number, y: number) {
   return Object.freeze({ x, y, coordinateSpace: "page" as const });
 }
 
-export function createObject(id = "object-1", locked = false): PageObject {
+export function createObject(id = "object-1", locked = false, visible = true): PageObject {
   const builder = new StrokeBuilder({
     id: `stroke-${id}`,
     timestamp: 0,
@@ -29,6 +29,7 @@ export function createObject(id = "object-1", locked = false): PageObject {
     id,
     stroke: builder.finalize(),
     locked,
+    visible,
   });
 }
 

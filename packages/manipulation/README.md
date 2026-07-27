@@ -45,6 +45,7 @@ packages/manipulation/
 - A session stays Preparing through the exact threshold and enters Dragging only after it is exceeded.
 - State contains object identity and interaction values, never copied objects or stroke geometry.
 - Commit is requested through an injected editor callback; rejection or failure cancels safely.
+- Selection identity and object visibility, lock, and existence are revalidated throughout the session.
 - Commit/cancel terminal states are observable before the manager returns to Idle.
 - Destroying a controller cancels its active session and retains no document state.
 

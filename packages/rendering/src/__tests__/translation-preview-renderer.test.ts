@@ -53,10 +53,11 @@ describe("TranslationPreviewRenderer", () => {
   it("draws a cached visual at an absolute page translation on demand", () => {
     const { renderer, flush, context, canvas } = harness();
     const draw = vi.fn();
+    const translation = Object.freeze({ x: 30, y: -5 });
     renderer.setPreview({
       objectId: "object-1",
       bounds: Object.freeze({ x: 10, y: 20, width: 100, height: 40 }),
-      translation: Object.freeze({ x: 30, y: -5 }),
+      translation,
       visual: { draw },
     });
     flush();
@@ -69,9 +70,10 @@ describe("TranslationPreviewRenderer", () => {
       renderCount: 1,
       invalidationCount: 1,
     });
+    expect(renderer.snapshot().translation).toBe(translation);
   });
 
-  it("coalesces frames and clears previous and current preview bounds separately", () => {
+  it("coalesces frames and de-duplicates previous/current preview bounds", () => {
     const { renderer, flush, context, frames } = harness();
     const visual = { draw: vi.fn() };
     const base = { objectId: "object", bounds: { x: 0, y: 0, width: 20, height: 10 }, visual };
@@ -79,7 +81,7 @@ describe("TranslationPreviewRenderer", () => {
     renderer.setPreview({ ...base, translation: { x: 400, y: 300 } });
     expect(frames.size).toBe(1);
     flush();
-    expect(context.clearRect).toHaveBeenCalledTimes(3);
+    expect(context.clearRect).toHaveBeenCalledTimes(2);
     expect(renderer.snapshot().renderCount).toBe(1);
   });
 

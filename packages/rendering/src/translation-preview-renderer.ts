@@ -156,7 +156,7 @@ export class TranslationPreviewRenderer {
   snapshot(): TranslationPreviewRendererSnapshot {
     return Object.freeze({
       objectId: this.target?.objectId ?? null,
-      translation: this.target === null ? null : freezePoint(this.target.translation),
+      translation: this.target?.translation ?? null,
       renderCount: this.renderCountValue,
       invalidationCount: this.invalidationCountValue,
       hasPendingRender: this.scheduler.pending,
@@ -175,6 +175,17 @@ export class TranslationPreviewRenderer {
 
   private addDirtyRect(rect: Rect): void {
     if (this.fullRedraw) return;
+    if (
+      this.dirtyPageRects.some(
+        (existing) =>
+          existing.x === rect.x &&
+          existing.y === rect.y &&
+          existing.width === rect.width &&
+          existing.height === rect.height,
+      )
+    ) {
+      return;
+    }
     this.dirtyPageRects.push(rect);
     if (this.dirtyPageRects.length > MAX_DIRTY_REGIONS) {
       this.dirtyPageRects.length = 0;

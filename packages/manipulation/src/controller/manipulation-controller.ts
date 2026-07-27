@@ -1,4 +1,5 @@
 import type { PagePoint } from "@folio/selection";
+import type { PageObject } from "@folio/document";
 import type {
   ManipulationController,
   ManipulationControllerOptions,
@@ -65,10 +66,8 @@ class ManipulationControllerImplementation implements ManipulationController {
     const selection = this.options.selectionSource.getSelection();
     const objectId = selection.selectedObjectId;
     if (objectId === null) return this.options.manager.getState();
-    const object = this.options.objectSource.getObject(objectId);
-    if (object === undefined || !object.visible || object.locked) {
-      return this.options.manager.getState();
-    }
+    const object = this.resolveManipulableObject(objectId);
+    if (object === undefined) return this.options.manager.getState();
     return this.options.manager.beginSession({
       objectId,
       pointerId,
@@ -80,10 +79,7 @@ class ManipulationControllerImplementation implements ManipulationController {
   updateManipulation(pointerId: number, position: PagePoint): ManipulationState {
     const state = this.options.manager.getState();
     if (this.destroyed || state.pointerId !== pointerId) return state;
-    if (
-      state.objectId === null ||
-      this.options.objectSource.getObject(state.objectId) === undefined
-    ) {
+    if (state.objectId === null || this.resolveManipulableObject(state.objectId) === undefined) {
       return this.options.manager.cancelSession();
     }
     return this.options.manager.updateSession(position);
@@ -97,9 +93,7 @@ class ManipulationControllerImplementation implements ManipulationController {
       this.options.manager.cancelSession();
       return null;
     }
-    const selection = this.options.selectionSource.getSelection();
-    const object = this.options.objectSource.getObject(state.objectId);
-    if (selection.selectedObjectId !== state.objectId || object === undefined || object.locked) {
+    if (this.resolveManipulableObject(state.objectId) === undefined) {
       this.options.manager.cancelSession();
       return null;
     }
@@ -146,6 +140,12 @@ class ManipulationControllerImplementation implements ManipulationController {
     if (this.destroyed) return;
     this.options.manager.cancelSession();
     this.destroyed = true;
+  }
+
+  private resolveManipulableObject(objectId: string): PageObject | undefined {
+    if (this.options.selectionSource.getSelection().selectedObjectId !== objectId) return undefined;
+    const object = this.options.objectSource.getObject(objectId);
+    return object !== undefined && object.visible && !object.locked ? object : undefined;
   }
 }
 

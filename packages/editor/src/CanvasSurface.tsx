@@ -11,6 +11,7 @@ import {
   CanvasController,
   SelectionOverlayRenderer,
   TranslationPreviewRenderer,
+  type CanvasBounds,
   type CanvasControllerSnapshot,
   type RenderTheme,
 } from "@folio/rendering";
@@ -85,6 +86,7 @@ export function CanvasSurface({
   const hostRef = useRef<HTMLDivElement>(null);
   const interactionModeRef = useRef(interactionMode);
   const manipulationControllerRef = useRef<ManipulationController | null>(null);
+  const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
 
@@ -92,6 +94,7 @@ export function CanvasSurface({
     interactionModeRef.current = interactionMode;
     if (interactionMode !== "move") {
       manipulationControllerRef.current?.cancelManipulation();
+      releaseManipulationPointerCaptureRef.current?.();
     }
   }, [interactionMode]);
 
@@ -125,9 +128,24 @@ export function CanvasSurface({
     let translationPreviewRenderer: TranslationPreviewRenderer | null = null;
     let manipulationController: ManipulationController | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
-    const selectionPointerListeners: Array<readonly [keyof HTMLElementEventMap, EventListener]> =
-      [];
+    let manipulationPointerCapture: Readonly<{
+      canvas: HTMLCanvasElement;
+      pointerId: number;
+    }> | null = null;
+    const editorPointerListeners: Array<readonly [keyof HTMLElementEventMap, EventListener]> = [];
     const documentSession = new InkDocumentSession();
+    const releaseManipulationPointerCapture = (): void => {
+      const capture = manipulationPointerCapture;
+      manipulationPointerCapture = null;
+      if (capture === null) return;
+      try {
+        capture.canvas.releasePointerCapture(capture.pointerId);
+      } catch {
+        // Capture may already have been released by the browser.
+      }
+      host.dataset.manipulationPointerCapture = "released";
+    };
+    releaseManipulationPointerCaptureRef.current = releaseManipulationPointerCapture;
 
     try {
       controller.mount(host);
@@ -141,6 +159,12 @@ export function CanvasSurface({
         interactive: true,
         ariaLabel: "Ink input surface",
       });
+      const getInkCanvasBounds = (): CanvasBounds | null => {
+        const bounds = inkLayer?.canvas.getBoundingClientRect();
+        return bounds === undefined
+          ? null
+          : { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+      };
       strokeRenderer = new StrokeRenderer({
         context: inkLayer.context,
         canvas: inkLayer.canvas,
@@ -156,12 +180,7 @@ export function CanvasSurface({
       const selectionCoordinateMapper = new PageSelectionCoordinateMapper({
         coordinateConverter,
         viewport,
-        getCanvasBounds: () => {
-          const bounds = inkLayer?.canvas.getBoundingClientRect();
-          return bounds === undefined
-            ? null
-            : { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
-        },
+        getCanvasBounds: getInkCanvasBounds,
       });
       selectionController = createSelectionController({
         manager: selectionManager,
@@ -233,6 +252,7 @@ export function CanvasSurface({
           manipulationState?.objectId !== state.selectedObjectId
         ) {
           manipulationController?.cancelManipulation();
+          releaseManipulationPointerCapture();
         }
       });
       manipulationLayer = controller.createOverlayLayer({
@@ -249,12 +269,7 @@ export function CanvasSurface({
       const manipulationCoordinateMapper = new PageManipulationCoordinateMapper({
         coordinateConverter,
         viewport,
-        getCanvasBounds: () => {
-          const bounds = inkLayer?.canvas.getBoundingClientRect();
-          return bounds === undefined
-            ? null
-            : { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
-        },
+        getCanvasBounds: getInkCanvasBounds,
       });
       const manipulationManager = createManipulationManager();
       const strokeVisuals = new Map<string, ReturnType<typeof createStrokeVisual>>();
@@ -307,6 +322,9 @@ export function CanvasSurface({
         } else {
           activeTranslationPreviewRenderer.setPreview(null);
         }
+        if (state.phase === "committing" || state.phase === "cancelling") {
+          releaseManipulationPointerCapture();
+        }
         if (notify) manipulationChangeRef.current?.(state);
       };
       unsubscribeManipulation = activeManipulationController.subscribe((state) =>
@@ -322,7 +340,7 @@ export function CanvasSurface({
       updateSelection(activeSelectionController.getSelection(), false);
       updateManipulation(activeManipulationController.getManipulationState(), false);
 
-      const bridgeSelectionPointer = (
+      const bridgeEditorPointer = (
         phase: SelectionPointerInput["phase"],
         event: PointerEvent,
       ): void => {
@@ -360,53 +378,61 @@ export function CanvasSurface({
           return;
         }
         const ownsManipulation = activeManipulationController.hasActiveSession();
+        const shouldCaptureManipulation = mode === "move" && ownsManipulation;
         if (
           phase === "down" &&
           event.isPrimary &&
           event.button === 0 &&
-          (mode === "select" || ownsManipulation)
+          (mode === "select" || shouldCaptureManipulation)
         ) {
           try {
-            inkLayer?.canvas.setPointerCapture(event.pointerId);
+            const canvas = inkLayer?.canvas;
+            canvas?.setPointerCapture(event.pointerId);
+            if (shouldCaptureManipulation && canvas !== undefined) {
+              manipulationPointerCapture = Object.freeze({
+                canvas,
+                pointerId: event.pointerId,
+              });
+              host.dataset.manipulationPointerCapture = "captured";
+            }
           } catch {
             // A click can still resolve while the pointer remains over the canvas.
           }
         }
         if (phase === "up" || phase === "cancel") {
-          try {
-            inkLayer?.canvas.releasePointerCapture(event.pointerId);
-          } catch {
-            // Capture may already have been released by the browser.
+          if (manipulationPointerCapture?.pointerId === event.pointerId) {
+            releaseManipulationPointerCapture();
+          } else {
+            try {
+              inkLayer?.canvas.releasePointerCapture(event.pointerId);
+            } catch {
+              // Selection capture may already have been released by the browser.
+            }
           }
         }
       };
-      const addSelectionPointerListener = (
+      const addEditorPointerListener = (
         type: keyof HTMLElementEventMap,
         phase: SelectionPointerInput["phase"],
       ): void => {
         const listener: EventListener = (event) =>
-          bridgeSelectionPointer(phase, event as PointerEvent);
+          bridgeEditorPointer(phase, event as PointerEvent);
         inkLayer?.canvas.addEventListener(type, listener, true);
-        selectionPointerListeners.push([type, listener]);
+        editorPointerListeners.push([type, listener]);
       };
-      addSelectionPointerListener("pointerdown", "down");
-      addSelectionPointerListener("pointermove", "move");
-      addSelectionPointerListener("pointerup", "up");
-      addSelectionPointerListener("pointercancel", "cancel");
-      addSelectionPointerListener("lostpointercapture", "cancel");
+      addEditorPointerListener("pointerdown", "down");
+      addEditorPointerListener("pointermove", "move");
+      addEditorPointerListener("pointerup", "up");
+      addEditorPointerListener("pointercancel", "cancel");
+      addEditorPointerListener("lostpointercapture", "cancel");
       pointerInput = new PointerInputController({
         coordinateConverter,
         getCanvasBounds: () => {
-          const bounds = inkLayer?.canvas.getBoundingClientRect();
-          if (bounds === undefined) {
+          const bounds = getInkCanvasBounds();
+          if (bounds === null) {
             throw new Error("Ink canvas bounds are unavailable.");
           }
-          return {
-            x: bounds.x,
-            y: bounds.y,
-            width: bounds.width,
-            height: bounds.height,
-          };
+          return bounds;
         },
         onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),
         onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
@@ -424,6 +450,7 @@ export function CanvasSurface({
       host.dataset.documentState = "ready";
       host.dataset.selectionCapability = "ready";
       host.dataset.manipulationCapability = "ready";
+      host.dataset.manipulationPointerCapture = "released";
       onControllerReady?.(controller);
       onSelectionControllerReady?.(activeSelectionController);
       onManipulationControllerReady?.(activeManipulationController);
@@ -449,13 +476,15 @@ export function CanvasSurface({
 
     return () => {
       themeObserver?.disconnect();
-      for (const [type, listener] of selectionPointerListeners) {
+      for (const [type, listener] of editorPointerListeners) {
         inkLayer?.canvas.removeEventListener(type, listener, true);
       }
       unsubscribeSelection?.();
       unsubscribeManipulation?.();
       manipulationController?.destroy();
+      releaseManipulationPointerCapture();
       manipulationControllerRef.current = null;
+      releaseManipulationPointerCaptureRef.current = null;
       selectionController?.destroy();
       pointerInput?.destroy();
       documentSession.clear();

@@ -182,6 +182,7 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
     await window.mouse.down();
     await window.mouse.move(start.x + 60, start.y + 40, { steps: 6 });
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "captured");
     await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
     await expect(manipulationCanvas).toHaveAttribute(
       "data-manipulation-object-id",
@@ -192,9 +193,20 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
         Number(await manipulationCanvas.getAttribute("data-manipulation-render-count")),
       )
       .toBeGreaterThan(previewRenderBeforeMove);
+    const translationBeforeLeavingCanvas = await canvasSurface.getAttribute(
+      "data-manipulation-translation-x",
+    );
+    await window.mouse.move(inkBounds.x - 8, start.y + 40, { steps: 3 });
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
+    await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
+    expect(await canvasSurface.getAttribute("data-manipulation-translation-x")).not.toBe(
+      translationBeforeLeavingCanvas,
+    );
+    await window.mouse.move(start.x + 60, start.y + 40, { steps: 3 });
     expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
     await window.mouse.up();
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "idle");
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "released");
     await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "empty");
     await expect(selectionCanvas).toHaveAttribute(
       "data-selected-object-id",
@@ -237,6 +249,51 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
         return after - before;
       })
       .toBe(0);
+
+    const committedBoundsX = await canvasSurface.getAttribute("data-selected-object-bounds-x");
+    const committedBoundsY = await canvasSurface.getAttribute("data-selected-object-bounds-y");
+    const committedTranslationX = await canvasSurface.getAttribute(
+      "data-selected-object-translation-x",
+    );
+    const committedTranslationY = await canvasSurface.getAttribute(
+      "data-selected-object-translation-y",
+    );
+    await window.mouse.move(start.x + 60, start.y + 40);
+    await window.mouse.down();
+    await window.mouse.move(start.x + 80, start.y + 60, { steps: 4 });
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "captured");
+    await window
+      .getByRole("button", { name: "Select", exact: true })
+      .evaluate((button: HTMLButtonElement) => button.click());
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "idle");
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "released");
+    await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "empty");
+    await expect(selectionCanvas).toHaveAttribute(
+      "data-selected-object-id",
+      selectedObjectId ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-bounds-x",
+      committedBoundsX ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-bounds-y",
+      committedBoundsY ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-translation-x",
+      committedTranslationX ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-translation-y",
+      committedTranslationY ?? "",
+    );
+    await expect(inkCanvas).toHaveAttribute(
+      "data-document-object-count",
+      objectCountBeforeMove ?? "",
+    );
+    await window.mouse.up();
 
     await window.getByRole("button", { name: "Show notification preview" }).click();
     await expect(window.getByRole("status")).toContainText("Shell ready");

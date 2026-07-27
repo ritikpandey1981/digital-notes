@@ -55,7 +55,7 @@ flowchart LR
 
 ## Translation preview overlay
 
-`TranslationPreviewRenderer` is independent of manipulation logic. The editor supplies an object ID, raw geometry bounds, absolute page translation, and a cached `TranslationPreviewVisual`. Changes clear the old and new preview regions on a one-shot animation frame. Commit or cancel supplies `null`, which clears transient pixels without repainting the base page. Resize and DPR changes request one full transparent-layer redraw.
+`TranslationPreviewRenderer` is independent of manipulation logic. The editor supplies an object ID, raw geometry bounds, absolute page translation, and a cached `TranslationPreviewVisual`. Changes clear the old and new preview regions on a one-shot animation frame, discarding duplicate queued regions. Commit or cancel supplies `null`, which clears transient pixels without repainting the base page. Resize and DPR changes request one full transparent-layer redraw.
 
 ```mermaid
 flowchart LR

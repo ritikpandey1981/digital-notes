@@ -133,6 +133,24 @@ describe("ManipulationController", () => {
     expect(switched.controller.getManipulationState().phase).toBe("idle");
   });
 
+  it("cancels immediately when the active object becomes hidden or locked", () => {
+    const hidden = harness();
+    hidden.controller.handlePointer(pointer("down", 0, 0));
+    hidden.controller.handlePointer(pointer("move", 20, 0));
+    hidden.objectSource.setObjects([createObject("object-1", false, false)]);
+    hidden.controller.handlePointer(pointer("move", 25, 0));
+    expect(hidden.controller.getManipulationState().phase).toBe("idle");
+    expect(hidden.onCommit).not.toHaveBeenCalled();
+
+    const locked = harness();
+    locked.controller.handlePointer(pointer("down", 0, 0));
+    locked.controller.handlePointer(pointer("move", 20, 0));
+    locked.objectSource.setObjects([createObject("object-1", true)]);
+    locked.controller.handlePointer(pointer("move", 25, 0));
+    expect(locked.controller.getManipulationState().phase).toBe("idle");
+    expect(locked.onCommit).not.toHaveBeenCalled();
+  });
+
   it("clears an unexpected active session during editor destruction", () => {
     const { controller, onCommit } = harness();
     controller.handlePointer(pointer("down", 0, 0));
