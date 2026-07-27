@@ -1,0 +1,263 @@
+import { CoordinateConverter, Viewport } from "@folio/rendering";
+import { describe, expect, it, vi } from "vitest";
+import { PointerInputController } from "../pointer-input-controller";
+import { StrokeSmoother } from "../stroke-smoother";
+
+function createTarget() {
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  const captured = new Set<number>();
+  let failCapture = false;
+  const target = {
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+      const group = listeners.get(type) ?? new Set();
+      group.add(listener);
+      listeners.set(type, group);
+    },
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+      listeners.get(type)?.delete(listener);
+    },
+    setPointerCapture(pointerId: number) {
+      if (failCapture) throw new Error("capture failed");
+      captured.add(pointerId);
+    },
+    releasePointerCapture(pointerId: number) {
+      captured.delete(pointerId);
+    },
+    hasPointerCapture(pointerId: number) {
+      return captured.has(pointerId);
+    },
+  } as unknown as HTMLElement;
+  return {
+    target,
+    listeners,
+    captured,
+    setCaptureFailure(value: boolean) {
+      failCapture = value;
+    },
+  };
+}
+
+interface EventOptions {
+  readonly pointerId?: number;
+  readonly pointerType?: string;
+  readonly x?: number;
+  readonly y?: number;
+  readonly timestamp?: number;
+  readonly pressure?: number;
+  readonly button?: number;
+  readonly buttons?: number;
+  readonly isPrimary?: boolean;
+  readonly coalesced?: readonly PointerEvent[];
+}
+
+function pointerEvent(options: EventOptions = {}): PointerEvent {
+  return {
+    pointerId: options.pointerId ?? 1,
+    pointerType: options.pointerType ?? "mouse",
+    clientX: options.x ?? 500,
+    clientY: options.y ?? 400,
+    timeStamp: options.timestamp ?? 100,
+    pressure: options.pressure ?? 0.5,
+    tiltX: 0,
+    tiltY: 0,
+    twist: 0,
+    altitudeAngle: undefined,
+    azimuthAngle: undefined,
+    button: options.button ?? 0,
+    buttons: options.buttons ?? 1,
+    isPrimary: options.isPrimary ?? true,
+    preventDefault: vi.fn(),
+    getCoalescedEvents: () => options.coalesced ?? [],
+  } as unknown as PointerEvent;
+}
+
+function createHarness(bounds = { x: 0, y: 0, width: 1_000, height: 800 }) {
+  const viewport = new Viewport({
+    size: { width: 1_000, height: 800 },
+    pageRect: { x: 0, y: 0, width: 600, height: 700 },
+  });
+  viewport.centerPage();
+  const targetHarness = createTarget();
+  const onStrokeStart = vi.fn();
+  const onStrokeUpdate = vi.fn();
+  const onStrokeFinalized = vi.fn();
+  const onStrokeCancelled = vi.fn();
+  const onError = vi.fn();
+  const controller = new PointerInputController({
+    coordinateConverter: new CoordinateConverter(viewport),
+    getCanvasBounds: () => bounds,
+    smoother: new StrokeSmoother({ mode: "none" }),
+    createId: () => "pointer-stroke",
+    onStrokeStart,
+    onStrokeUpdate,
+    onStrokeFinalized,
+    onStrokeCancelled,
+    onError,
+  });
+  controller.attach(targetHarness.target);
+  return {
+    controller,
+    ...targetHarness,
+    onStrokeStart,
+    onStrokeUpdate,
+    onStrokeFinalized,
+    onStrokeCancelled,
+    onError,
+  };
+}
+
+describe("PointerInputController", () => {
+  it("captures, moves, and finalizes a mouse stroke with constant fallback pressure", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent({ x: 500, y: 400 }));
+    harness.controller.handlePointerMove(
+      pointerEvent({ x: 510, y: 410, timestamp: 110, pressure: 0.1 }),
+    );
+    harness.controller.handlePointerUp(
+      pointerEvent({ x: 520, y: 420, timestamp: 120, pressure: 0, buttons: 0 }),
+    );
+
+    expect(harness.onStrokeStart).toHaveBeenCalledOnce();
+    expect(harness.onStrokeUpdate).toHaveBeenCalledTimes(2);
+    expect(harness.onStrokeFinalized).toHaveBeenCalledOnce();
+    const stroke = harness.onStrokeFinalized.mock.calls[0]?.[0];
+    expect(stroke.points).toHaveLength(3);
+    expect(stroke.points.every((point: { pressure: number }) => point.pressure === 0.5)).toBe(true);
+    expect(stroke.points[0]).toMatchObject({ x: 300, y: 350, pointerType: "mouse" });
+    expect(harness.controller.hasActivePointer).toBe(false);
+    expect(harness.captured.size).toBe(0);
+  });
+
+  it.each([
+    ["pen", 0.8],
+    ["touch", 0.65],
+  ] as const)("supports primary %s input and normalized pressure", (pointerType, pressure) => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent({ pointerType, pressure }));
+    harness.controller.handlePointerUp(
+      pointerEvent({ pointerType, pressure, timestamp: 110, buttons: 0 }),
+    );
+    expect(harness.onStrokeFinalized.mock.calls[0]?.[0].points[0]).toMatchObject({
+      pointerType,
+      pressure,
+    });
+  });
+
+  it("processes high-frequency coalesced samples in order", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent());
+    const coalesced = [
+      pointerEvent({ x: 510, timestamp: 105, pointerType: "pen", pressure: 0.2 }),
+      pointerEvent({ x: 520, timestamp: 110, pointerType: "pen", pressure: 0.4 }),
+      pointerEvent({ x: 530, timestamp: 115, pointerType: "pen", pressure: 0.6 }),
+    ];
+    harness.controller.handlePointerMove(
+      pointerEvent({ pointerType: "pen", coalesced, timestamp: 115 }),
+    );
+    harness.controller.handlePointerUp(
+      pointerEvent({ pointerType: "pen", x: 540, timestamp: 120, buttons: 0 }),
+    );
+    expect(harness.onStrokeUpdate).toHaveBeenCalledTimes(4);
+    expect(harness.onStrokeFinalized.mock.calls[0]?.[0].pointCount).toBe(5);
+  });
+
+  it("compensates for CSS scaling and device-pixel-ratio-independent coordinates", () => {
+    const harness = createHarness({ x: 0, y: 0, width: 500, height: 400 });
+    harness.controller.handlePointerDown(pointerEvent({ x: 250, y: 200 }));
+    expect(harness.onStrokeStart.mock.calls[0]?.[0].point).toMatchObject({ x: 300, y: 350 });
+  });
+
+  it("falls back from invalid pen pressure and reports a structured error", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(
+      pointerEvent({ pointerType: "pen", pressure: Number.NaN }),
+    );
+    expect(harness.onStrokeStart.mock.calls[0]?.[0].point.pressure).toBe(0.5);
+    expect(harness.onError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "INVALID_PRESSURE" }),
+    );
+  });
+
+  it("cancels PointerCancel and releases all active state", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent({ pointerType: "touch" }));
+    harness.controller.handlePointerCancel(pointerEvent({ pointerType: "touch" }));
+    expect(harness.onStrokeCancelled).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "pointer-cancel", dirtyRect: expect.any(Object) }),
+    );
+    expect(harness.controller.pointerId).toBeNull();
+    expect(harness.captured.size).toBe(0);
+  });
+
+  it("keeps a captured pointer alive across leave and cancels an uncaptured leave", () => {
+    const harness = createHarness();
+    const event = pointerEvent({ pointerType: "pen" });
+    harness.controller.handlePointerDown(event);
+    harness.controller.handlePointerLeave(event);
+    expect(harness.controller.hasActivePointer).toBe(true);
+    harness.captured.clear();
+    harness.controller.handlePointerLeave(event);
+    expect(harness.controller.hasActivePointer).toBe(false);
+    expect(harness.onStrokeCancelled).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "pointer-leave" }),
+    );
+    expect(harness.onError).toHaveBeenCalledWith(expect.objectContaining({ code: "LOST_POINTER" }));
+  });
+
+  it("handles lost capture and missing mouse PointerUp", () => {
+    const capture = createHarness();
+    const pen = pointerEvent({ pointerType: "pen" });
+    capture.controller.handlePointerDown(pen);
+    capture.controller.handleLostPointerCapture(pen);
+    expect(capture.onStrokeCancelled).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "lost-capture" }),
+    );
+
+    const mouse = createHarness();
+    mouse.controller.handlePointerDown(pointerEvent());
+    mouse.controller.handlePointerMove(pointerEvent({ buttons: 0, timestamp: 110 }));
+    expect(mouse.onError).toHaveBeenCalledWith(expect.objectContaining({ code: "LOST_POINTER" }));
+    expect(mouse.controller.hasActivePointer).toBe(false);
+  });
+
+  it("rejects unsupported, non-primary, simultaneous, and non-primary-button pointers", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent({ pointerType: "unknown" }));
+    harness.controller.handlePointerDown(pointerEvent({ pointerType: "touch", isPrimary: false }));
+    harness.controller.handlePointerDown(pointerEvent({ button: 2 }));
+    harness.controller.handlePointerDown(pointerEvent({ pointerType: "pen", pointerId: 1 }));
+    harness.controller.handlePointerDown(pointerEvent({ pointerType: "touch", pointerId: 2 }));
+    expect(harness.onStrokeStart).toHaveBeenCalledOnce();
+    expect(harness.onError.mock.calls.map(([error]) => error.code)).toEqual([
+      "UNSUPPORTED_POINTER",
+      "UNSUPPORTED_POINTER",
+      "UNSUPPORTED_POINTER",
+      "ACTIVE_POINTER_EXISTS",
+    ]);
+  });
+
+  it("reports pointer capture failure and duplicate PointerUp without creating strokes", () => {
+    const harness = createHarness();
+    harness.setCaptureFailure(true);
+    harness.controller.handlePointerDown(pointerEvent());
+    harness.controller.handlePointerUp(pointerEvent({ buttons: 0 }));
+    expect(harness.onStrokeStart).not.toHaveBeenCalled();
+    expect(harness.onError.mock.calls.map(([error]) => error.code)).toEqual([
+      "POINTER_CAPTURE_FAILED",
+      "DUPLICATE_POINTER_UP",
+    ]);
+  });
+
+  it("detaches listeners and cancels live buffers on destroy", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent());
+    harness.controller.destroy();
+    expect(harness.onStrokeCancelled).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "destroyed" }),
+    );
+    for (const listeners of harness.listeners.values()) expect(listeners.size).toBe(0);
+    expect(() => harness.controller.attach(harness.target)).toThrowError(
+      expect.objectContaining({ code: "INVALID_POINTER_DATA" }),
+    );
+  });
+});

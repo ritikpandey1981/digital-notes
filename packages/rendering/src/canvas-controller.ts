@@ -1,6 +1,7 @@
 import { CoordinateConverter } from "./coordinate-converter";
 import { Diagnostics } from "./diagnostics";
 import { RenderingError } from "./errors";
+import { CanvasOverlayLayerImplementation } from "./internal/canvas-overlay-layer";
 import {
   assertRect,
   freezeRenderPage,
@@ -15,6 +16,8 @@ import {
   DEFAULT_RENDER_THEME,
   type CanvasControllerOptions,
   type CanvasControllerSnapshot,
+  type CanvasOverlayLayer,
+  type CanvasOverlayLayerOptions,
   type DirtyRegion,
   type RenderPage,
   type RenderTheme,
@@ -70,6 +73,7 @@ export class CanvasController {
   private rendererValue: Renderer | null = null;
   private schedulerValue: RenderScheduler | null = null;
   private resizeObserver: ReturnType<ResizeObserverFactory> | null = null;
+  private readonly overlayLayers = new Set<CanvasOverlayLayerImplementation>();
   private stopObservingDpr: (() => void) | null = null;
   private page: RenderPage;
   private theme: RenderTheme;
@@ -123,6 +127,10 @@ export class CanvasController {
     canvas.style.display = "block";
     canvas.style.width = "100%";
     canvas.style.height = "100%";
+    canvas.style.position = "absolute";
+    canvas.style.inset = "0";
+    canvas.style.pointerEvents = "none";
+    canvas.dataset.folioLayer = "page";
     canvas.setAttribute("aria-label", "Blank notebook page");
     canvas.setAttribute("role", "img");
 
@@ -208,6 +216,34 @@ export class CanvasController {
     }
     this.diagnosticsValue.recordResize(logicalSize, logicalSize, physicalSize, dpr);
     this.requestRender({ kind: "viewport" });
+    for (const layer of this.overlayLayers) {
+      layer.resize(logicalSize, dpr);
+    }
+  }
+
+  createOverlayLayer(options: CanvasOverlayLayerOptions): CanvasOverlayLayer {
+    this.assertMounted();
+    const canvas =
+      this.options.overlayCanvasFactory?.(options.name) ?? document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (context === null) {
+      throw new RenderingError(
+        "CANVAS_CONTEXT_UNAVAILABLE",
+        `A 2D canvas context could not be acquired for overlay layer ${options.name}.`,
+        { layer: options.name },
+      );
+    }
+    const layer = new CanvasOverlayLayerImplementation({
+      canvas,
+      context,
+      container: this.requireContainer(),
+      options,
+      onDestroy: (destroyedLayer) => this.overlayLayers.delete(destroyedLayer),
+    });
+    this.overlayLayers.add(layer);
+    const viewport = this.requireViewport();
+    layer.resize(viewport.size, viewport.devicePixelRatio);
+    return layer;
   }
 
   refreshDevicePixelRatio(): void {
@@ -366,6 +402,8 @@ export class CanvasController {
   }
 
   private cleanupMount(): void {
+    for (const layer of [...this.overlayLayers]) layer.destroy();
+    this.overlayLayers.clear();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.stopObservingDpr?.();
@@ -423,6 +461,13 @@ export class CanvasController {
       throw new RenderingError("CONTROLLER_NOT_MOUNTED", "The canvas controller has no canvas.");
     }
     return this.canvasValue;
+  }
+
+  private requireContainer(): HTMLElement {
+    if (this.container === null) {
+      throw new RenderingError("CONTROLLER_NOT_MOUNTED", "The canvas controller has no container.");
+    }
+    return this.container;
   }
 
   private requireViewport(): Viewport {

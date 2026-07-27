@@ -15,6 +15,8 @@ export {
   type CanvasBounds,
   type CanvasControllerOptions,
   type CanvasControllerSnapshot,
+  type CanvasOverlayLayer,
+  type CanvasOverlayLayerOptions,
   type DirtyRegion,
   type Insets,
   type OverlayRenderHook,

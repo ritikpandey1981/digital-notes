@@ -7,8 +7,9 @@ export const CanvasHost = memo(function CanvasHost() {
       className="absolute inset-0 overflow-hidden"
       data-testid="canvas-host"
       data-canvas-state="ready"
+      data-ink-state="ready"
     >
-      <CanvasSurface className="size-full" />
+      <CanvasSurface className="relative size-full" />
     </div>
   );
 });

@@ -112,11 +112,26 @@ export interface CanvasControllerSnapshot {
   readonly diagnostics: RenderDiagnosticsSnapshot;
 }
 
+export interface CanvasOverlayLayerOptions {
+  readonly name: string;
+  readonly interactive?: boolean;
+  readonly ariaLabel?: string;
+}
+
+export interface CanvasOverlayLayer {
+  readonly canvas: HTMLCanvasElement;
+  readonly context: CanvasRenderingContext2D;
+  readonly name: string;
+  setResizeHandler(handler: (() => void) | null): void;
+  destroy(): void;
+}
+
 export interface CanvasControllerOptions {
   readonly page?: RenderPage;
   readonly theme?: RenderTheme;
   readonly fitPadding?: number | Partial<Insets>;
   readonly canvasFactory?: () => HTMLCanvasElement;
+  readonly overlayCanvasFactory?: (name: string) => HTMLCanvasElement;
   readonly resizeObserverFactory?: ResizeObserverFactory;
   readonly animationFrameAdapter?: AnimationFrameAdapter;
   readonly getDevicePixelRatio?: () => number;

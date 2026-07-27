@@ -1,3 +1,4 @@
+import { PointerInputController, StrokeRenderer } from "@folio/ink";
 import {
   CanvasController,
   type CanvasControllerSnapshot,
@@ -48,10 +49,53 @@ export function CanvasSurface({
       onError: (error) => onError?.(error),
     });
     let themeObserver: MutationObserver | null = null;
+    let pointerInput: PointerInputController | null = null;
+    let strokeRenderer: StrokeRenderer | null = null;
+    let inkLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
 
     try {
       controller.mount(host);
+      const viewport = controller.viewport;
+      const coordinateConverter = controller.coordinateConverter;
+      if (viewport === null || coordinateConverter === null) {
+        throw new Error("Canvas viewport initialization failed.");
+      }
+      inkLayer = controller.createOverlayLayer({
+        name: "ink",
+        interactive: true,
+        ariaLabel: "Ink input surface",
+      });
+      strokeRenderer = new StrokeRenderer({
+        context: inkLayer.context,
+        canvas: inkLayer.canvas,
+        viewport,
+      });
+      const activeStrokeRenderer = strokeRenderer;
+      inkLayer.setResizeHandler(() => activeStrokeRenderer.redraw());
+      activeStrokeRenderer.redraw();
+      pointerInput = new PointerInputController({
+        coordinateConverter,
+        getCanvasBounds: () => {
+          const bounds = inkLayer?.canvas.getBoundingClientRect();
+          if (bounds === undefined) {
+            throw new Error("Ink canvas bounds are unavailable.");
+          }
+          return {
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+          };
+        },
+        onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),
+        onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
+        onStrokeFinalized: (stroke) => activeStrokeRenderer.finalizeStroke(stroke),
+        onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
+        onError: (error) => onError?.(error),
+      });
+      pointerInput.attach(inkLayer.canvas);
       host.dataset.rendererState = "ready";
+      host.dataset.inkState = "ready";
       onControllerReady?.(controller);
       onDiagnostics?.(controller.snapshot());
       themeObserver = new MutationObserver(() => {
@@ -72,6 +116,9 @@ export function CanvasSurface({
 
     return () => {
       themeObserver?.disconnect();
+      pointerInput?.destroy();
+      strokeRenderer?.destroy();
+      inkLayer?.destroy();
       controller.destroy();
     };
   }, [onControllerReady, onDiagnostics, onError]);

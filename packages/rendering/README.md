@@ -14,8 +14,9 @@ src/
 ├── diagnostics.ts            Frame, render, resize, DPR, and context-loss metrics
 ├── errors.ts                 Structured rendering failures
 ├── internal/
-│   ├── dirty-regions.ts      Invalidation coalescing
-│   └── geometry.ts           Private geometry validation and freezing
+│   ├── canvas-overlay-layer.ts  Owned, synchronized overlay canvas lifecycle
+│   ├── dirty-regions.ts         Invalidation coalescing
+│   └── geometry.ts              Private geometry validation and freezing
 ├── renderer.ts               Deterministic Canvas 2D rendering pipeline
 ├── render-scheduler.ts       One-shot requestAnimationFrame scheduler
 ├── types.ts                  Immutable public rendering contracts
@@ -25,6 +26,7 @@ src/
 ## Public API
 
 - `CanvasController` owns creation, mount, resize, context loss/restoration, render requests, and disposal.
+- `CanvasController.createOverlayLayer` creates an independently rendered canvas whose size and DPR remain synchronized with the viewport and whose lifecycle remains owned by the controller.
 - `Renderer` draws immutable blank-page inputs in a fixed order and exposes future overlay hooks.
 - `Viewport` owns camera, logical size, page rectangle, visible world rectangle, world bounds, and DPR.
 - `Camera` owns pan position and zoom, constrained by default to 25%–800%.
@@ -103,6 +105,7 @@ Destroying a controller disconnects its `ResizeObserver`, removes DPR and contex
 - Page shadow and border widths compensate for camera zoom to stay visually stable.
 - Immutable viewport snapshots and page/theme inputs make a frame deterministic.
 - Multiple requests are coalesced and a completed frame does not schedule another frame.
+- Overlay layers share the controller's resize and disposal lifecycle while keeping specialized renderers out of the base page pipeline.
 - Rectangular invalidation, world bounds, page replacement, background strategies, and ordered overlay hooks are stable seams for future page stacks and object/overlay renderers.
 - Camera rotation is represented as a fixed zero in snapshots, reserving a future contract hook without implementing rotation in Phase 6.
 

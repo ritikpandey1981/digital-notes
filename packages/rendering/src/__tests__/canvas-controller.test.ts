@@ -28,7 +28,9 @@ function createContext(): CanvasRenderingContext2D {
   } as unknown as CanvasRenderingContext2D;
 }
 
-function createHarness(options: { contextAvailable?: boolean; dpr?: number } = {}) {
+function createHarness(
+  options: { contextAvailable?: boolean; dpr?: number; overlayContextAvailable?: boolean } = {},
+) {
   const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   const context = createContext();
   let contextAvailable = options.contextAvailable ?? true;
@@ -51,6 +53,8 @@ function createHarness(options: { contextAvailable?: boolean; dpr?: number } = {
   } as unknown as HTMLCanvasElement;
 
   const children: HTMLCanvasElement[] = [];
+  const overlays: HTMLCanvasElement[] = [];
+  const overlayContexts: CanvasRenderingContext2D[] = [];
   const container = {
     appendChild(child: HTMLCanvasElement) {
       children.push(child);
@@ -112,6 +116,23 @@ function createHarness(options: { contextAvailable?: boolean; dpr?: number } = {
 
   const controller = new CanvasController({
     canvasFactory: () => canvas,
+    overlayCanvasFactory: () => {
+      const overlayContext = createContext();
+      const overlay = {
+        width: 0,
+        height: 0,
+        dataset: {} as DOMStringMap,
+        style: {} as CSSStyleDeclaration,
+        parentElement: null as HTMLElement | null,
+        getContext: vi.fn(() =>
+          options.overlayContextAvailable === false ? null : overlayContext,
+        ),
+        setAttribute: vi.fn(),
+      } as unknown as HTMLCanvasElement;
+      overlays.push(overlay);
+      overlayContexts.push(overlayContext);
+      return overlay;
+    },
     resizeObserverFactory,
     animationFrameAdapter,
     getDevicePixelRatio: () => dpr,
@@ -139,6 +160,8 @@ function createHarness(options: { contextAvailable?: boolean; dpr?: number } = {
     context,
     container,
     children,
+    overlays,
+    overlayContexts,
     listeners,
     observe,
     disconnect,
@@ -236,6 +259,49 @@ describe("CanvasController", () => {
     expect(harness.canvas.width).toBe(1_200);
     expect(harness.canvas.height).toBe(900);
     expect(harness.controller.snapshot().diagnostics.devicePixelRatio).toBe(1.5);
+  });
+
+  it("owns independently resizable interactive overlay canvas layers", () => {
+    const harness = createHarness({ dpr: 2 });
+    harness.controller.mount(harness.container);
+    const layer = harness.controller.createOverlayLayer({
+      name: "ink",
+      interactive: true,
+      ariaLabel: "Ink input surface",
+    });
+    const resizeHandler = vi.fn();
+    layer.setResizeHandler(resizeHandler);
+
+    expect(harness.children).toEqual([harness.canvas, layer.canvas]);
+    expect(layer.canvas.width).toBe(1_600);
+    expect(layer.canvas.height).toBe(1_200);
+    expect(layer.canvas.dataset.folioLayer).toBe("ink");
+    expect(layer.canvas.style.pointerEvents).toBe("auto");
+    expect(layer.canvas.style.touchAction).toBe("none");
+    expect(layer.canvas.setAttribute).toHaveBeenCalledWith("aria-label", "Ink input surface");
+
+    harness.emitResize(1_000, 700);
+    expect(layer.canvas.width).toBe(2_000);
+    expect(layer.canvas.height).toBe(1_400);
+    expect(resizeHandler).toHaveBeenCalledOnce();
+
+    layer.destroy();
+    layer.destroy();
+    expect(harness.children).toEqual([harness.canvas]);
+  });
+
+  it("reports unavailable overlay contexts and disposes overlays with the controller", () => {
+    const missing = createHarness({ overlayContextAvailable: false });
+    missing.controller.mount(missing.container);
+    expect(() => missing.controller.createOverlayLayer({ name: "ink" })).toThrowError(
+      expect.objectContaining({ code: "CANVAS_CONTEXT_UNAVAILABLE" }),
+    );
+
+    const harness = createHarness();
+    harness.controller.mount(harness.container);
+    harness.controller.createOverlayLayer({ name: "ink" });
+    harness.controller.destroy();
+    expect(harness.children).toHaveLength(0);
   });
 
   it("updates page and theme through public immutable render inputs", () => {

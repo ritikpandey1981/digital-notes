@@ -110,6 +110,9 @@ importers:
 
   packages/editor:
     dependencies:
+      '@folio/ink':
+        specifier: workspace:*
+        version: link:../ink
       '@folio/rendering':
         specifier: workspace:*
         version: link:../rendering
@@ -129,6 +132,12 @@ importers:
       '@folio/persistence':
         specifier: workspace:*
         version: link:../persistence
+
+  packages/ink:
+    dependencies:
+      '@folio/rendering':
+        specifier: workspace:*
+        version: link:../rendering
 
   packages/persistence:
     dependencies:
