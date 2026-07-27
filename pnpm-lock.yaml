@@ -107,7 +107,11 @@ importers:
 
   packages/editor: {}
 
-  packages/persistence: {}
+  packages/persistence:
+    dependencies:
+      '@folio/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/rendering: {}
 
