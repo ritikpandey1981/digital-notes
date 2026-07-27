@@ -60,6 +60,7 @@ export interface CloneObjectOptions {
   readonly visible?: boolean;
   readonly locked?: boolean;
   readonly zIndex?: number;
+  readonly transform?: Transform;
   readonly renderingHints?: RenderingHints;
 }
 

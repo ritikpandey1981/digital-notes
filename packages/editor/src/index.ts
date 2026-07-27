@@ -1,2 +1,6 @@
 export {};
-export { CanvasSurface, type CanvasSurfaceProps } from "./CanvasSurface";
+export {
+  CanvasSurface,
+  type CanvasInteractionMode,
+  type CanvasSurfaceProps,
+} from "./CanvasSurface";

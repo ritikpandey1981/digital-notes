@@ -15,15 +15,22 @@ describe("Transform", () => {
     expect(Object.isFrozen(transform.translation)).toBe(true);
   });
 
-  it.each([
-    { translation: { x: 1, y: 0 } },
-    { rotation: 1 },
-    { scale: 2 },
-    { translation: { x: Number.NaN, y: 0 } },
-  ])("rejects non-identity or invalid Phase 8 transforms", (input) => {
-    expect(() => new Transform(input)).toThrowError(
-      expect.objectContaining({ code: "OBJECT_VALIDATION_FAILED" }),
-    );
+  it.each([{ rotation: 1 }, { scale: 2 }, { translation: { x: Number.NaN, y: 0 } }])(
+    "rejects unsupported or invalid Phase 10 transforms",
+    (input) => {
+      expect(() => new Transform(input)).toThrowError(
+        expect.objectContaining({ code: "OBJECT_VALIDATION_FAILED" }),
+      );
+    },
+  );
+
+  it("supports finite immutable translation while retaining rotation and scale guards", () => {
+    const transform = new Transform({ translation: { x: 12, y: -8 } });
+    const moved = transform.translatedBy({ x: 3, y: 5 });
+    expect(transform.translation).toEqual({ x: 12, y: -8 });
+    expect(moved.translation).toEqual({ x: 15, y: -3 });
+    expect(moved).not.toBe(transform);
+    expect(Object.isFrozen(moved.translation)).toBe(true);
   });
 });
 
@@ -110,5 +117,30 @@ describe("ObjectFactory", () => {
     const factory = new ObjectFactory({ createId: () => "object", now: () => FIRST_TIMESTAMP });
     const object = factory.createInkObject({ stroke: createStroke() });
     expect(factory.validateObject(object)).toEqual({ valid: true, issues: [] });
+  });
+
+  it("creates a translated same-identity replacement without copying stroke geometry", () => {
+    const stroke = createStroke();
+    const factory = new ObjectFactory({ now: () => SECOND_TIMESTAMP });
+    const source = createInkObject(
+      { id: "movable", stroke, createdAt: FIRST_TIMESTAMP },
+      { now: () => FIRST_TIMESTAMP },
+    );
+    const replacement = factory.translateObject(source, { x: 20, y: -10 });
+    expect(replacement).not.toBe(source);
+    expect(replacement).toMatchObject({
+      id: source.id,
+      createdAt: FIRST_TIMESTAMP,
+      modifiedAt: SECOND_TIMESTAMP,
+      transform: { translation: { x: 20, y: -10 } },
+    });
+    expect(replacement.stroke).toBe(source.stroke);
+    expect(replacement.bounds).toEqual({
+      x: source.bounds.x + 20,
+      y: source.bounds.y - 10,
+      width: source.bounds.width,
+      height: source.bounds.height,
+    });
+    expect(source.transform.translation).toEqual({ x: 0, y: 0 });
   });
 });

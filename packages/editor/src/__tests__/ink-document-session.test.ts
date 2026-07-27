@@ -57,4 +57,30 @@ describe("InkDocumentSession", () => {
     expect(session.snapshot().objectCount).toBe(0);
     expect(Object.isFrozen(source)).toBe(true);
   });
+
+  it("replaces an object immutably while retaining identity and stroke geometry", () => {
+    let now = "2026-07-27T08:00:00.000Z";
+    const session = new InkDocumentSession({
+      createId: () => "object",
+      now: () => now,
+    });
+    const sourceStroke = stroke("stroke");
+    const original = session.completeStroke(sourceStroke);
+    now = "2026-07-27T08:01:00.000Z";
+    const translated = session.translateObject(original.id, { x: 40, y: -15 });
+
+    expect(translated).not.toBe(original);
+    expect(translated?.id).toBe(original.id);
+    expect(translated?.stroke).toBe(sourceStroke);
+    expect(translated?.transform.translation).toEqual({ x: 40, y: -15 });
+    expect(translated?.bounds).toEqual({
+      x: original.bounds.x + 40,
+      y: original.bounds.y - 15,
+      width: original.bounds.width,
+      height: original.bounds.height,
+    });
+    expect(session.collection.lookup(original.id)).toBe(translated);
+    expect(original.transform.translation).toEqual({ x: 0, y: 0 });
+    expect(session.translateObject("missing", { x: 1, y: 1 })).toBeNull();
+  });
 });

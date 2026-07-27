@@ -23,6 +23,7 @@ export class InkObject implements InkObjectView {
   readonly transform: Transform;
   readonly stroke: Stroke;
   readonly renderingHints: RenderingHints;
+  private readonly boundsValue: ObjectBounds;
 
   constructor(data: InkObjectData) {
     this.id = data.id;
@@ -35,12 +36,20 @@ export class InkObject implements InkObjectView {
     this.transform = data.transform;
     this.stroke = data.stroke;
     this.renderingHints = freezeJsonObject(data.renderingHints, "$.renderingHints");
+    this.boundsValue = this.transform.isIdentity
+      ? this.stroke.inflatedBounds
+      : Object.freeze({
+          x: this.stroke.inflatedBounds.x + this.transform.translation.x,
+          y: this.stroke.inflatedBounds.y + this.transform.translation.y,
+          width: this.stroke.inflatedBounds.width,
+          height: this.stroke.inflatedBounds.height,
+        });
     assertValidObject(this);
     Object.freeze(this);
   }
 
   get bounds(): ObjectBounds {
-    return this.stroke.inflatedBounds;
+    return this.boundsValue;
   }
 
   get metrics(): StrokeMetrics {

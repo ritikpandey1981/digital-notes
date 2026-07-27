@@ -11,6 +11,7 @@ describe("@folio/ink public API", () => {
       "StrokeBuilder",
       "StrokeRenderer",
       "StrokeSmoother",
+      "createStrokeVisual",
     ]);
   });
 

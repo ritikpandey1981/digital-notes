@@ -14,6 +14,8 @@ describe("@folio/rendering public API", () => {
       "RenderScheduler",
       "Renderer",
       "RenderingError",
+      "SelectionOverlayRenderer",
+      "TranslationPreviewRenderer",
       "Viewport",
     ]);
   });

@@ -125,9 +125,15 @@ importers:
       '@folio/ink':
         specifier: workspace:*
         version: link:../ink
+      '@folio/manipulation':
+        specifier: workspace:*
+        version: link:../manipulation
       '@folio/rendering':
         specifier: workspace:*
         version: link:../rendering
+      '@folio/selection':
+        specifier: workspace:*
+        version: link:../selection
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -151,6 +157,19 @@ importers:
         specifier: workspace:*
         version: link:../rendering
 
+  packages/manipulation:
+    dependencies:
+      '@folio/document':
+        specifier: workspace:*
+        version: link:../document
+      '@folio/selection':
+        specifier: workspace:*
+        version: link:../selection
+    devDependencies:
+      '@folio/ink':
+        specifier: workspace:*
+        version: link:../ink
+
   packages/persistence:
     dependencies:
       '@folio/domain':
@@ -160,6 +179,16 @@ importers:
   packages/rendering: {}
 
   packages/search: {}
+
+  packages/selection:
+    dependencies:
+      '@folio/document':
+        specifier: workspace:*
+        version: link:../document
+    devDependencies:
+      '@folio/ink':
+        specifier: workspace:*
+        version: link:../ink
 
   packages/shared: {}
 

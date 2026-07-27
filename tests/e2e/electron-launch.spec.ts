@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron } from "@playwright/test";
 
-test("launches the shell with the Phase 8 document object lifecycle", async () => {
+test("launches the shell with the Phase 10 translation manipulation lifecycle", async () => {
   const repositoryRoot = process.cwd();
   const electronApp = await electron.launch({
     args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
@@ -26,17 +26,34 @@ test("launches the shell with the Phase 8 document object lifecycle", async () =
     await expect(canvasHost).toHaveAttribute("data-canvas-state", "ready");
     const canvas = canvasHost.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = canvasHost.locator("canvas[data-folio-layer='ink']");
+    const selectionCanvas = canvasHost.locator("canvas[data-folio-layer='selection']");
+    const manipulationCanvas = canvasHost.locator(
+      "canvas[data-folio-layer='manipulation-preview']",
+    );
     await expect(canvas).toBeVisible();
     await expect(inkCanvas).toBeVisible();
+    await expect(selectionCanvas).toBeVisible();
+    await expect(manipulationCanvas).toBeVisible();
     await expect(canvasHost).toHaveAttribute("data-ink-state", "ready");
     await expect(canvasSurface).toHaveAttribute("data-document-state", "ready");
+    await expect(canvasSurface).toHaveAttribute("data-selection-capability", "ready");
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-capability", "ready");
     await expect(canvas).toHaveAttribute("data-render-count", /[1-9]\d*/);
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "0");
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "0");
     await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "0");
     await expect(inkCanvas).toHaveAttribute("data-document-objects-immutable", "true");
+    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");
+    await expect(selectionCanvas).toHaveAttribute("data-selection-version", "0");
+    await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "empty");
     await canvas.evaluate((element) => element.setAttribute("data-mount-probe", "retained"));
     await inkCanvas.evaluate((element) => element.setAttribute("data-ink-mount-probe", "retained"));
+    await selectionCanvas.evaluate((element) =>
+      element.setAttribute("data-selection-mount-probe", "retained"),
+    );
+    await manipulationCanvas.evaluate((element) =>
+      element.setAttribute("data-manipulation-mount-probe", "retained"),
+    );
     await expect(window.getByText("Page 1 of 12")).toBeVisible();
 
     const metrics = await canvas.evaluate((element) => {
@@ -68,6 +85,8 @@ test("launches the shell with the Phase 8 document object lifecycle", async () =
     };
     const baseRenderBeforeInk = Number(await canvas.getAttribute("data-render-count"));
     const inkRenderBefore = Number(await inkCanvas.getAttribute("data-ink-render-count"));
+    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(window.getByRole("contentinfo")).toContainText("Pen");
     await window.mouse.move(start.x, start.y);
     await window.mouse.down();
     await window.mouse.move(start.x + 45, start.y + 20, { steps: 5 });
@@ -105,8 +124,119 @@ test("launches the shell with the Phase 8 document object lifecycle", async () =
     await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-document-objects-immutable", "true");
 
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await expect(window.getByRole("contentinfo")).toContainText("Pen");
+    const baseRenderBeforeSelection = Number(await canvas.getAttribute("data-render-count"));
+    const selectionRenderBefore = Number(
+      await selectionCanvas.getAttribute("data-selection-render-count"),
+    );
+    await window.getByRole("button", { name: "Select", exact: true }).click();
+    await expect(window.getByRole("button", { name: "Select", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await window.mouse.click(start.x, start.y);
+    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
+    await expect(canvasSurface).toHaveAttribute("data-selection-state", "selected");
+    await expect(selectionCanvas).toHaveAttribute("data-selected-object-id", /.+/);
+    await expect(selectionCanvas).toHaveAttribute("data-selected-object-type", "ink");
+    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
+    await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
+    expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeSelection);
+    await expect
+      .poll(async () => Number(await selectionCanvas.getAttribute("data-selection-render-count")))
+      .toBeGreaterThan(selectionRenderBefore);
+
+    const selectedObjectId = await selectionCanvas.getAttribute("data-selected-object-id");
+    const selectionVersion = await selectionCanvas.getAttribute("data-selection-version");
+    const selectionRenderAfterClick = await selectionCanvas.getAttribute(
+      "data-selection-render-count",
+    );
+    await window.mouse.click(start.x, start.y);
+    await expect(selectionCanvas).toHaveAttribute(
+      "data-selected-object-id",
+      selectedObjectId ?? "",
+    );
+    await expect(selectionCanvas).toHaveAttribute("data-selection-version", selectionVersion ?? "");
+    await expect(selectionCanvas).toHaveAttribute(
+      "data-selection-render-count",
+      selectionRenderAfterClick ?? "",
+    );
+
+    const objectCountBeforeMove = await inkCanvas.getAttribute("data-document-object-count");
+    const baseRenderBeforeMove = Number(await canvas.getAttribute("data-render-count"));
+    const inkRenderBeforeMove = Number(await inkCanvas.getAttribute("data-ink-render-count"));
+    const previewRenderBeforeMove = Number(
+      await manipulationCanvas.getAttribute("data-manipulation-render-count"),
+    );
+    const boundsXBeforeMove = Number(
+      await canvasSurface.getAttribute("data-selected-object-bounds-x"),
+    );
+    const boundsYBeforeMove = Number(
+      await canvasSurface.getAttribute("data-selected-object-bounds-y"),
+    );
+    await window.getByRole("button", { name: "Move", exact: true }).click();
+    await expect(window.getByRole("button", { name: "Move", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await window.mouse.move(start.x, start.y);
+    await window.mouse.down();
+    await window.mouse.move(start.x + 60, start.y + 40, { steps: 6 });
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
+    await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
+    await expect(manipulationCanvas).toHaveAttribute(
+      "data-manipulation-object-id",
+      selectedObjectId ?? "",
+    );
+    await expect
+      .poll(async () =>
+        Number(await manipulationCanvas.getAttribute("data-manipulation-render-count")),
+      )
+      .toBeGreaterThan(previewRenderBeforeMove);
+    expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
+    await window.mouse.up();
+    await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "idle");
+    await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "empty");
+    await expect(selectionCanvas).toHaveAttribute(
+      "data-selected-object-id",
+      selectedObjectId ?? "",
+    );
+    await expect(selectionCanvas).toHaveAttribute("data-selection-version", selectionVersion ?? "");
+    await expect(inkCanvas).toHaveAttribute(
+      "data-document-object-count",
+      objectCountBeforeMove ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-document-object-count",
+      objectCountBeforeMove ?? "",
+    );
+    expect(
+      Number(await canvasSurface.getAttribute("data-selected-object-bounds-x")),
+    ).toBeGreaterThan(boundsXBeforeMove);
+    expect(
+      Number(await canvasSurface.getAttribute("data-selected-object-bounds-y")),
+    ).toBeGreaterThan(boundsYBeforeMove);
+    expect(
+      Number(await canvasSurface.getAttribute("data-selected-object-translation-x")),
+    ).toBeGreaterThan(0);
+    expect(
+      Number(await canvasSurface.getAttribute("data-selected-object-translation-y")),
+    ).toBeGreaterThan(0);
+    expect(Number(await inkCanvas.getAttribute("data-ink-render-count"))).toBeGreaterThan(
+      inkRenderBeforeMove,
+    );
+    expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
+    await expect
+      .poll(async () => {
+        const before = Number(
+          await manipulationCanvas.getAttribute("data-manipulation-render-count"),
+        );
+        await window.waitForTimeout(250);
+        const after = Number(
+          await manipulationCanvas.getAttribute("data-manipulation-render-count"),
+        );
+        return after - before;
+      })
+      .toBe(0);
 
     await window.getByRole("button", { name: "Show notification preview" }).click();
     await expect(window.getByRole("status")).toContainText("Shell ready");
@@ -118,8 +248,11 @@ test("launches the shell with the Phase 8 document object lifecycle", async () =
     await window.getByRole("button", { name: "Collapse sidebar" }).click();
     await expect(canvas).toHaveAttribute("data-mount-probe", "retained");
     await expect(inkCanvas).toHaveAttribute("data-ink-mount-probe", "retained");
+    await expect(selectionCanvas).toHaveAttribute("data-selection-mount-probe", "retained");
+    await expect(manipulationCanvas).toHaveAttribute("data-manipulation-mount-probe", "retained");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
+    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
 
     const beforeResize = Number(await canvas.getAttribute("data-render-count"));
     const inkBeforeResize = Number(await inkCanvas.getAttribute("data-ink-render-count"));
@@ -137,19 +270,64 @@ test("launches the shell with the Phase 8 document object lifecycle", async () =
       .toBe(0);
     await expect(canvas).toHaveAttribute("data-mount-probe", "retained");
     await expect(inkCanvas).toHaveAttribute("data-ink-mount-probe", "retained");
+    await expect(selectionCanvas).toHaveAttribute("data-selection-mount-probe", "retained");
+    await expect(manipulationCanvas).toHaveAttribute("data-manipulation-mount-probe", "retained");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
     await expect
       .poll(async () => Number(await inkCanvas.getAttribute("data-ink-render-count")))
       .toBeGreaterThan(inkBeforeResize);
+    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
+
+    const resizedMetrics = await canvas.evaluate((element) => {
+      const canvasElement = element as HTMLCanvasElement;
+      return {
+        logicalWidth: Number(canvasElement.dataset.logicalWidth),
+        logicalHeight: Number(canvasElement.dataset.logicalHeight),
+        pageX: Number(canvasElement.dataset.pageX),
+        pageY: Number(canvasElement.dataset.pageY),
+        pageWidth: Number(canvasElement.dataset.pageWidth),
+        pageHeight: Number(canvasElement.dataset.pageHeight),
+      };
+    });
+    const resizedInkBounds = await inkCanvas.boundingBox();
+    if (resizedInkBounds === null) throw new Error("Resized ink canvas has no visible bounds.");
+    const emptyPoint = {
+      x:
+        resizedInkBounds.x +
+        (resizedMetrics.pageX + resizedMetrics.pageWidth * 0.85) *
+          (resizedInkBounds.width / resizedMetrics.logicalWidth),
+      y:
+        resizedInkBounds.y +
+        (resizedMetrics.pageY + resizedMetrics.pageHeight * 0.85) *
+          (resizedInkBounds.height / resizedMetrics.logicalHeight),
+    };
+    await window.getByRole("button", { name: "Select", exact: true }).click();
+    await window.mouse.click(emptyPoint.x, emptyPoint.y);
+    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");
+    await expect(selectionCanvas).toHaveAttribute("data-selected-object-id", "");
+    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
+    await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
     expect(consoleErrors).toEqual([]);
 
     await window.reload();
     const freshInkCanvas = window.locator("canvas[data-folio-layer='ink']");
+    const freshSelectionCanvas = window.locator("canvas[data-folio-layer='selection']");
+    const freshManipulationCanvas = window.locator(
+      "canvas[data-folio-layer='manipulation-preview']",
+    );
     await expect(freshInkCanvas).toBeVisible();
+    await expect(freshSelectionCanvas).toBeVisible();
+    await expect(freshManipulationCanvas).toBeVisible();
     await expect(freshInkCanvas).toHaveAttribute("data-ink-stroke-count", "0");
     await expect(freshInkCanvas).toHaveAttribute("data-document-object-count", "0");
     await expect(freshInkCanvas).toHaveAttribute("data-document-ink-object-count", "0");
+    await expect(freshSelectionCanvas).toHaveAttribute("data-selection-state", "empty");
+    await expect(freshSelectionCanvas).toHaveAttribute("data-selection-version", "0");
+    await expect(freshManipulationCanvas).toHaveAttribute(
+      "data-manipulation-preview-state",
+      "empty",
+    );
     await expect(window.getByText("Page 1 of 12")).toBeVisible();
   } finally {
     await electronApp.close();

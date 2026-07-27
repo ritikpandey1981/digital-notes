@@ -1,7 +1,20 @@
 import { CanvasSurface } from "@folio/editor";
 import { memo } from "react";
+import type { EditorTool } from "./editor-types";
 
-export const CanvasHost = memo(function CanvasHost() {
+interface CanvasHostProps {
+  readonly activeTool: EditorTool;
+}
+
+export const CanvasHost = memo(function CanvasHost({ activeTool }: CanvasHostProps) {
+  const interactionMode =
+    activeTool === "Select"
+      ? "select"
+      : activeTool === "Move"
+        ? "move"
+        : activeTool === "Pen"
+          ? "ink"
+          : "disabled";
   return (
     <div
       className="absolute inset-0 overflow-hidden"
@@ -9,8 +22,10 @@ export const CanvasHost = memo(function CanvasHost() {
       data-canvas-state="ready"
       data-document-state="ready"
       data-ink-state="ready"
+      data-selection-capability="ready"
+      data-manipulation-capability="ready"
     >
-      <CanvasSurface className="relative size-full" />
+      <CanvasSurface className="relative size-full" interactionMode={interactionMode} />
     </div>
   );
 });

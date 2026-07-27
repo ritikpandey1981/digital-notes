@@ -1,7 +1,7 @@
 import { RenderScheduler, type Point, type Rect, type Viewport } from "@folio/rendering";
 import { InkError } from "./errors";
+import { drawStrokePoints } from "./internal/draw-stroke";
 import { freezeRect, unionRects } from "./internal/geometry";
-import { strokeWidth } from "./internal/style";
 import type { Stroke } from "./stroke";
 import type {
   StrokePoint,
@@ -18,13 +18,40 @@ interface LiveStrokeState {
   dirtyRect: Rect;
 }
 
+interface FinalizedStrokeState {
+  readonly stroke: Stroke;
+  readonly translation: Point;
+  readonly bounds: Rect;
+}
+
+function freezeTranslation(translation: Point): Point {
+  if (!Number.isFinite(translation.x) || !Number.isFinite(translation.y)) {
+    throw new InkError("INVALID_STROKE", "Stroke translation must contain finite coordinates.");
+  }
+  return Object.freeze({ x: translation.x, y: translation.y });
+}
+
+function createFinalizedStrokeState(stroke: Stroke, translation: Point): FinalizedStrokeState {
+  const frozenTranslation = freezeTranslation(translation);
+  return Object.freeze({
+    stroke,
+    translation: frozenTranslation,
+    bounds: freezeRect({
+      x: stroke.inflatedBounds.x + frozenTranslation.x,
+      y: stroke.inflatedBounds.y + frozenTranslation.y,
+      width: stroke.inflatedBounds.width,
+      height: stroke.inflatedBounds.height,
+    }),
+  });
+}
+
 export class StrokeRenderer {
   private readonly context: CanvasRenderingContext2D;
   private readonly viewport: Viewport;
   private readonly canvas: HTMLCanvasElement | undefined;
   private readonly onInvalidate: ((dirtyRect: Rect) => void) | undefined;
   private readonly scheduler: RenderScheduler;
-  private readonly finalizedStrokes: Stroke[] = [];
+  private readonly finalizedStrokes: FinalizedStrokeState[] = [];
   private liveStroke: LiveStrokeState | null = null;
   private pendingDirtyRect: Rect | null = null;
   private renderedLivePointCount = 0;
@@ -75,22 +102,40 @@ export class StrokeRenderer {
     this.invalidate(update.dirtyRect);
   }
 
-  finalizeStroke(stroke: Stroke): void {
+  finalizeStroke(stroke: Stroke, translation: Point = { x: 0, y: 0 }): void {
     this.assertActive();
+    const finalized = createFinalizedStrokeState(stroke, translation);
     if (this.liveStroke !== null && this.liveStroke.id === stroke.id) {
       // Finalization releases the builder's mutable point buffer. Swap to the
       // immutable stroke points before flushing the final pending segment.
       this.liveStroke.points = stroke.points;
       this.scheduler.forceRender();
-      this.finalizedStrokes.push(stroke);
+      this.finalizedStrokes.push(finalized);
       this.liveStroke = null;
       this.pendingDirtyRect = null;
       this.renderedLivePointCount = 0;
     } else {
-      this.finalizedStrokes.push(stroke);
+      this.finalizedStrokes.push(finalized);
       this.redraw();
     }
     this.updateCanvasDiagnostics();
+  }
+
+  /** Updates one permanent stroke's absolute page translation and redraws only affected bounds. */
+  setStrokeTranslation(strokeId: string, translation: Point): boolean {
+    this.assertActive();
+    const index = this.finalizedStrokes.findIndex(({ stroke }) => stroke.id === strokeId);
+    const current = this.finalizedStrokes[index];
+    if (current === undefined) return false;
+    if (current.translation.x === translation.x && current.translation.y === translation.y) {
+      return false;
+    }
+    const next = createFinalizedStrokeState(current.stroke, translation);
+    this.finalizedStrokes[index] = next;
+    const affected = unionRects(current.bounds, next.bounds);
+    this.recordInvalidation(affected);
+    this.clearAndRedrawRegion(affected);
+    return true;
   }
 
   cancelStroke(dirtyRect: Rect | null): void {
@@ -124,7 +169,7 @@ export class StrokeRenderer {
     context.restore();
 
     this.withPageTransform(null, () => {
-      for (const stroke of this.finalizedStrokes) this.drawPoints(stroke.points, stroke.style, 0);
+      for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
       if (this.liveStroke !== null) {
         this.drawPoints(this.liveStroke.points, this.liveStroke.style, 0);
         this.renderedLivePointCount = this.liveStroke.points.length;
@@ -139,7 +184,7 @@ export class StrokeRenderer {
     return Object.freeze({
       finalizedStrokeCount: this.finalizedStrokes.length,
       finalizedPointCount: this.finalizedStrokes.reduce(
-        (total, stroke) => total + stroke.pointCount,
+        (total, { stroke }) => total + stroke.pointCount,
         0,
       ),
       livePointCount: this.liveStroke?.points.length ?? 0,
@@ -201,7 +246,7 @@ export class StrokeRenderer {
     context.clearRect(viewportRect.x, viewportRect.y, viewportRect.width, viewportRect.height);
     context.restore();
     this.withPageTransform(dirtyRect, () => {
-      for (const stroke of this.finalizedStrokes) this.drawPoints(stroke.points, stroke.style, 0);
+      for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
     });
     this.renderCountValue += 1;
     this.updateCanvasDiagnostics();
@@ -235,35 +280,14 @@ export class StrokeRenderer {
     startIndex: number,
   ): void {
     if (style === undefined || points.length === 0) return;
-    const context = this.context;
-    context.save();
-    context.globalAlpha = style.opacity;
-    context.strokeStyle = style.color;
-    context.fillStyle = style.color;
-    context.lineCap = style.lineCap;
-    context.lineJoin = style.lineJoin;
+    drawStrokePoints(this.context, points, style, startIndex);
+  }
 
-    if (startIndex === 0) {
-      const first = points[0];
-      if (first !== undefined) {
-        context.beginPath();
-        context.arc(first.x, first.y, strokeWidth(style, first.pressure) / 2, 0, Math.PI * 2);
-        context.fill();
-      }
-    }
-    const firstSegmentIndex = Math.max(1, startIndex + 1);
-    for (let index = firstSegmentIndex; index < points.length; index += 1) {
-      const previous = points[index - 1];
-      const point = points[index];
-      if (previous === undefined || point === undefined) continue;
-      context.lineWidth =
-        (strokeWidth(style, previous.pressure) + strokeWidth(style, point.pressure)) / 2;
-      context.beginPath();
-      context.moveTo(previous.x, previous.y);
-      context.lineTo(point.x, point.y);
-      context.stroke();
-    }
-    context.restore();
+  private drawFinalizedStroke(state: FinalizedStrokeState): void {
+    this.context.save();
+    this.context.translate(state.translation.x, state.translation.y);
+    drawStrokePoints(this.context, state.stroke.points, state.stroke.style);
+    this.context.restore();
   }
 
   private pageRectToViewport(rect: Rect): Rect {

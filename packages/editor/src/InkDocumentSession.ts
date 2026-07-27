@@ -33,6 +33,16 @@ export class InkDocumentSession {
     return stored;
   }
 
+  /** Replaces one object with a same-identity immutable translated aggregate. */
+  translateObject(objectId: string, delta: Readonly<{ x: number; y: number }>): InkObject | null {
+    const object = this.collectionValue.lookup(objectId);
+    if (!(object instanceof InkObject)) return null;
+    const translated = this.factory.translateObject(object, delta);
+    this.collectionValue = this.collectionValue.replace(translated);
+    const stored = this.collectionValue.lookup(objectId);
+    return stored instanceof InkObject ? stored : null;
+  }
+
   snapshot(): InkDocumentSessionSnapshot {
     const objects = this.collectionValue.objects;
     return Object.freeze({

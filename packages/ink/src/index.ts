@@ -4,6 +4,7 @@ export { Stroke, type StrokeData } from "./stroke";
 export { StrokeBuilder } from "./stroke-builder";
 export { StrokeRenderer } from "./stroke-renderer";
 export { StrokeSmoother } from "./stroke-smoother";
+export { createStrokeVisual, type StrokeVisual } from "./stroke-visual";
 export {
   DEFAULT_STROKE_STYLE,
   type InkErrorLike,

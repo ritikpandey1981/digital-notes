@@ -182,6 +182,21 @@ describe("StrokeRenderer", () => {
     expect(vi.mocked(harness.context.stroke).mock.calls.length).toBeGreaterThan(strokeCalls);
   });
 
+  it("translates one finalized stroke without mutating its immutable geometry", () => {
+    const harness = createHarness();
+    harness.renderer.beginStroke(harness.add(point(10, 10, 0)));
+    const stroke = harness.builder.finalize();
+    harness.renderer.finalizeStroke(stroke);
+    const clears = vi.mocked(harness.context.clearRect).mock.calls.length;
+
+    expect(harness.renderer.setStrokeTranslation(stroke.id, { x: 30, y: -12 })).toBe(true);
+    expect(stroke.points[0]).toMatchObject({ x: 10, y: 10 });
+    expect(harness.context.translate).toHaveBeenCalledWith(30, -12);
+    expect(vi.mocked(harness.context.clearRect).mock.calls.length).toBe(clears + 1);
+    expect(harness.renderer.setStrokeTranslation(stroke.id, { x: 30, y: -12 })).toBe(false);
+    expect(harness.renderer.setStrokeTranslation("missing", { x: 1, y: 1 })).toBe(false);
+  });
+
   it("keeps temporary and finalized stroke lifecycles separate", () => {
     const permanent = createHarness();
     permanent.renderer.beginStroke(permanent.add(point(10, 10, 0)));

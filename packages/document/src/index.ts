@@ -1,7 +1,7 @@
 export { DocumentObjectError, ObjectValidationError } from "./errors";
 export { InkObject } from "./ink-object";
 export { ObjectCollection } from "./object-collection";
-export { ObjectFactory, cloneObject, createInkObject } from "./object-factory";
+export { ObjectFactory, cloneObject, createInkObject, translateObject } from "./object-factory";
 export { Transform, type TransformInput } from "./transform";
 export type {
   CloneObjectOptions,

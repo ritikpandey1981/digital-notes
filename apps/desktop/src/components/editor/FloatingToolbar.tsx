@@ -2,6 +2,7 @@ import {
   Eraser,
   Highlighter,
   Image,
+  Move,
   MousePointer2,
   PenLine,
   Shapes,
@@ -19,6 +20,7 @@ interface FloatingToolbarProps {
 
 const tools = [
   { label: "Select", icon: MousePointer2 },
+  { label: "Move", icon: Move },
   { label: "Pen", icon: PenLine },
   { label: "Highlighter", icon: Highlighter },
   { label: "Eraser", icon: Eraser },
@@ -39,7 +41,7 @@ export function FloatingToolbar({ activeTool, onSelectTool }: FloatingToolbarPro
       >
         {tools.map(({ label, icon: Icon }, index) => (
           <div key={label} className="contents">
-            {index === 4 || index === 9 ? (
+            {index === 5 || index === 10 ? (
               <span className="mx-0.5 h-6 w-px shrink-0 bg-folio-border" />
             ) : null}
             <button

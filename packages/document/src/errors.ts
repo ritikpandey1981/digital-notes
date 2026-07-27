@@ -4,6 +4,7 @@ export type DocumentObjectErrorCode =
   | "DUPLICATE_OBJECT_ID"
   | "INVALID_COLLECTION"
   | "INVALID_INDEX"
+  | "INVALID_OBJECT"
   | "OBJECT_NOT_FOUND"
   | "UNSUPPORTED_OBJECT_TYPE";
 

@@ -34,7 +34,7 @@ describe("document object validation", () => {
     ["invalid bounds", { bounds: { x: 0, y: 0, width: -1, height: 1 } }, "invalid_bounds"],
     [
       "invalid transform",
-      { transform: { translation: { x: 1, y: 0 }, rotation: 0, scale: 1 } },
+      { transform: { translation: { x: Number.NaN, y: 0 }, rotation: 0, scale: 1 } },
       "invalid_transform",
     ],
     ["invalid version", { version: 2 }, "invalid_version"],

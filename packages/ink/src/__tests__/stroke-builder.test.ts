@@ -65,6 +65,8 @@ describe("StrokeBuilder", () => {
     expect(Object.isFrozen(stroke.points)).toBe(true);
     expect(Object.isFrozen(stroke.points[0]?.delta)).toBe(true);
     expect(Object.isFrozen(stroke.metrics.bounds.center)).toBe(true);
+    expect(stroke.widthAtPressure(0.25)).toBe(1.5);
+    expect(stroke.widthAtPressure(0.75)).toBe(2.5);
     expect(builder.pointCount).toBe(0);
   });
 

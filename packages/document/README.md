@@ -1,6 +1,6 @@
 # @folio/document
 
-`@folio/document` is Folio's framework-independent immutable page-object architecture. Phase 8 implements the generic `PageObject` contract, identity transforms, lifecycle metadata, validation, factories, immutable collections, serialization interfaces, and exactly one concrete visual object: `InkObject`.
+`@folio/document` is Folio's framework-independent immutable page-object architecture. It implements the generic `PageObject` contract, lifecycle metadata, validation, factories, immutable collections, serialization interfaces, and exactly one concrete visual object: `InkObject`. Phase 10 activates finite page-space translation while rotation and scale remain reserved identity-only fields.
 
 The package does not implement editing, selection, rendering, persistence, history, Electron, React, or notebook mutation. `InkObject` imports `Stroke` only as a TypeScript type and retains the finalized immutable stroke by reference, so stroke points, metrics, statistics, and style are never duplicated.
 
@@ -100,15 +100,15 @@ Creation and cloning use injectable identifier and ISO timestamp providers. Clon
 
 ## Transform policy
 
-`Transform` structurally supports translation, rotation, and uniform scale, but Phase 8 accepts only the identity values:
+`Transform` structurally supports translation, rotation, and uniform scale. Phase 10 accepts finite translation while retaining the following constraints:
 
 ```text
-translation = { x: 0, y: 0 }
+translation = { x: finite, y: finite }
 rotation = 0
 scale = 1
 ```
 
-Non-identity, non-finite, or otherwise invalid transforms produce structured validation failures. This reserves the future contract without introducing move, resize, or rotation behavior.
+`Transform.translatedBy()` and `ObjectFactory.translateObject()` create new immutable values. A translated `InkObject` keeps its identity and `Stroke` reference, updates its lifecycle timestamp and bounds, and replaces the prior object through `ObjectCollection.replace()`. Non-finite translation, non-zero rotation, or non-unit scale produce structured validation failures.
 
 ## Validation
 
@@ -119,7 +119,7 @@ Validation reports immutable issues with stable paths and codes. It covers:
 - Invalid or reversed lifecycle timestamps
 - Invalid bounds, visibility, locks, and z-indices
 - Non-JSON, cyclic, non-plain, or non-finite metadata
-- Non-identity transforms
+- Non-finite or unsupported transforms
 - Missing or mutable stroke references
 - Duplicate identifiers in collections
 
@@ -154,10 +154,10 @@ There is no dependency from document objects to React, Electron, rendering, hist
 ## Future extension points
 
 - Additional `PageObjectType` variants and factory branches
-- Non-identity transform operations
+- Rotation and scale transform operations
 - Object-specific rendering hints
 - Persistence serialization adapters and migrations
 - History commands around immutable collection successors
 - Selection, hit testing, spatial indexing, and editor state
 
-All of these remain outside Phase 8.
+All of these remain outside Phase 10.

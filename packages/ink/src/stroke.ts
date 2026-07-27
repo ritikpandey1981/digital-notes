@@ -1,5 +1,5 @@
 import { InkError } from "./errors";
-import { createStrokeStyle } from "./internal/style";
+import { createStrokeStyle, strokeWidth } from "./internal/style";
 import type {
   StrokeBounds,
   StrokeMetrics,
@@ -85,5 +85,10 @@ export class Stroke {
 
   get pointCount(): number {
     return this.statistics.pointCount;
+  }
+
+  /** Returns the rendered stroke width for a normalized pressure sample. */
+  widthAtPressure(pressure: number): number {
+    return strokeWidth(this.style, pressure);
   }
 }

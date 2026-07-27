@@ -7,6 +7,21 @@ export { RenderingError, type RenderingErrorCode } from "./errors";
 export { Renderer, type RendererOptions } from "./renderer";
 export { RenderScheduler } from "./render-scheduler";
 export {
+  SelectionOverlayRenderer,
+  type SelectionOverlayRendererOptions,
+  type SelectionOverlayRendererSnapshot,
+  type SelectionOverlayStyle,
+  type SelectionOverlayTarget,
+} from "./selection-overlay-renderer";
+export {
+  TranslationPreviewRenderer,
+  type TranslationPreviewRendererOptions,
+  type TranslationPreviewRendererSnapshot,
+  type TranslationPreviewStyle,
+  type TranslationPreviewTarget,
+  type TranslationPreviewVisual,
+} from "./translation-preview-renderer";
+export {
   DEFAULT_FIT_PADDING,
   DEFAULT_PAGE,
   DEFAULT_RENDER_THEME,

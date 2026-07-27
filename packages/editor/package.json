@@ -10,7 +10,9 @@
   "dependencies": {
     "@folio/document": "workspace:*",
     "@folio/ink": "workspace:*",
+    "@folio/manipulation": "workspace:*",
     "@folio/rendering": "workspace:*",
+    "@folio/selection": "workspace:*",
     "react": "^19.2.8"
   },
   "devDependencies": {

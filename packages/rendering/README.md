@@ -2,7 +2,7 @@
 
 `@folio/rendering` is Folio's framework-independent, imperative Canvas 2D engine. It owns canvas lifecycle, camera and viewport geometry, coordinate conversion, demand-driven rendering, HiDPI backing-store management, resize observation, invalidation, and diagnostics. It has no dependency on React, Electron, the domain model, persistence, history, or search.
 
-Phase 6 deliberately renders only workspace background and immutable blank-page inputs. Editing, pointer input, hit testing, notebook objects, and tool behavior are outside this package.
+The base renderer deliberately draws only workspace background and immutable blank-page inputs. Renderer-owned transparent overlays accept immutable visual inputs for selection and translation preview. Editing, pointer input, hit testing, notebook-object ownership, and tool behavior remain outside this package.
 
 ## Package structure
 
@@ -19,6 +19,8 @@ src/
 │   └── geometry.ts              Private geometry validation and freezing
 ├── renderer.ts               Deterministic Canvas 2D rendering pipeline
 ├── render-scheduler.ts       One-shot requestAnimationFrame scheduler
+├── selection-overlay-renderer.ts  Isolated selection visual and invalidation lifecycle
+├── translation-preview-renderer.ts  Isolated translated visual preview lifecycle
 ├── types.ts                  Immutable public rendering contracts
 └── index.ts                  Deliberate public API barrel
 ```
@@ -34,6 +36,34 @@ src/
 - `RenderScheduler` coalesces invalidation into a single animation frame and never creates a continuous loop.
 - `Diagnostics` exposes immutable frame and size snapshots without adding UI.
 - `RenderingError` supplies stable error codes and structured details.
+- `SelectionOverlayRenderer` draws a cached-bounds highlight and outline on a dedicated transparent overlay without reading selection or document state.
+- `TranslationPreviewRenderer` draws an injected cached visual at an absolute page translation and invalidates only previous/current preview bounds.
+
+Public type exports are limited to the inputs, snapshots, geometry values, adapter contracts, and options required by these APIs. Validation, geometry freezing, dirty-region accumulation, default selection styling, and concrete overlay-layer implementations remain internal. A public-API test locks the runtime surface.
+
+## Selection overlay
+
+The selection overlay is an independent `CanvasController` layer above ink with pointer events disabled. `setSelection()` invalidates the previous and next cached bounds as separate regions, merging only regions that intersect; a bounded region budget falls back to one full overlay clear. Resize calls `redraw()` for the new logical size and DPR. Requests are coalesced by `RenderScheduler`; repeated input with the same object ID and bounds performs no work. The visual contract is intentionally limited to a highlight and outline with no handles, anchors, transforms, or editing behavior.
+
+```mermaid
+flowchart LR
+    Editor["Editor resolves selected object"] --> Target["Object ID + cached bounds"]
+    Target --> Overlay["SelectionOverlayRenderer"]
+    Overlay --> Scheduler["Demand-driven RenderScheduler"]
+    Scheduler --> Canvas["Transparent HiDPI overlay canvas"]
+```
+
+## Translation preview overlay
+
+`TranslationPreviewRenderer` is independent of manipulation logic. The editor supplies an object ID, raw geometry bounds, absolute page translation, and a cached `TranslationPreviewVisual`. Changes clear the old and new preview regions on a one-shot animation frame. Commit or cancel supplies `null`, which clears transient pixels without repainting the base page. Resize and DPR changes request one full transparent-layer redraw.
+
+```mermaid
+flowchart LR
+    Editor["Editor reads immutable manipulation state"] --> Target["ID + raw bounds + absolute translation + cached visual"]
+    Target --> Preview["TranslationPreviewRenderer"]
+    Preview --> Scheduler["One-shot RenderScheduler"]
+    Scheduler --> Overlay["Transparent HiDPI preview canvas"]
+```
 
 ## Renderer architecture
 
@@ -106,6 +136,8 @@ Destroying a controller disconnects its `ResizeObserver`, removes DPR and contex
 - Immutable viewport snapshots and page/theme inputs make a frame deterministic.
 - Multiple requests are coalesced and a completed frame does not schedule another frame.
 - Overlay layers share the controller's resize and disposal lifecycle while keeping specialized renderers out of the base page pipeline.
+- Selection overlay changes clear only affected old/new bounds; viewport resize requests a full transparent-layer redraw.
+- Translation preview changes reuse cached visuals, clear bounded old/new regions, and perform no idle repainting.
 - Rectangular invalidation, world bounds, page replacement, background strategies, and ordered overlay hooks are stable seams for future page stacks and object/overlay renderers.
 - Camera rotation is represented as a fixed zero in snapshots, reserving a future contract hook without implementing rotation in Phase 6.
 

@@ -1,5 +1,6 @@
 export type EditorTool =
   | "Select"
+  | "Move"
   | "Pen"
   | "Highlighter"
   | "Eraser"
