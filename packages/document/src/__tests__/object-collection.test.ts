@@ -63,6 +63,30 @@ describe("ObjectCollection", () => {
     expect(removed.objects.map(({ id, zIndex }) => `${id}:${zIndex}`)).toEqual(["a:0", "c:1"]);
   });
 
+  it("inserts at a deterministic position without mutating the source collection", () => {
+    const original = new ObjectCollection([object("a"), object("c")]);
+    const inserted = original.insert(object("b", 99), 1);
+
+    expect(original.objects.map(({ id, zIndex }) => `${id}:${zIndex}`)).toEqual(["a:0", "c:1"]);
+    expect(inserted.objects.map(({ id, zIndex }) => `${id}:${zIndex}`)).toEqual([
+      "a:0",
+      "b:1",
+      "c:2",
+    ]);
+    expect(inserted.statistics).toMatchObject({ objectCount: 3, highestZIndex: 2 });
+    expect(Object.isFrozen(inserted)).toBe(true);
+    expect(Object.isFrozen(inserted.objects)).toBe(true);
+  });
+
+  it("supports insertion at both collection boundaries", () => {
+    const original = new ObjectCollection([object("b")]);
+    expect(original.insert(object("a"), 0).objects.map(({ id }) => id)).toEqual(["a", "b"]);
+    expect(original.insert(object("c"), original.size).objects.map(({ id }) => id)).toEqual([
+      "b",
+      "c",
+    ]);
+  });
+
   it("reports duplicate ids, missing objects, and invalid indexes structurally", () => {
     const first = object("same");
     expect(() => new ObjectCollection([first, first])).toThrowError(
@@ -71,6 +95,15 @@ describe("ObjectCollection", () => {
     const collection = new ObjectCollection([first]);
     expect(() => collection.add(first)).toThrowError(
       expect.objectContaining({ code: "DUPLICATE_OBJECT_ID" }),
+    );
+    expect(() => collection.insert(first, 0)).toThrowError(
+      expect.objectContaining({ code: "DUPLICATE_OBJECT_ID" }),
+    );
+    expect(() => collection.insert(object("new"), -1)).toThrowError(
+      expect.objectContaining({ code: "INVALID_INDEX" }),
+    );
+    expect(() => collection.insert(object("new"), 2)).toThrowError(
+      expect.objectContaining({ code: "INVALID_INDEX" }),
     );
     expect(() => collection.remove("missing")).toThrowError(
       expect.objectContaining({ code: "OBJECT_NOT_FOUND" }),

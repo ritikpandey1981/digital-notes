@@ -3,14 +3,15 @@
 Folio is a Windows-first, offline-first digital notebook focused on a calm and
 responsive writing experience.
 
-The repository currently contains the implemented foundation through Phase 11:
+The repository currently contains the implemented and frozen foundation through Phase 12:
 
 - Electron/React desktop shell and reusable UI primitives
 - immutable notebook domain and folder-based persistence
 - Canvas 2D rendering, viewport, and ink infrastructure
 - immutable editor document objects
-- selection, hit testing, and translation manipulation
+- transform-aware selection and hit testing plus translation, rotation, and scale manipulation
 - legacy notebook History plus generic editor undo/redo, transactions, and keyboard integration
+- generalized immutable manipulation results and editor adapters for Move, Rotate, Scale, Delete, and Duplicate commands
 - ESLint, Prettier, Vitest, and Playwright configuration
 - Package-oriented project structure
 
@@ -46,4 +47,6 @@ pnpm package
 
 Project requirements and engineering decisions are maintained in `docs/`. See
 `docs/architecture/PHASE11_HISTORY_ARCHITECTURE.md` for the current History
-architecture and developer guide.
+architecture and developer guide, and
+`docs/architecture/PHASE12_MANIPULATION_FRAMEWORK.md` for the manipulation
+extension boundary.

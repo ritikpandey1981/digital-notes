@@ -1,8 +1,8 @@
 # Folio Architecture Reference Manual
 
-Repository baseline: `main` at commit `5791c60` plus the verified Phase 11 implementation  
+Repository baseline: `main` at commit `5791c60` plus the verified Phase 11 and complete Phase 12 implementation
 Audit date: 2026-07-28  
-Status: current through Phase 11 Stage 9
+Status: current through the Phase 12 final architecture freeze
 
 ## Classification protocol
 
@@ -53,7 +53,7 @@ flowchart TD
 **IMPLEMENTED.** Two distinct object representations coexist:
 
 - `@folio/domain.PageObject` is a JSON-safe record inside the persisted `Notebook` aggregate.
-- `@folio/document.PageObject` is a richer session object contract. Its only concrete type is immutable `InkObject`, which owns lifecycle metadata, cached bounds, a translation-only `Transform`, and a finalized `Stroke`.
+- `@folio/document.PageObject` is a richer session object contract. Its only concrete type is immutable `InkObject`, which owns lifecycle metadata, transformed cached bounds, a translation/rotation/uniform-scale `Transform`, and a finalized `Stroke`.
 
 **IMPLEMENTED.** No production adapter converts between these two object representations. The desktop editor uses the `@folio/document` representation in an in-memory `InkDocumentSession`; persistence and the legacy Phase 5 History surface use `@folio/domain`. The generic Phase 11 History surface is model-neutral and operates on the editor collection through `HistoryDocumentSession<ObjectCollection>`.
 
@@ -74,7 +74,7 @@ flowchart TD
 
 **IMPLEMENTED.** The desktop shell mounts `CanvasSurface`, which constructs one `CanvasController`, ink/manipulation-preview/selection overlays, `StrokeRenderer`, `PointerInputController`, `InkDocumentSession`, selection and manipulation subsystems, plus one generic History manager/controller and shortcut adapter. Tool selection routes pointer input without remounting the canvas or recreating History.
 
-**IMPLEMENTED.** A successful manipulation commit is adapted by Editor into a private `MoveCommand`, submitted through `IHistoryController<ObjectCollection>`, installed through the document session, and reflected into permanent ink and selection bounds through an immutable notification. Undo and redo use the same path. Finalized ink remains a direct session update and creates no History entry under the approved Phase 11 scope.
+**IMPLEMENTED.** A successful continuous manipulation or discrete selected-object action emits a discriminated immutable `ManipulationResult`. An editor-owned exhaustive adapter maps translation, rotation, scale, delete, and duplicate variants to private Move, Rotate, Scale, Delete, and Duplicate commands. The command is submitted through `IHistoryController<ObjectCollection>`, installed through the document session, and reflected into permanent ink and selection state through an immutable notification. Undo and redo use the same path. Finalized ink remains a direct session update and creates no History entry.
 
 **IMPLEMENTED.** The editor remains unconnected to `@folio/domain`, `@folio/persistence`, and `@folio/search`. It imports only the generic public contracts and factories from `@folio/history`.
 
@@ -176,7 +176,7 @@ folio/
 
 **IMPLEMENTED.** ESLint ignores generated output, coverage, dependencies, reports, releases, and test results. React Hooks rules are active. The React-refresh export rule is a warning, while the root lint command allows zero warnings.
 
-**IMPLEMENTED.** Vitest includes tests under `apps/**/*.test.ts` and `packages/**/*.test.ts`. The Phase 11 release matrix contains 58 passing Vitest files (455 tests) plus two passing Electron Playwright specifications.
+**IMPLEMENTED.** Vitest includes tests under `apps/**/*.test.ts` and `packages/**/*.test.ts`. Current unit/integration and Electron counts are recorded by the latest release verification rather than treated as a fixed architectural constraint.
 
 **IMPLEMENTED.** Package public-surface tests exist for document, editor, history, ink, manipulation, persistence, rendering, and selection.
 
@@ -246,8 +246,8 @@ flowchart TD
 | `@folio/rendering` | Canvas lifecycle, camera, viewport, conversion, base page renderer, overlay renderers | none | ink, editor | deliberate barrel | geometry, dirty accumulator, overlay-layer implementation | animation/resize/DPR adapters, overlay hooks/layers, visual interfaces |
 | `@folio/ink` | pointer capture, stroke construction/smoothing, ink rendering and preview visual | rendering | document, editor | deliberate barrel | draw geometry/style helpers and visual implementation | smoothing hooks, pressure curve, texture ID, injected adapters |
 | `@folio/selection` | identity-only selection and vector ink hit testing | document | manipulation, editor | interfaces/types plus factories | concrete manager/controller/engine, linear candidate query, geometry | coordinate mapper/object source; internal candidate strategy seam |
-| `@folio/manipulation` | translation-only interaction sessions and immutable commit result | document, selection | editor | interfaces/types/configuration plus factories | concrete manager/controller/session/translation engine and state builders | manager/controller sources, `onCommit`, translation interface |
-| `@folio/editor` | React lifecycle and composition adapter for rendering, ink, document, selection, manipulation, and generic History | document, history, ink, manipulation, rendering, selection, React | desktop | `CanvasSurface` runtime only | session object store, coordinate mappers, move command, History coordinator/shortcuts, orchestration | lifecycle/state/History callbacks and interaction mode |
+| `@folio/manipulation` | translation, center-pivot rotation, uniform-scale sessions, and discrete delete/duplicate results | document, selection | editor | interfaces/types/configuration plus factories | shared continuous manager/controller/session, three calculation engines, result factories, and state builders | manager/controller sources, `onResult`, compatible translation `onCommit`, calculation interfaces, discrete result factories |
+| `@folio/editor` | React lifecycle and composition adapter for rendering, ink, document, selection, manipulation, and generic History | document, history, ink, manipulation, rendering, selection, React | desktop | `CanvasSurface` runtime plus type contracts | session object store, coordinate mappers, private Move/Rotate/Scale/Delete/Duplicate commands, History coordinator/shortcuts, orchestration | lifecycle/state/History callbacks, interaction mode, object-lifecycle actions |
 | `@folio/persistence` | folder JSON storage, versioning, dirty tracking, autosave, recovery | domain | none in production | deliberate barrel | atomic write, path safety, stable JSON, load/save/recovery pipelines | filesystem, timer, recovery context, compatibility records |
 | `@folio/history` | frozen domain-notebook compatibility History plus model-neutral editor History | domain | editor | legacy manager/factories plus generic interfaces/types/errors and two factories | legacy snapshot machinery; private generic manager/controller/stacks/transactions | legacy commands/dirty sink; generic `EditorCommand`, session, controller, transactions |
 | `@folio/ui` | reusable React UI primitives | external Radix/CVA/clsx/lucide/tailwind-merge | desktop | root barrel plus component/lib wildcard subpaths | styling compositions around external primitives | component props and variants |
@@ -405,15 +405,21 @@ classDiagram
     }
     class Transform {
       +Position translation
-      +0 rotation
-      +1 scale
+      +number rotation
+      +number scale
       +translatedBy(delta)
+      +withRotation(rotation)
+      +withScale(scale)
+      +applyToPoint(point,pivot)
+      +invertPoint(point,pivot)
+      +transformBounds(bounds)
     }
     class ObjectCollection {
       +PageObject[] objects
       +ObjectCollectionStatistics statistics
       +lookup(id)
       +add(object)
+      +insert(object,index)
       +remove(id)
       +replace(object)
       +reorder(id,index)
@@ -426,11 +432,11 @@ classDiagram
 
 **IMPLEMENTED.** The only `@folio/document.PageObjectType` is `"ink"` and the only version is `1`.
 
-**IMPLEMENTED.** `Transform` exposes translation, rotation, and scale fields but validates rotation as exactly `0` and scale as exactly `1`. Translation values must be finite.
+**IMPLEMENTED.** `Transform` accepts finite translation, finite clockwise rotation in radians, and positive finite uniform scale. Rotation and scale use the center of local inflated stroke bounds as a stable pivot. Axis-specific operations preserve the other transform values.
 
-**IMPLEMENTED.** `InkObject` retains one immutable `Stroke` reference. Its cached bounds equal inflated stroke bounds plus transform translation. Translation creates a same-ID replacement with a new `modifiedAt` and retained stroke.
+**IMPLEMENTED.** `InkObject` retains one immutable `Stroke` reference. Its cached bounds are the axis-aligned transformed inflated stroke bounds. Translation, rotation, and scale create same-ID replacements with a new `modifiedAt` and retained stroke.
 
-**IMPLEMENTED.** `ObjectCollection` validates the input, normalizes every `zIndex` to array position, constructs a private ID map, calculates statistics/union bounds once, and freezes itself. Add, remove, replace, and reorder return a new collection.
+**IMPLEMENTED.** `ObjectCollection` validates the input, normalizes every `zIndex` to array position, constructs a private ID map, calculates statistics/union bounds once, and freezes itself. Add, deterministic positional insert, remove, replace, and reorder return a new collection.
 
 **IMPLEMENTED.** `SerializedPageObject` and `ObjectSerializationContract` define a boundary only. No document-object serializer/deserializer is implemented.
 
@@ -458,9 +464,9 @@ flowchart LR
 
 ## 5.1 Ownership and public boundary
 
-**IMPLEMENTED.** `@folio/editor` exports one runtime component, `CanvasSurface`. It owns composition and lifecycle, not reusable business data. Its public interaction modes are `select`, `move`, `ink`, and `disabled`.
+**IMPLEMENTED.** `@folio/editor` exports one runtime component, `CanvasSurface`. It owns composition and lifecycle, not reusable business data. Its public interaction modes are `select`, `move`, `rotate`, `scale`, `ink`, and `disabled`.
 
-**IMPLEMENTED.** `CanvasSurface` accepts optional callbacks for renderer readiness, selection-controller readiness, manipulation-controller readiness, selection changes, manipulation changes, diagnostics, and errors.
+**IMPLEMENTED.** `CanvasSurface` accepts optional callbacks for renderer readiness, selection-controller readiness, manipulation-controller readiness, object-lifecycle-action readiness, selection changes, manipulation changes, diagnostics, and errors.
 
 **IMPLEMENTED.** React owns the host `<div>` and effect lifetime. The imperative packages own canvases, input, geometry, state, and drawing.
 
@@ -504,7 +510,7 @@ stateDiagram-v2
     Disposing --> [*]: listeners, subscriptions, controllers, layers destroyed
 ```
 
-**IMPLEMENTED.** Mount creates all editor subsystems once. Changing the active tool updates a ref and does not remount the controller. Leaving Move mode cancels manipulation and releases pointer capture.
+**IMPLEMENTED.** Mount creates all editor subsystems once. Changing the active tool updates a ref and does not remount the controller. Leaving any transform mode cancels manipulation and releases pointer capture.
 
 **IMPLEMENTED.** Cleanup removes editor pointer and History shortcut listeners, unsubscribes selection/manipulation/History observers, cancels manipulation, releases pointer capture, destroys the History coordinator/controller, selection, and ink input, clears the document session, destroys overlay renderers/layers, and destroys the base controller.
 
@@ -514,16 +520,18 @@ stateDiagram-v2
 
 - Ink mode returns immediately, allowing `PointerInputController` to consume the browser event.
 - Select mode prevents default behavior, stops immediate propagation, converts the event to normalized selection input, and may capture the pointer.
-- Move mode prevents default behavior, stops immediate propagation, maps screen to page, forwards normalized manipulation input, and captures the pointer only when a session owns interaction.
+- Move, Rotate, and Scale modes prevent default behavior, stop immediate propagation, map screen to page, forward normalized manipulation input with the corresponding discriminator, and capture the pointer only when a session owns interaction.
 - Disabled and nonmatching modes perform no editing action.
 
 **IMPLEMENTED.** `PageSelectionCoordinateMapper` rejects points outside the page. `PageManipulationCoordinateMapper` rejects out-of-page starts but permits out-of-page movement once a manipulation session is active.
 
 ## 5.5 Commit and rendering coordination
 
-**IMPLEMENTED.** During manipulation, editor state is converted into a cached `StrokeVisual` and supplied to `TranslationPreviewRenderer`. On successful commit, `EditorHistoryCoordinator` creates a private `MoveCommand` and submits it through the session's `IHistoryController<ObjectCollection>`. The command creates a same-ID immutable object/collection successor, History installs it through `InkDocumentSession`, and the controller notification causes permanent ink translation, selection bounds, and diagnostics to refresh. The preview is cleared as Manipulation reaches terminal phases.
+**IMPLEMENTED.** During continuous manipulation, editor state is converted into a cached `StrokeVisual` and supplied to `TransformPreviewRenderer`. On successful commit, Manipulation emits the concrete translation, rotation, or scale result; the private Editor command adapter maps that result to Move, Rotate, or Scale command, and `EditorHistoryCoordinator` submits it through the session's `IHistoryController<ObjectCollection>`. The command creates a same-ID immutable object/collection successor, History installs it through `InkDocumentSession`, and the controller notification causes permanent ink, selection bounds, and diagnostics to refresh. The preview is cleared as Manipulation reaches terminal phases.
 
-**IMPLEMENTED.** Undo and redo follow the same History notification and editor synchronization path. The move path does not call `InkDocumentSession.translateObject` directly and does not involve Persistence.
+**IMPLEMENTED.** Delete and duplicate are discrete selection-scoped actions, not pointer manipulation modes. `CanvasSurface` creates immutable lifecycle results and routes them through the same adapter/coordinator. Delete retains the exact object and index for deterministic undo; duplicate calls the Document clone factory once, inserts adjacent to the source, and reuses that identity and position for redo. Removed selections are cleared, and a newly duplicated object becomes selected, entirely within Editor synchronization.
+
+**IMPLEMENTED.** Undo and redo follow the same History notification and editor synchronization path. Transform paths do not call direct document-session helpers and do not involve Persistence.
 
 **IMPLEMENTED.** Selection state changes are resolved back to current document objects, converted to `{objectId, bounds}`, and sent to `SelectionOverlayRenderer`.
 
@@ -1046,7 +1054,7 @@ flowchart LR
 
 **IMPLEMENTED.** Public dirty regions are full viewport, full page, or a rectangle in viewport/world/page coordinates. The private accumulator gives viewport priority over page and page priority over rectangles.
 
-**IMPLEMENTED.** Selection and translation-preview renderers maintain their own one-shot schedulers and transparent canvases. They clear old/new affected page bounds, fall back to full clear after a bounded region count, and never continuously repaint.
+**IMPLEMENTED.** Selection and transform-preview renderers maintain their own one-shot schedulers and transparent canvases. They clear old/new affected page bounds, fall back to full clear after a bounded region count, and never continuously repaint.
 
 **IMPLEMENTED.** `StrokeRenderer` owns a separate scheduler and implements incremental live-stroke drawing plus bounded permanent-stroke redraw.
 
@@ -1179,13 +1187,13 @@ flowchart LR
 
 ## 10.1 Ownership and dependencies
 
-**IMPLEMENTED.** `@folio/manipulation` owns one translation interaction session, pointer ownership, drag threshold, deterministic origin-relative math, immutable state, commit-result creation, cancellation, and subscriptions. It depends only on selection and document.
+**IMPLEMENTED.** `@folio/manipulation` owns translation, center-pivot rotation, and center-pivot uniform-scale interaction sessions, pointer ownership, drag threshold, deterministic origin-relative math, immutable state, result creation, cancellation, and subscriptions. It also owns immutable delete and duplicate result factories for discrete editor actions. It depends only on Selection and Document.
 
 **IMPLEMENTED.** It does not render, mutate/own objects, capture browser pointers, calculate viewport coordinates, or depend on history/persistence/UI.
 
 ## 10.2 Session model
 
-**IMPLEMENTED.** `ManipulationState` contains phase, session/object/pointer IDs, origin/current page points, initial object translation, origin-relative `TranslationModel`, absolute final translation, timestamp, and version.
+**IMPLEMENTED.** Continuous `ManipulationState` contains a manipulation discriminator, phase, session/object/pointer IDs, origin/current page points, object center, initial values, the translation/rotation/scale calculation models, absolute final values, timestamp, and version. Delete and duplicate deliberately do not create synthetic pointer sessions or state-machine entries.
 
 **IMPLEMENTED.** State never stores a document object or stroke.
 
@@ -1207,17 +1215,22 @@ stateDiagram-v2
 
 **IMPLEMENTED.** The default threshold is four page units. Crossing is strict: distance equal to the threshold remains Preparing.
 
-## 10.3 Translation
+## 10.3 Transform calculations
 
 **IMPLEMENTED.**
 
 ```text
-movement = currentPointer - dragOrigin
-totalDistance = hypot(movement.x, movement.y)
-finalObjectTranslation = initialObjectTranslation + movement
+translation movement = current pointer - origin pointer
+final translation = initial translation + movement
+
+rotation delta = normalized angle(current - center) - angle(origin - center)
+final rotation = initial rotation + rotation delta
+
+scale factor = distance(current, center) / distance(origin, center)
+final scale = clamp(initial scale × scale factor, configured absolute limits)
 ```
 
-**IMPLEMENTED.** Every update recalculates from the immutable origin. Event deltas do not accumulate.
+**IMPLEMENTED.** Every calculation is in page space and recalculates from the immutable origin. Event deltas do not accumulate. Rotation is expressed as clockwise canvas radians. Scale is uniform and positive. Rotation and scale reject an origin at the exact object center.
 
 ## 10.4 Pointer and validation lifecycle
 
@@ -1225,7 +1238,9 @@ finalObjectTranslation = initialObjectTranslation + movement
 
 **IMPLEMENTED.** Begin resolves current selected identity to a visible, unlocked object. Update and commit revalidate that the same identity remains selected and object remains present, visible, and unlocked. Failure cancels.
 
-**IMPLEMENTED.** Commit creates an immutable `ManipulationCommit`, calls the injected editor `onCommit`, and enters Committing only if the callback returns true. Rejection or exception cancels; exceptions may be reported through `onError`.
+**IMPLEMENTED.** Commit creates the matching immutable `TranslationManipulationResult`, `RotationManipulationResult`, or `ScaleManipulationResult`, calls the injected editor `onResult`, and enters Committing only if the callback returns true. The source-compatible `onCommit` callback remains available to translation-only consumers. Rejection or exception cancels; exceptions may be reported through `onError`.
+
+**IMPLEMENTED.** The delete and duplicate factories validate logical session/object identity and timestamps, then return frozen `DeleteManipulationResult` or `DuplicateManipulationResult` values. Editor invokes these factories only for the current selected object; no lifecycle action is added to the pointer controller.
 
 ## 10.5 Preview, commit, and cancellation
 
@@ -1236,18 +1251,19 @@ sequenceDiagram
     participant Browser
     participant Editor
     participant Manipulation
-    participant Preview as TranslationPreviewRenderer
+    participant Preview as TransformPreviewRenderer
     participant Session as InkDocumentSession
     participant Ink as StrokeRenderer
     Browser->>Editor: pointer down/moves/up
     Editor->>Manipulation: normalized page inputs
     Manipulation-->>Editor: immutable Preparing/Dragging state
-    Editor->>Preview: visual + absolute translation
-    Manipulation-->>Editor: ManipulationCommit
-    Editor->>History: execute MoveCommand
+    Editor->>Preview: visual + complete absolute transform
+    Manipulation-->>Editor: discriminated ManipulationResult
+    Editor->>Editor: adapt to Move, Rotate, or Scale command
+    Editor->>History: execute concrete command
     History->>Session: install immutable same-ID successor
     History-->>Editor: immutable success notification
-    Editor->>Ink: setStrokeTranslation from current document
+    Editor->>Ink: setStrokeTransform from current document
     Editor->>Preview: clear at terminal/idle state
 ```
 
@@ -1257,9 +1273,11 @@ sequenceDiagram
 
 ## 10.6 Extension points
 
-**IMPLEMENTED.** Factories return public interfaces. Callers inject selection/object sources, manager, translation engine, commit callback, clock/session IDs, threshold, and error callback.
+**IMPLEMENTED.** Factories return public interfaces. Callers inject selection/object sources, manager, calculation engines, result callback, clock/session IDs, threshold/scale limits, and error callback.
 
-**PLANNED.** Resize, rotation, scale, snapping, multi-object movement, and keyboard movement are not implemented. Translation commit is History-backed through the editor-owned `MoveCommand`.
+**IMPLEMENTED.** Translation, rotation, scale, delete, and duplicate are History-backed through editor-owned commands. They share the exhaustive result boundary, command adapter, coordinator, controller, document replacement, rendering synchronization, and selection synchronization. Only the three transform families use the continuous session lifecycle.
+
+**PLANNED.** Resize handles, snapping, multi-object movement, and keyboard movement are not implemented.
 
 ---
 
@@ -1355,11 +1373,11 @@ flowchart LR
 
 ## 12.5 Ink rendering
 
-**IMPLEMENTED.** `StrokeRenderer` retains finalized stroke plus absolute translation records, one live stroke, pending dirty union, counters, and a one-shot scheduler.
+**IMPLEMENTED.** `StrokeRenderer` retains ordered finalized visual records keyed independently from immutable stroke identity, one live stroke, pending dirty union, counters, and a one-shot scheduler. Each record carries its complete absolute translation/rotation/scale transform.
 
 **IMPLEMENTED.** Live frames draw only the unrendered tail, clipped to pending dirty bounds and the page. Finalization flushes the last live segment, moves the immutable stroke into finalized state, and avoids a base-page repaint.
 
-**IMPLEMENTED.** Permanent translation updates one retained record and clears/redraws the union of old/new bounds. Resize performs a full ink-overlay redraw.
+**IMPLEMENTED.** Permanent transform updates one retained record and clears/redraws the union of old/new bounds. Editor may replace the complete ordered retained-visual list from an immutable document projection; exact no-op projections schedule no work. Resize performs a full ink-overlay redraw.
 
 **IMPLEMENTED.** `createStrokeVisual` returns an immutable adapter that retains one `Stroke` and shares the same private draw path with translation preview.
 
@@ -1589,12 +1607,14 @@ flowchart TD
 | `DocumentObjectError` | class | Structured collection/factory error | Document operations |
 | `ObjectValidationError` | class | Frozen validation-issue error | Constructors/assertions |
 | `InkObject` | class | Immutable concrete document object | Editor and selection geometry |
-| `ObjectCollection` | class | Immutable ordered objects plus ID map/statistics | Editor session |
-| `ObjectFactory` | class | Configurable create/clone/translate operations | Editor session |
-| `cloneObject` | function | Convenience clone via new factory | No production consumer |
+| `ObjectCollection` | class | Immutable ordered objects plus ID map/statistics; deterministic insert/remove/reorder | Editor session and lifecycle commands |
+| `ObjectFactory` | class | Configurable create/clone/translate/rotate/scale operations | Editor session and commands |
+| `cloneObject` | function | Convenience immutable clone via new factory | Public callers/tests; Editor uses `ObjectFactory.cloneObject` directly |
 | `createInkObject` | function | Convenience ink-object creation | No production consumer |
+| `rotateObject` | function | Convenience immutable rotation | No production consumer |
+| `scaleObject` | function | Convenience immutable uniform scale | No production consumer |
 | `translateObject` | function | Convenience immutable translation | No production consumer |
-| `Transform` | class | Translation-only immutable transform | Objects/editor manipulation |
+| `Transform` | class | Immutable translation/rotation/uniform-scale transform and geometry conversion | Objects/editor manipulation/selection |
 | `TransformInput` | interface | Transform constructor input | Public callers |
 | `CloneObjectOptions` | interface | Clone overrides | `ObjectFactory.cloneObject` |
 | `CreateInkObjectInput` | interface | Ink-object factory input | Editor/factory |
@@ -1752,6 +1772,13 @@ flowchart TD
 | `SelectionOverlayRendererSnapshot` | interface | Target/render diagnostics | Tests/public callers |
 | `SelectionOverlayStyle` | interface | Outline/highlight dimensions/colors | Optional callers |
 | `SelectionOverlayTarget` | interface | ID and cached bounds | Editor |
+| `TransformPreviewRenderer` | class | Demand-driven translated/rotated/scaled visual preview | Editor |
+| `TransformPreviewRendererOptions` | interface | Context/viewport/style/frame adapter | Editor/tests |
+| `TransformPreviewRendererSnapshot` | interface | Target/transform/render diagnostics | Tests/public callers |
+| `TransformPreviewStyle` | interface | Opacity and clear padding | Optional callers |
+| `TransformPreviewTarget` | interface | ID/bounds/transform/visual | Editor |
+| `TransformPreviewValue` | interface | Absolute translation/rotation/scale | Editor |
+| `TransformPreviewVisual` | interface | Injected `draw(context)` contract | Ink `StrokeVisual` |
 | `TranslationPreviewRenderer` | class | Demand-driven translated visual preview | Editor |
 | `TranslationPreviewRendererOptions` | interface | Context/viewport/style/frame adapter | Editor/tests |
 | `TranslationPreviewRendererSnapshot` | interface | Target/translation/render diagnostics | Tests/public callers |
@@ -1799,7 +1826,8 @@ flowchart TD
 | `StrokeBuilder` | class | Incremental samples/metrics/finalization | Pointer controller/tests |
 | `StrokeRenderer` | class | Live/finalized transparent ink rendering | Editor |
 | `StrokeSmoother` | class | Smoothing strategy wrapper | Builder/public callers |
-| `createStrokeVisual` | function | Immutable translation-preview visual | Editor |
+| `createStrokeVisual` | function | Immutable transform-preview visual | Editor |
+| `FinalizedStrokeVisual` | interface | Retained visual identity, immutable stroke, and transform | Editor document projection |
 | `StrokeVisual` | interface | Bounds plus drawing visual | Editor cache |
 | `DEFAULT_STROKE_STYLE` | const | Frozen default brush style | Style resolver/public callers |
 | `InkErrorLike` | interface | Error callback boundary | Pointer options |
@@ -1861,25 +1889,44 @@ flowchart TD
 | --- | --- | --- | --- |
 | `createManipulationController` | function | Factory for private coordinator | Editor |
 | `ManipulationController` | interface | Editor-facing interaction API | Editor/ref callbacks |
-| `ManipulationControllerOptions` | interface | Manager/sources/commit/error injection | Editor |
+| `ManipulationControllerOptions` | interface | Source-compatible manager/sources/commit/error injection | Existing callers/tests |
+| `ManipulationResultControllerOptions` | interface | Manager/sources/generalized result/error injection | Editor |
 | `ManipulationSession` | interface | Internal-strategy state/update/terminal contract | Private manager/session |
 | `ManipulationChangeListener` | type | State transition callback | Editor |
 | `ManipulationManager` | interface | Sole session/state owner | Controller |
 | `ManipulationManagerOptions` | interface | Config/engine/ID/time injection | Editor/tests |
+| `RotationEngine` | interface | Origin-relative angular calculation | Session |
+| `ScaleEngine` | interface | Origin-relative radial calculation | Session |
 | `TranslationEngine` | interface | Origin-relative calculation | Session |
 | `createManipulationManager` | function | Factory for private manager | Editor |
-| `DEFAULT_MANIPULATION_CONFIGURATION` | const | Frozen threshold 4 | Manager |
-| `BeginManipulationInput` | interface | Start identity/pointer/position/translation | Controller-to-manager |
+| `DEFAULT_MANIPULATION_CONFIGURATION` | const | Frozen threshold 4 and scale limits 0.05–20 | Manager |
+| `BeginManipulationInput` | interface | Start identity/pointer/position/transform/pivot | Controller-to-manager |
 | `ManipulationCommit` | interface | Immutable logical completed drag | Editor callback |
-| `ManipulationConfiguration` | interface | Drag threshold | Manager options |
+| `ManipulationConfiguration` | interface | Drag threshold and absolute scale limits | Manager options |
+| `ManipulationKind` | type | Continuous-session discriminator union (`translation`, `rotation`, `scale`) | Manager/state/results |
+| `ManipulationResultKind` | type | Exhaustive result discriminator including `delete` and `duplicate` | Results/editor adapter |
 | `ManipulationObjectSource` | interface | Read-only object lookup | Editor adapter/controller |
 | `ManipulationPhase` | type | idle/preparing/dragging/committing/cancelling | State/Editor |
 | `ManipulationPointerInput` | interface | Normalized page-pointer record | Editor routing |
 | `ManipulationPointerPhase` | type | down/move/up/cancel union | Pointer input |
+| `ManipulationResult` | type | Discriminated immutable result union | Editor command adapter |
+| `ManipulationResultBase` | interface | Shared result kind/session/object/time identity | Result variants |
 | `ManipulationSelectionSource` | interface | Read-only current selection | Editor/controller |
 | `ManipulationState` | interface | Immutable complete session state | Editor preview/callbacks |
+| `DeleteManipulationResult` | type | Immutable logical selected-object deletion result | Editor command adapter |
+| `DuplicateManipulationResult` | type | Immutable logical selected-object duplication result | Editor command adapter |
+| `RotationManipulationResult` | interface | `rotation` result with delta and initial/final rotations | Editor command adapter |
+| `RotationModel` | interface | Origin-relative radian delta | State/result |
+| `ScaleManipulationResult` | interface | `scale` result with factor and initial/final scales | Editor command adapter |
+| `ScaleModel` | interface | Origin-relative uniform multiplier | State/result |
+| `TranslationManipulationResult` | interface | `translation` result plus compatible commit payload | Editor command adapter |
 | `TranslationModel` | interface | Delta/distance/vector | State/commit |
 | `TranslationVector` | interface | Finite x/y logical vector | Document/editor |
+| `CreateObjectLifecycleManipulationResultInput` | interface | Logical identity/time input for discrete results | Editor/actions/tests |
+| `createDeleteManipulationResult` | function | Frozen delete-result factory | Editor lifecycle actions |
+| `createDuplicateManipulationResult` | function | Frozen duplicate-result factory | Editor lifecycle actions |
+| `createRotationEngine` | function | Factory for private deterministic rotation engine | Manager/tests |
+| `createScaleEngine` | function | Factory for private deterministic scale engine | Manager/tests |
 | `createTranslationEngine` | function | Factory for private deterministic engine | Manager/tests |
 
 ## 18.10 `@folio/editor`
@@ -1889,8 +1936,9 @@ flowchart TD
 | Symbol | Kind | Purpose | Current consumers/usage |
 | --- | --- | --- | --- |
 | `CanvasSurface` | function component | Mount and compose one editor canvas session | Desktop `CanvasHost` |
-| `CanvasInteractionMode` | type | select/move/ink/disabled routing | Desktop tool mapping |
-| `CanvasSurfaceProps` | interface | Mode, subsystem readiness, selection/manipulation/History state, diagnostic, and error callbacks | Desktop/public callers |
+| `CanvasInteractionMode` | type | select/move/rotate/scale/ink/disabled routing | Desktop tool mapping |
+| `CanvasSurfaceProps` | interface | Mode, subsystem/action readiness, selection/manipulation/History state, diagnostic, and error callbacks | Desktop/public callers |
+| `ObjectLifecycleActions` | interface | Session-bound delete/duplicate action contract | Desktop workspace/toolbar |
 
 ## 18.11 `@folio/ui`
 
@@ -1984,6 +2032,13 @@ flowchart TD
 | `history/src/editor-history/model/history-entry.ts` | command plus immutable metadata; no document aggregate | Generic manager/transactions only |
 | `history/src/editor-history/validation/command-integrity.ts` | model-neutral command protocol validation | Generic manager only |
 | `editor/src/history/move-command.ts` | private `EditorCommand<ObjectCollection>` for one InkObject translation | Editor coordinator/tests; not editor barrel-exported |
+| `editor/src/history/rotate-command.ts` | private `EditorCommand<ObjectCollection>` for center-pivot rotation | Editor adapter/tests; not editor barrel-exported |
+| `editor/src/history/scale-command.ts` | private `EditorCommand<ObjectCollection>` for uniform scale | Editor adapter/tests; not editor barrel-exported |
+| `editor/src/history/delete-command.ts` | private command retaining one exact object and insertion index | Editor adapter/tests; not editor barrel-exported |
+| `editor/src/history/duplicate-command.ts` | private command retaining one cloned object and insertion index | Editor adapter/tests; not editor barrel-exported |
+| `editor/src/history/manipulation-command-adapter.ts` | exhaustive result-to-command adaptation and current-object resolution | CanvasSurface/tests; not editor barrel-exported |
+| `editor/src/history/object-transform-command.ts` | shared transform-command validation and transition helpers | Private Move/Rotate/Scale implementation support |
+| `editor/src/history/object-lifecycle-command.ts` | shared delete/duplicate metadata, validation, and failure helpers | Private lifecycle command support |
 | `editor/src/history/editor-history-coordinator.ts` | one manager/controller lifetime and document/render synchronization | CanvasSurface/tests; not editor barrel-exported |
 | `editor/src/history/editor-history-shortcuts.ts` | Windows/Linux undo/redo key listener and cleanup | CanvasSurface/tests; not editor barrel-exported |
 
@@ -2058,8 +2113,9 @@ flowchart TD
 
 | Module | Internal symbols/responsibility | Visibility and consumers |
 | --- | --- | --- |
-| `manipulation/src/controller/manipulation-controller.ts` | private `createCommit`, private controller implementation | Returned as `ManipulationController` |
+| `manipulation/src/controller/manipulation-controller.ts` | private controller implementation and compatible result/commit submission | Returned as `ManipulationController` |
 | `manipulation/src/manager/manipulation-manager.ts` | fallback session ID, private manager implementation | Returned as `ManipulationManager` |
+| `manipulation/src/result/translation-manipulation-result.ts` | immutable translation-result construction | Controller only; not barrel-exported |
 | `manipulation/src/session/manipulation-session.ts` | `ManipulationSessionOptions`, `ManipulationSessionImplementation` | Not barrel-exported; manager |
 | `manipulation/src/translation/translation-engine.ts` | private engine implementation | Returned as `TranslationEngine` |
 | `manipulation/src/state/manipulation-state.ts` | `ZERO_TRANSLATION`, page/vector freezing, idle/active state builders | Not barrel-exported; manager/session |
@@ -2073,6 +2129,8 @@ flowchart TD
 | `editor/src/InkDocumentSession.ts` | `InkDocumentSession`, snapshot type; session collection creation/translation/clear | Not package-exported; `CanvasSurface` |
 | `editor/src/PageSelectionCoordinateMapper.ts` | mapper class/options; screen-to-page with page clipping | Not package-exported; `CanvasSurface` |
 | `editor/src/PageManipulationCoordinateMapper.ts` | mapper class/options; optional out-of-page continuation | Not package-exported; `CanvasSurface` |
+| `editor/src/history/manipulation-command-adapter.ts` | exhaustive result-to-command adaptation; translation branch only | Coordinator/tests; not package-exported |
+| `editor/src/history/editor-history-coordinator.ts` | one manager/controller lifetime and generic manipulation-result execution | CanvasSurface/tests; not package-exported |
 | `editor/src/CanvasSurface.tsx` | `readTheme`; scoped lifecycle functions for bounds, diagnostics, selection, manipulation, pointer capture/routing/listener registration | Only `CanvasSurface`/public types leave package |
 
 ## 19.10 UI and desktop internals
@@ -2121,8 +2179,8 @@ flowchart TD
     InputChoice --> Manipulation["@folio/manipulation"]
     Ink --> Document["@folio/document session"]
     Selection --> Document
-    Manipulation --> Commit["ManipulationCommit"]
-    Commit --> EditorHistory["Editor MoveCommand + History controller"]
+    Manipulation --> Result["ManipulationResult"]
+    Result --> EditorHistory["Editor command adapter + History controller"]
     EditorHistory --> Document
     Editor --> Rendering["@folio/rendering"]
     History["@folio/history generic surface"] --> EditorHistory
@@ -2214,19 +2272,22 @@ sequenceDiagram
     participant Selection
     participant Source as Document object source
     participant Manager as ManipulationManager
-    participant Preview as TranslationPreviewRenderer
+    participant Preview as TransformPreviewRenderer
+    participant History as HistoryController
     participant Session as InkDocumentSession
     Editor->>Controller: normalized down
     Controller->>Selection: get selected identity
     Controller->>Source: resolve visible/unlocked object
     Controller->>Manager: beginSession
     Editor->>Controller: normalized moves
-    Controller->>Manager: update origin-relative translation
+    Controller->>Manager: update origin-relative transform
     Manager-->>Editor: immutable Dragging state
     Editor->>Preview: absolute visual preview
     Editor->>Controller: normalized up
-    Controller-->>Editor: ManipulationCommit callback
-    Editor->>Session: immutable translated replacement
+    Controller-->>Editor: discriminated ManipulationResult callback
+    Editor->>Editor: adapt to Move, Rotate, or Scale command
+    Editor->>History: execute command
+    History->>Session: install immutable transformed successor
     Editor-->>Controller: accept commit
     Manager-->>Editor: Committing then Idle
 ```
@@ -2237,7 +2298,7 @@ sequenceDiagram
 
 **IMPLEMENTED.** Theme mutation → editor theme adapter → `CanvasController.setTheme` → base viewport invalidation → one scheduled frame. Ink/selection/preview colors are not updated by this flow except where their configured styles use fixed values.
 
-**IMPLEMENTED.** Selection change updates only the selection overlay. Manipulation preview updates only its overlay. Successful History execute/undo/redo updates permanent ink translation, document diagnostics, and selected-object bounds from the installed session collection. Ink drawing updates only the ink overlay.
+**IMPLEMENTED.** Selection change updates only the selection overlay. Manipulation preview updates only its overlay. Successful History execute/undo/redo updates the permanent ink transform, document diagnostics, and selected-object bounds from the installed session collection. Ink drawing updates only the ink overlay.
 
 ## 20.7 History event flow
 
@@ -2521,7 +2582,7 @@ stateDiagram-v2
 | Selection | tolerance/radius | tune page-space discovery |
 | Selection | private candidate-strategy boundary | replace internal broad phase without changing public controller/engine interfaces |
 | Manipulation | `TranslationEngine` | replace origin-relative calculation behind manager/session |
-| Manipulation | selection/object sources and `onCommit` | compose independent state/document/commit owners in Editor |
+| Manipulation | selection/object sources, generalized `onResult`, and compatible `onCommit` | compose independent interaction/result/document owners in Editor |
 | Editor | readiness/state/diagnostics/error callbacks | observe the session without importing internals |
 | Editor | `CanvasInteractionMode` | route one of the implemented modes without remount |
 | UI | component props/CVA variants and wildcard subpaths | compose styled primitives |
@@ -2587,7 +2648,7 @@ stateDiagram-v2
 | Domain | JSON-safe data, globally unique IDs within notebook, deeply frozen factory/operation outputs |
 | Domain objects | fixed common record; required Serializable and Renderable markers |
 | Document | object type only `ink`; version only `1` |
-| Document transform | finite translation; rotation `0`; scale `1` |
+| Document transform | finite translation; finite rotation in radians; positive finite uniform scale; local-bounds center pivot |
 | Document collection | unique IDs and contiguous zIndex matching array position |
 | Page rendering | one fixed-size page; default 794×1123; no infinite canvas |
 | Camera | zoom 25%–800%; rotation fixed zero |
@@ -2596,7 +2657,7 @@ stateDiagram-v2
 | Ink input | one primary mouse/pen/touch pointer; no multi-touch gesture coordination |
 | Ink style | round caps/joins; finite positive width; opacity above zero |
 | Selection | zero or one selected ID; ink geometry only; page-unit tolerance |
-| Manipulation | one selected object, one pointer/session, translation only, strict threshold crossing |
+| Manipulation | one selected object; one pointer/session for translation, center-pivot rotation, or uniform scale; discrete delete/duplicate results; strict transform threshold crossing |
 | Editor | single in-memory document collection per mounted CanvasSurface |
 | History | domain Notebook only; frozen commands; exact-reference transitions; limit ≥1; no nested transaction |
 | History serialization | stacks/commands/save point/revision remain session-only |
@@ -2629,6 +2690,12 @@ stateDiagram-v2
 
 **IMPLEMENTED.** Current History and Editor code, package dependencies, public API tests, integration tests, and Electron tests match that document.
 
+**DOCUMENTED.** `PHASE12_MANIPULATION_FRAMEWORK.md` freezes the discriminated immutable result boundary and editor-owned exhaustive command adapter. Stage 2 adds rotation and uniform scale; Stage 3 adds selection-scoped deletion and duplication as discrete result families; Stage 4 verifies and freezes the complete architecture.
+
+**IMPLEMENTED.** Current Manipulation and Editor code match that boundary. `ManipulationCommit` remains compatible for translation callers, `onResult` is the active continuous editor path, discrete lifecycle results use explicit immutable factories, and History is unchanged. `MoveCommand` received the required Stage 2 compatibility correction to preserve an object's existing rotation and scale while changing only translation; its public behavior and translation-only behavior remain compatible. Stage 3 adds only the Document positional-insert primitive and editor-owned Delete/Duplicate command path. Retained ink visuals are keyed by document object identity so cloned objects may safely share one immutable Stroke.
+
+**IMPLEMENTED.** The Stage 4 freeze audit corrected `DuplicateCommand` undo validation to accept a logically identical immutable duplicate reconstructed by an undone transform rather than requiring the same heap reference. The command still validates stable identity, lifecycle, insertion index, shared Stroke, metadata, rendering hints, and transform before removal. No generic History, transaction, adapter, canvas-lifecycle, notification, or public API behavior changed.
+
 ## 26.2 Implementation-guarded surfaces
 
 **IMPLEMENTED.** Public-API tests lock runtime export surfaces for Document, Editor, History, Ink, Manipulation, Persistence, Rendering, and Selection. Selection/Manipulation package manifests and architecture tests enforce dependency direction.
@@ -2638,15 +2705,15 @@ stateDiagram-v2
 | Surface | Current consumers | Observable modification risk |
 | --- | --- | --- |
 | Domain Notebook/factories/validation | Persistence and History | serialized shape, load/save, commands, tests |
-| Document InkObject/Collection/Transform | Editor, Selection, Manipulation | session objects, hit testing, movement |
+| Document InkObject/Collection/Transform | Editor, Selection, Manipulation | session objects, hit testing, transforms |
 | Rendering viewport/converter/layers | Ink and Editor | all pointer coordinates and pixels |
 | Ink Stroke/renderer/controller | Document and Editor | capture, objects, permanent/preview visuals |
-| Selection interfaces/state | Manipulation and Editor | click flow, move prerequisites, overlay |
-| Manipulation interfaces/state/commit | Editor | move flow, preview, commit |
+| Selection interfaces/state | Manipulation and Editor | click flow, transform prerequisites, overlay |
+| Manipulation interfaces/state/results | Editor | translation/rotation/scale flow plus delete/duplicate result adaptation |
 | Editor CanvasSurface modes | Desktop | toolbar routing and mounted canvas |
 | Persistence folder/version contracts | stored notebooks and compatibility tests | file compatibility and dirty/save flow |
 | Legacy History Command/Manager | tests and documented examples | Phase 5 API compatibility |
-| Generic History contracts/factories | Editor coordinator and tests | move execution, undo/redo, transactions, lifecycle/notifications |
+| Generic History contracts/factories | Editor coordinator and tests | transform-command execution, undo/redo, transactions, lifecycle/notifications |
 | UI primitives | Desktop shell | menus, dialogs, styles |
 
 **UNKNOWN.** The package versions are all pre-1.0/private-workspace source exports, and no source-level semantic-version or deprecation policy marks these surfaces permanently frozen.
@@ -2655,7 +2722,7 @@ stateDiagram-v2
 
 **DOCUMENTED.** The ARM request designates this manual as the authoritative architecture reference before future phases.
 
-**IMPLEMENTED.** This document records the `5791c60` baseline plus the verified Phase 11 implementation; public API, dependency-boundary, integration, and Electron tests enforce the documented Phase 11 surface.
+**IMPLEMENTED.** This document records the `5791c60` baseline plus the verified Phase 11 and complete frozen Phase 12 implementation; public API, dependency-boundary, integration, and Electron tests enforce the documented surfaces.
 
 ---
 
@@ -2673,7 +2740,7 @@ stateDiagram-v2
 
 | Future subsystem | Class | Current support | Missing infrastructure visible in code | Existing extension points |
 | --- | --- | --- | --- | --- |
-| History | **IMPLEMENTED** | **Supported for Phase 11 scope.** The legacy notebook surface and generic editor surface coexist; manipulation moves execute/undo/redo through the private MoveCommand, generic controller, command-only transactions, immutable state, and notifications. | Ink and other editing systems remain outside History; no History serialization, persistence, or UI. | `Command` compatibility API; `EditorCommand<TDocument>`, document session, manager/controller interfaces and factories, Editor coordinator |
+| History | **IMPLEMENTED** | **Supported for current manipulation scope.** The legacy notebook surface and generic editor surface coexist; Move, Rotate, Scale, Delete, and Duplicate commands execute/undo/redo through the generic controller, command-only transactions, immutable state, and notifications. | Ink and other editing systems remain outside History; no History serialization, persistence, or UI. | `Command` compatibility API; `EditorCommand<TDocument>`, document session, manager/controller interfaces and factories, Editor coordinator |
 | Viewport | **IMPLEMENTED** | **Partially supported.** Camera, fit/center, zoom-at, pan, visible rect, conversion, resize, DPR, clipping, diagnostics exist and render in desktop. | No mouse/keyboard/touch pan or zoom UI integration; no multiple pages; world bounds not enforced. | Camera/Viewport methods, CoordinateConverter, controller snapshots/invalidation |
 | Ink | **IMPLEMENTED** | **Partially supported.** Pointer capture, coalesced samples, pressure, smoothing, immutable strokes, live/final rendering, InkObject conversion work in the mounted editor. | No notebook/domain serialization, persistence, history, highlighter, eraser, or palm-rejection coordinator. | callbacks, Stroke, ObjectFactory, StrokeVisual, smoothing/pressure hooks, overlay layer |
 | Text | **PLANNED** | **Not supported.** Only domain discriminants and shell tool placeholder exist. | No document type/payload, text editor/layout, renderer, hit test, manipulation, history, serialization, persistence. | Generic domain object discriminant/capabilities; document factory/serialization boundaries require internal expansion |
@@ -2689,7 +2756,7 @@ stateDiagram-v2
 
 **IMPLEMENTED.** Domain, Persistence, and legacy History form a separately working immutable notebook-storage/history chain.
 
-**IMPLEMENTED.** Rendering/viewport, ink, document objects, selection, manipulation, and generic History form the session-only editor chain. Editor coordinates the generic History path for manipulation moves; no adapter connects that session model to notebook Persistence.
+**IMPLEMENTED.** Rendering/viewport, ink, document objects, selection, manipulation, and generic History form the session-only editor chain. Editor coordinates the generic History path for translation, rotation, scale, delete, and duplicate; no adapter connects that session model to notebook Persistence.
 
 **IMPLEMENTED.** Phase 11 resolves compatibility additively: the legacy snapshot manager remains unchanged, while the active editor uses the separate snapshot-free generic infrastructure.
 
@@ -2713,6 +2780,7 @@ stateDiagram-v2
 - supplied Phase 11 Part 1 Revision 2, Part 2A, Architecture Clarification, and Part 2B;
 - Phase 11 Compatibility & Migration Specification, Scope Clarification, Implementation Roadmap, and completed implementation tests;
 - Phase 11 History Architecture and Developer Guide;
+- Phase 12 Generalized Manipulation Framework;
 - the ARM specification.
 
 **UNKNOWN.** Runtime behavior outside tested/configured environments, operating-system filesystem guarantees beyond the adapter calls, browser Canvas 2D hardware acceleration, and future migration decisions are not inferable from the audited source.

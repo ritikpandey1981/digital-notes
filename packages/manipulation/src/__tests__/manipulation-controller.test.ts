@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createManipulationController,
   createManipulationManager,
+  type ManipulationCommit,
   type ManipulationPointerInput,
 } from "../index";
 import { createObject, createSources, pagePoint } from "./fixtures";
@@ -24,7 +25,7 @@ function pointer(
 
 function harness(objects = [createObject()], selectedId: string | null = "object-1") {
   const sources = createSources(objects, selectedId);
-  const onCommit = vi.fn(() => true);
+  const onCommit = vi.fn((commit: ManipulationCommit) => commit.sessionId.length > 0);
   const manager = createManipulationManager({
     createSessionId: () => "session",
     now: () => 10,
@@ -43,9 +44,114 @@ describe("ManipulationController", () => {
       translation: { translationX: 80, translationY: 45 },
       finalObjectTranslation: { x: 80, y: 45 },
     });
+    expect(commit).not.toHaveProperty("kind");
     expect(Object.isFrozen(commit)).toBe(true);
     expect(onCommit).toHaveBeenCalledOnce();
+    expect(onCommit.mock.calls[0]?.[0]).toBe(commit);
     expect(controller.getManipulationState().phase).toBe("idle");
+  });
+
+  it("publishes the generalized immutable result while preserving the legacy callback", () => {
+    const sources = createSources([createObject()], "object-1");
+    const onResult = vi.fn(() => true);
+    const controller = createManipulationController({
+      manager: createManipulationManager({
+        configuration: { dragThreshold: 0 },
+        createSessionId: () => "translation-session",
+        now: () => 10,
+      }),
+      ...sources,
+      onResult,
+    });
+
+    controller.handlePointer(pointer("down", 0, 0));
+    const result = controller.handlePointer(pointer("up", 10, 5));
+
+    expect(onResult).toHaveBeenCalledOnce();
+    expect(onResult).toHaveBeenCalledWith(result);
+    expect(result).toMatchObject({
+      kind: "translation",
+      sessionId: "translation-session",
+      finalObjectTranslation: { x: 10, y: 5 },
+    });
+    if (result?.kind !== "translation") throw new Error("Expected a translation result.");
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result?.translation)).toBe(true);
+    expect(Object.isFrozen(result?.initialObjectTranslation)).toBe(true);
+    expect(Object.isFrozen(result?.finalObjectTranslation)).toBe(true);
+    controller.destroy();
+  });
+
+  it("publishes an immutable center-pivot rotation result through the same lifecycle", () => {
+    const object = createObject();
+    const center = {
+      x: object.bounds.x + object.bounds.width / 2,
+      y: object.bounds.y + object.bounds.height / 2,
+    };
+    const sources = createSources([object], object.id);
+    const onResult = vi.fn(() => true);
+    const controller = createManipulationController({
+      manager: createManipulationManager({
+        configuration: { dragThreshold: 0 },
+        createSessionId: () => "rotation-session",
+        now: () => 11,
+      }),
+      ...sources,
+      onResult,
+    });
+
+    controller.handlePointer(pointer("down", center.x + 20, center.y, { kind: "rotation" }));
+    const result = controller.handlePointer(pointer("up", center.x, center.y + 20));
+
+    expect(result).toMatchObject({
+      kind: "rotation",
+      sessionId: "rotation-session",
+      initialObjectRotation: 0,
+      finalObjectRotation: Math.PI / 2,
+    });
+    if (result?.kind !== "rotation") throw new Error("Expected a rotation result.");
+    expect(result.rotation.deltaRadians).toBeCloseTo(Math.PI / 2);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.rotation)).toBe(true);
+    expect(onResult).toHaveBeenCalledWith(result);
+    controller.destroy();
+  });
+
+  it("publishes an immutable uniform-scale result and rejects a center-origin session", () => {
+    const object = createObject();
+    const center = {
+      x: object.bounds.x + object.bounds.width / 2,
+      y: object.bounds.y + object.bounds.height / 2,
+    };
+    const sources = createSources([object], object.id);
+    const onResult = vi.fn(() => true);
+    const controller = createManipulationController({
+      manager: createManipulationManager({
+        configuration: { dragThreshold: 0 },
+        createSessionId: () => "scale-session",
+        now: () => 12,
+      }),
+      ...sources,
+      onResult,
+    });
+
+    controller.handlePointer(pointer("down", center.x, center.y, { kind: "scale" }));
+    expect(controller.hasActiveSession()).toBe(false);
+    controller.handlePointer(pointer("down", center.x + 10, center.y, { kind: "scale" }));
+    const result = controller.handlePointer(pointer("up", center.x + 20, center.y));
+
+    expect(result).toMatchObject({
+      kind: "scale",
+      sessionId: "scale-session",
+      initialObjectScale: 1,
+      finalObjectScale: 2,
+    });
+    if (result?.kind !== "scale") throw new Error("Expected a scale result.");
+    expect(result.scale.factor).toBe(2);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.scale)).toBe(true);
+    expect(onResult).toHaveBeenCalledWith(result);
+    controller.destroy();
   });
 
   it("uses the initial pointer rather than accumulating event deltas", () => {

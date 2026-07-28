@@ -4,7 +4,7 @@ Status: implemented and verified
 Scope: Phase 11 Stages 1–9  
 Primary packages: `@folio/history` and `@folio/editor`
 
-This document describes the Phase 11 implementation as it exists. It is the developer reference for the generic editor-history subsystem and its move integration. The original Phase 5 notebook-history API remains available as a separate compatibility surface in the same package.
+This document describes the Phase 11 implementation and its original move integration. The original Phase 5 notebook-history API remains available as a separate compatibility surface in the same package. Phase 12 subsequently added editor-owned Rotate, Scale, Delete, and Duplicate commands through the same frozen generic History contracts; see `PHASE12_MANIPULATION_FRAMEWORK.md` for that current extension.
 
 ## 1. Phase overview
 
@@ -24,15 +24,15 @@ The implementation follows these principles:
 - factories are the construction boundary for the new manager and controller; and
 - the accepted Phase 5 public API remains source- and behavior-compatible.
 
-Phase 11 does not route every editor modification through History. It integrates only manipulation-originated single-object moves. Ink finalization continues to update the current editor document session directly. History persistence, a History UI, additional editor commands, collaboration, and serialization are non-goals.
+Phase 11 did not route every editor modification through History. Its approved scope integrated only manipulation-originated single-object moves. Ink finalization continues to update the current editor document session directly. History persistence, a History UI, collaboration, and serialization remain non-goals. Phase 12 reuses the same History infrastructure for rotation, scale, deletion, and duplication without changing History behavior.
 
 ## 2. Package responsibilities
 
 | Package | Owns | Must not own |
 | --- | --- | --- |
 | `@folio/history` | Generic command contracts, document-session boundary, bounded undo/redo stacks, lifecycle state, non-nested transactions, immutable notifications, manager/controller factories, and the frozen Phase 5 compatibility surface | Editor document semantics, manipulation sessions, rendering, selection, React/Electron lifecycle, persistence coordination, or UI |
-| `@folio/editor` | `MoveCommand`, `EditorHistoryCoordinator`, shortcut registration, one History manager/controller per mounted `CanvasSurface`, document-successor installation, and render/selection synchronization | Generic stack or transaction algorithms, manipulation math, hit testing, viewport math, or persisted notebook history |
-| `@folio/manipulation` | Pointer-driven translation sessions and immutable `ManipulationCommit` results | History commands, stacks, controllers, document replacement, or rendering |
+| `@folio/editor` | Private Move, Rotate, Scale, Delete, and Duplicate commands, `EditorHistoryCoordinator`, shortcut registration, one History manager/controller per mounted `CanvasSurface`, document-successor installation, and render/selection synchronization | Generic stack or transaction algorithms, manipulation math, hit testing, viewport math, or persisted notebook history |
+| `@folio/manipulation` | Pointer-driven translation, rotation, and scale sessions plus discrete delete/duplicate and continuous discriminated immutable `ManipulationResult` values | History commands, stacks, controllers, document replacement, or rendering |
 | `@folio/document` | Immutable `ObjectCollection`, `InkObject`, transforms, replacement operations, and object validation | History orchestration, UI, persistence, or interaction sessions |
 | `@folio/rendering` | Canvas lifecycle and passive rendering of the current editor state | History, commands, document mutation, selection decisions, or manipulation commits |
 | `@folio/selection` | Identity-only selection state and hit testing over immutable document objects | History, document mutation, rendering, or manipulation commits |
@@ -50,9 +50,10 @@ Phase 11 does not route every editor modification through History. It integrates
 flowchart TD
     Pointer["Pointer input"] --> EditorInput["CanvasSurface routing"]
     EditorInput --> Manipulation["@folio/manipulation"]
-    Manipulation --> Commit["Immutable ManipulationCommit"]
-    Commit --> Coordinator["EditorHistoryCoordinator"]
-    Coordinator --> Move["MoveCommand"]
+    Manipulation --> Result["Immutable ManipulationResult"]
+    Result --> Adapter["Editor command adapter"]
+    Adapter --> Move["MoveCommand"]
+    Move --> Coordinator["EditorHistoryCoordinator"]
     Move --> Controller["IHistoryController"]
     Controller --> Manager["IHistoryManager"]
     Manager --> Transaction{"Active transaction?"}
@@ -170,7 +171,10 @@ This compatibility manager operates on `@folio/domain.Notebook`, validates/freez
 | History controller | Claims exactly one generic manager, delegates operations, converts lifecycle events into immutable notifications, isolates listeners, prevents reentrant operations, and releases ownership on destruction. Its implementation class is private. |
 | Transaction engine | Collects immutable command entries while their effects are installed. Commit creates one private command group; rollback invokes child undo operations in reverse. It stores commands and metadata, never whole documents. |
 | `MoveCommand` | Editor-owned, package-private `EditorCommand<ObjectCollection>`. It validates one visible, unlocked, current `InkObject` and performs one absolute translation transition. It stores only identity, expected revision, initial/final translations, and command metadata. |
-| `EditorHistoryCoordinator` | Editor-owned lifetime adapter. It creates one manager/controller, turns `ManipulationCommit` into `MoveCommand`, subscribes once, installs session successors through History, and requests document/render/selection synchronization. |
+| `RotateCommand` and `ScaleCommand` | Phase 12 editor-owned, package-private commands that apply absolute rotation or uniform scale through the same generic command contract. They do not alter History architecture. |
+| `DeleteCommand` and `DuplicateCommand` | Phase 12 editor-owned, package-private commands that remove or clone one selected object through immutable Document operations. Delete retains the exact deleted object; Duplicate retains its generated clone and validates equivalent immutable state after later commands are reversed. Both retain deterministic insertion data and do not alter History architecture. |
+| Manipulation command adapter | Editor-owned exhaustive mapping from the `ManipulationResult` discriminator to a concrete command: translation to Move, rotation to Rotate, and scale to Scale. |
+| `EditorHistoryCoordinator` | Editor-owned lifetime adapter. It creates one manager/controller, executes commands supplied by the manipulation adapter, subscribes once, installs session successors through History, and requests document/render/selection synchronization. |
 | `InkDocumentSession` | Owns the active immutable `ObjectCollection`. It implements `HistoryDocumentSession`, creates ink objects directly on stroke finalization, and installs exact command successors. Its direct translation helper remains only for Phase 10 compatibility and is not called by `CanvasSurface`. |
 | Shortcut adapter | Registers one `keydown` listener for the mounted editor lifetime and removes it idempotently. It reuses the coordinator's controller and never constructs History infrastructure. |
 
@@ -180,16 +184,16 @@ The generic manager is not the public legacy `HistoryManager` class. The identic
 
 ### 6.1 Creation and execution
 
-1. Manipulation produces a frozen `ManipulationCommit` containing the object ID, session ID, and initial/final translations.
-2. `EditorHistoryCoordinator` resolves the current object's revision and creates an immutable `MoveCommand` with a stable ID, ISO timestamp, and description.
+1. Manipulation produces a frozen result containing its discriminator, object ID, session ID, and operation-specific initial/final values.
+2. The private Editor command adapter resolves the current object's revision and creates the matching immutable Move, Rotate, or Scale command with a stable ID, ISO timestamp, and description.
 3. The controller rejects calls after destruction or during another operation/notification dispatch.
 4. The manager verifies only the frozen `EditorCommand` protocol and enters `executing` state.
 5. The manager reads the active immutable document from `HistoryDocumentSession` and calls `command.execute(document)`.
-6. `MoveCommand` validates the object and produces a new `ObjectCollection`. It does not mutate the predecessor.
+6. The concrete command validates the object and produces a new `ObjectCollection`. It does not mutate the predecessor.
 7. The manager asks the session to install the exact successor and verifies that it was retained.
 8. Outside a transaction, the command entry is pushed to undo and redo is cleared. Inside a transaction, the command entry is appended to that transaction instead.
 9. History updates its version/counter, enters `completed`, and emits a lifecycle event.
-10. The controller publishes an immutable notification. The editor synchronizes permanent ink translation, document diagnostics, and selection bounds from the current collection.
+10. The controller publishes an immutable notification. The editor synchronizes the permanent ink transform, document diagnostics, and selection bounds from the current collection.
 11. After synchronous notification delivery completes, the manager returns to `idle`.
 
 ### 6.2 Undo and redo
@@ -249,8 +253,8 @@ Failure notifications contain the current immutable History state. History never
 
 To add another History-enabled editor command:
 
-1. Keep the editing subsystem independent. It should return an immutable logical result and must not construct or import History commands.
-2. Place the concrete command and its factory in `@folio/editor` or another composition layer that may depend on both the editing model and `@folio/history` contracts. Do not put document-specific commands in the generic History subtree.
+1. Keep the editing subsystem independent. It should add a discriminated immutable `ManipulationResult` variant and must not construct or import History commands.
+2. Place the concrete command and its adapter branch in `@folio/editor` or another composition layer that may depend on both the editing model and `@folio/history` contracts. Do not put document-specific commands in the generic History subtree.
 3. Implement `EditorCommand<TDocument>` as an immutable object. Store only stable identity, reversible operation data, and command metadata—not before/after documents, rendering state, UI state, or subsystem sessions.
 4. Validate all object references, revisions, permissions, and operation invariants inside the command. Generic History validates only the command protocol and lifecycle.
 5. Make `execute`, `undo`, and `redo` deterministic for the expected current state. Each non-no-op undo/redo must create a distinct immutable successor without mutating prior versions.
@@ -307,7 +311,7 @@ The Stage 8 release matrix passed formatting, format checking, type checking, li
 - There is no History persistence, autosave integration, or crash recovery for History state.
 - There is no History toolbar, menu, panel, timeline, visual browser, or command palette.
 - There is no collaborative or distributed History.
-- Only single-object translation of an `InkObject` is implemented as a Phase 11 editor command.
+- Phase 11 introduced single-object translation; Phase 12 adds single-object rotation, uniform scale, deletion, and duplication through the unchanged History contracts.
 - Ink finalization remains a direct `InkDocumentSession.completeStroke()` update and creates no History entry.
 - The legacy Phase 5 notebook manager, command factories, snapshots, transactions, save points, and structural dirty-sink compatibility remain available unchanged.
 - The generic and legacy managers are independent and do not share entries or state.
@@ -325,4 +329,3 @@ The following work is intentionally deferred beyond Phase 11:
 - mapping the session document model into notebook persistence.
 
 These items are scope markers only; Phase 11 defines no design for them.
-

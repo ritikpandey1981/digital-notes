@@ -2,20 +2,21 @@
 
 `@folio/editor` is Folio's application-facing composition layer. `CanvasSurface` is the thin React lifecycle adapter around rendering, ink, immutable document objects, selection, manipulation, and the Phase 11 generic History controller.
 
-React supplies the host lifecycle and callbacks. It does not calculate translation, build strokes, perform hit testing, own viewport math, manage History stacks, or draw pixels.
+React supplies the host lifecycle and callbacks. It does not calculate transforms, build strokes, perform hit testing, own viewport math, manage History stacks, or draw pixels.
 
 ## Public API
 
 - `CanvasSurface` is the package's only runtime export.
 - `CanvasSurfaceProps` documents interaction mode, lifecycle, diagnostics, selection, manipulation, History, and error callbacks.
-- `CanvasInteractionMode` is the type-only `"select" | "move" | "ink" | "disabled"` routing contract.
+- `CanvasInteractionMode` is the type-only `"select" | "move" | "rotate" | "scale" | "ink" | "disabled"` routing contract.
+- `ObjectLifecycleActions` is a session-scoped type-only action boundary for deleting or duplicating the current selection; the desktop toolbar receives it through `onObjectLifecycleActionsReady`.
 
 The additive History callbacks are:
 
 - `onHistoryControllerReady(controller)`, which exposes the session's interface-oriented `IHistoryController<ObjectCollection>` for programmatic operations; and
 - `onHistoryChange(notification)`, which receives immutable post-execute/undo/redo notifications.
 
-`InkDocumentSession`, `MoveCommand`, `EditorHistoryCoordinator`, the shortcut adapter, and coordinate mappers are package-internal. They are not exported from the package barrel. A public-API test locks this boundary.
+`InkDocumentSession`, all five concrete commands, the manipulation command adapter, `EditorHistoryCoordinator`, the shortcut adapter, and coordinate mappers are package-internal. They are not exported from the package barrel. A public-API test locks this boundary.
 
 ## Editor composition
 
@@ -27,9 +28,12 @@ flowchart TD
     Surface --> Document["InkDocumentSession and @folio/document"]
     Surface --> Selection["@folio/selection"]
     Surface --> Manipulation["@folio/manipulation"]
-    Surface --> Coordinator["EditorHistoryCoordinator"]
-    Coordinator --> History["@folio/history public factories and interfaces"]
-    Coordinator --> Move["Private MoveCommand"]
+    Manipulation --> Result["ManipulationResult"]
+    Result --> Coordinator["EditorHistoryCoordinator"]
+    Surface --> Coordinator
+    Coordinator --> Adapter["Manipulation command adapter"]
+    Adapter --> Commands["Private Move, Rotate, Scale, Delete, or Duplicate command"]
+    Commands --> History["@folio/history public factories and interfaces"]
     History --> Document
     Document --> Refresh["Permanent ink and selection refresh"]
     Rendering --> Refresh
@@ -43,17 +47,23 @@ The editor is the only adapter between Manipulation and History:
 
 ```mermaid
 flowchart LR
-    Pointer["Pointer input"] --> Manipulation["ManipulationCommit"]
-    Manipulation --> Coordinator["EditorHistoryCoordinator"]
-    Coordinator --> Command["MoveCommand"]
+    Pointer["Pointer or lifecycle action"] --> Manipulation["Continuous transform or discrete lifecycle result"]
+    Manipulation --> Result["Discriminated ManipulationResult"]
+    Result --> Coordinator["EditorHistoryCoordinator"]
+    Coordinator --> Adapter["Editor command adapter"]
+    Adapter --> Command["Move, Rotate, Scale, Delete, or Duplicate command"]
     Command --> Controller["History controller"]
     Controller --> Session["Immutable ObjectCollection successor"]
     Session --> Sync["Render and selection synchronization"]
 ```
 
-`MoveCommand` implements `EditorCommand<ObjectCollection>` for exactly one visible, unlocked `InkObject`. It stores identity, expected object revision, initial/final translations, and immutable command metadata. Execute, undo, and redo validate the expected current state and create new collection/object successors. The command contains no rendering, selection, manipulation-session, or History-stack behavior.
+All five private commands implement `EditorCommand<ObjectCollection>` for exactly one visible, unlocked `InkObject`. Transform commands store identity, expected revision, and operation-specific before/after values. `DeleteCommand` retains the exact immutable deleted object and its original index; `DuplicateCommand` creates one immutable clone through `ObjectFactory.cloneObject()` and retains its identity and insertion index. Commands contain no rendering, selection, manipulation-session, or History-stack behavior.
 
-`EditorHistoryCoordinator` owns one manager/controller pair for the mounted editor session. It converts the immutable `ManipulationCommit` into a `MoveCommand`, submits it through the controller, and listens for successful transitions. `CanvasSurface` then updates permanent stroke translation, document diagnostics, and selected-object bounds from the current collection. A failed command rejects the manipulation commit without accepting its preview as permanent state.
+`DuplicateCommand` validates the clone's complete logical immutable state rather than requiring heap-reference equality. This allows a later transform to execute and undo before the duplication itself is undone, while still rejecting stale or mismatched clone state.
+
+The private command adapter exhaustively maps `translation`, `rotation`, `scale`, `delete`, and `duplicate` to their matching commands. `EditorHistoryCoordinator` owns one manager/controller pair, executes the adapted command, and listens for successful transitions. `CanvasSurface` projects the complete ordered object collection into permanent ink visuals, clears invalid selection identities, and selects a newly duplicated object after the initiating action. A failed command leaves the current document and selection consistent.
+
+Continuous transforms use one generalized manipulation-preview renderer. All five operations use the same document replacement, rendering projection, and selection synchronization path. Future interaction types add an immutable result variant and an editor command-adapter branch. They do not change History, the coordinator lifecycle, document installation, notifications, or canvas synchronization.
 
 ## Keyboard shortcuts
 
@@ -67,9 +77,9 @@ The listener ignores composing or already-prevented events, Meta/Alt combination
 
 The application currently has no platform shortcut abstraction, so macOS Command-key bindings are not implemented.
 
-## Phase 11 scope boundary
+## History scope boundary
 
-Only manipulation-originated moves use History. Finalized ink continues through `InkDocumentSession.completeStroke()` and creates no History entry. The existing direct translation helper remains for Phase 10 source compatibility but is not used by `CanvasSurface`.
+Translation, rotation, scale, delete, and duplicate use History through the generalized manipulation-result boundary. Finalized ink continues through `InkDocumentSession.completeStroke()` and creates no History entry. The existing direct translation helper remains for Phase 10 source compatibility but is not used by `CanvasSurface`.
 
 The editor still has no notebook persistence integration. History, document objects, strokes, selections, and manipulations are session-only and are discarded with the mounted editor session.
 
@@ -77,4 +87,4 @@ The editor still has no notebook persistence integration. History, document obje
 
 Editor may depend on History, Manipulation, Selection, Document, Rendering, Ink, and React because it coordinates them. It imports only public History interfaces and factories. History never imports Editor, and Manipulation, Rendering, Selection, Document, Ink, and Persistence remain unaware of editor History coordination.
 
-See [Phase 11 History Architecture and Developer Guide](../../docs/architecture/PHASE11_HISTORY_ARCHITECTURE.md) for lifecycle, transactions, failure guarantees, public APIs, tests, and extension rules.
+See [Phase 11 History Architecture and Developer Guide](../../docs/architecture/PHASE11_HISTORY_ARCHITECTURE.md) for History lifecycle and guarantees, and [Phase 12 Manipulation Framework](../../docs/architecture/PHASE12_MANIPULATION_FRAMEWORK.md) for the generalized result/adaptation boundary.

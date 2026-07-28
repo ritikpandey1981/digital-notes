@@ -2,9 +2,13 @@ import { InkObject } from "@folio/document";
 import type { HistoryNotification, IHistoryController } from "@folio/history";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
 import {
+  createDeleteManipulationResult,
+  createDuplicateManipulationResult,
   createManipulationController,
   createManipulationManager,
-  type ManipulationCommit,
+  type RotationManipulationResult,
+  type ScaleManipulationResult,
+  type TranslationManipulationResult,
 } from "@folio/manipulation";
 import { createSelectionManager, type PagePoint } from "@folio/selection";
 import { describe, expect, it } from "vitest";
@@ -16,7 +20,7 @@ const FIRST_MOVE_TIMESTAMP = "2026-07-28T08:01:00.000Z";
 const SECOND_MOVE_TIMESTAMP = "2026-07-28T08:02:00.000Z";
 
 describe("EditorHistoryCoordinator", () => {
-  it("adapts a ManipulationCommit into one immutable History successor", () => {
+  it("adapts a translation manipulation result into one immutable History successor", () => {
     const session = createDocumentSession();
     const initial = session.collection;
     const source = expectInkObject(session);
@@ -36,8 +40,8 @@ describe("EditorHistoryCoordinator", () => {
       },
     });
 
-    const state = coordinator.commitMove(
-      createCommit("session-1", { x: 0, y: 0 }, { x: 12, y: -8 }),
+    const state = coordinator.executeManipulation(
+      createTranslationResult("session-1", { x: 0, y: 0 }, { x: 12, y: -8 }),
     );
     const moved = expectInkObject(session);
 
@@ -83,7 +87,9 @@ describe("EditorHistoryCoordinator", () => {
       },
     });
 
-    coordinator.commitMove(createCommit("session-1", { x: 0, y: 0 }, { x: 20, y: 15 }));
+    coordinator.executeManipulation(
+      createTranslationResult("session-1", { x: 0, y: 0 }, { x: 20, y: 15 }),
+    );
     const executed = session.collection;
     coordinator.undo();
     const undone = session.collection;
@@ -110,6 +116,83 @@ describe("EditorHistoryCoordinator", () => {
       redoDepth: 0,
       executionCounter: 3,
     });
+    coordinator.destroy();
+  });
+
+  it("adapts rotation and scale results into independent undoable History commands", () => {
+    const timestamps = [FIRST_MOVE_TIMESTAMP, SECOND_MOVE_TIMESTAMP];
+    const session = createDocumentSession();
+    const notifications: HistoryNotification[] = [];
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      now: () => timestamps.shift() ?? SECOND_MOVE_TIMESTAMP,
+      onDocumentChange: () => undefined,
+      onHistoryChange: (notification) => notifications.push(notification),
+    });
+
+    coordinator.executeManipulation(createRotationResult("rotate-1", 0, Math.PI / 2));
+    coordinator.executeManipulation(createScaleResult("scale-1", 1, 2));
+    expect(expectInkObject(session).transform).toMatchObject({
+      rotation: Math.PI / 2,
+      scale: 2,
+    });
+    expect(coordinator.controller.getHistoryState()).toMatchObject({ undoDepth: 2, redoDepth: 0 });
+    expect(notifications.map(({ command }) => command?.id)).toEqual([
+      "rotate-rotate-1",
+      "scale-scale-1",
+    ]);
+
+    coordinator.undo();
+    expect(expectInkObject(session).transform).toMatchObject({ rotation: Math.PI / 2, scale: 1 });
+    coordinator.undo();
+    expect(expectInkObject(session).transform).toMatchObject({ rotation: 0, scale: 1 });
+    coordinator.redo();
+    coordinator.redo();
+    expect(expectInkObject(session).transform).toMatchObject({
+      rotation: Math.PI / 2,
+      scale: 2,
+    });
+    coordinator.destroy();
+  });
+
+  it("adapts duplicate and delete results without exposing lifecycle logic to History", () => {
+    const timestamps = [FIRST_MOVE_TIMESTAMP, SECOND_MOVE_TIMESTAMP];
+    const session = createDocumentSession();
+    const source = expectInkObject(session);
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      now: () => timestamps.shift() ?? SECOND_MOVE_TIMESTAMP,
+      onDocumentChange: () => undefined,
+    });
+
+    coordinator.executeManipulation(
+      createDuplicateManipulationResult({
+        objectId: source.id,
+        sessionId: "duplicate-1",
+        sessionTimestamp: 1,
+      }),
+    );
+    const duplicate = session.collection.objects.find(({ id }) => id !== source.id);
+    if (!(duplicate instanceof InkObject)) throw new Error("Expected an immutable duplicate.");
+    expect(duplicate.stroke).toBe(source.stroke);
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([source.id, duplicate.id]);
+
+    coordinator.executeManipulation(
+      createDeleteManipulationResult({
+        objectId: duplicate.id,
+        sessionId: "delete-1",
+        sessionTimestamp: 2,
+      }),
+    );
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([source.id]);
+    coordinator.undo();
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([source.id, duplicate.id]);
+    coordinator.undo();
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([source.id]);
+    coordinator.redo();
+    coordinator.redo();
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([source.id]);
+    expect(coordinator.controller.getHistoryState()).toMatchObject({ undoDepth: 2, redoDepth: 0 });
     coordinator.destroy();
   });
 
@@ -140,9 +223,9 @@ describe("EditorHistoryCoordinator", () => {
       objectSource: {
         getObject: (objectId) => session.collection.lookup(objectId),
       },
-      onCommit: (commit) => {
+      onResult: (result) => {
         try {
-          coordinator.commitMove(commit);
+          coordinator.executeManipulation(result);
           return true;
         } catch (cause) {
           errors.push(cause as Error);
@@ -186,8 +269,12 @@ describe("EditorHistoryCoordinator", () => {
       timestamp: SECOND_MOVE_TIMESTAMP,
       description: "Move twice",
     });
-    coordinator.commitMove(createCommit("session-1", { x: 0, y: 0 }, { x: 10, y: 5 }));
-    coordinator.commitMove(createCommit("session-2", { x: 10, y: 5 }, { x: 20, y: 15 }));
+    coordinator.executeManipulation(
+      createTranslationResult("session-1", { x: 0, y: 0 }, { x: 10, y: 5 }),
+    );
+    coordinator.executeManipulation(
+      createTranslationResult("session-2", { x: 10, y: 5 }, { x: 20, y: 15 }),
+    );
 
     expect(controller.commitTransaction()).toMatchObject({ undoDepth: 1, redoDepth: 0 });
     expect(expectInkObject(session).transform.translation).toEqual({ x: 20, y: 15 });
@@ -214,7 +301,9 @@ describe("EditorHistoryCoordinator", () => {
     const firstController: IHistoryController<typeof first.collection> =
       firstCoordinator.controller;
 
-    firstCoordinator.commitMove(createCommit("session-1", { x: 0, y: 0 }, { x: 5, y: 5 }));
+    firstCoordinator.executeManipulation(
+      createTranslationResult("session-1", { x: 0, y: 0 }, { x: 5, y: 5 }),
+    );
 
     expect(firstCoordinator.controller).not.toBe(secondCoordinator.controller);
     expect(firstCoordinator.controller.canUndo()).toBe(true);
@@ -234,16 +323,17 @@ function createDocumentSession(now: () => string = () => OBJECT_TIMESTAMP): InkD
   return session;
 }
 
-function createCommit(
+function createTranslationResult(
   sessionId: string,
   initialObjectTranslation: Readonly<{ x: number; y: number }>,
   finalObjectTranslation: Readonly<{ x: number; y: number }>,
-): ManipulationCommit {
+): TranslationManipulationResult {
   const movementVector = Object.freeze({
     x: finalObjectTranslation.x - initialObjectTranslation.x,
     y: finalObjectTranslation.y - initialObjectTranslation.y,
   });
   return Object.freeze({
+    kind: "translation",
     sessionId,
     objectId: "object-1",
     translation: Object.freeze({
@@ -254,6 +344,40 @@ function createCommit(
     }),
     initialObjectTranslation: Object.freeze({ ...initialObjectTranslation }),
     finalObjectTranslation: Object.freeze({ ...finalObjectTranslation }),
+    sessionTimestamp: 1,
+  });
+}
+
+function createRotationResult(
+  sessionId: string,
+  initialObjectRotation: number,
+  finalObjectRotation: number,
+): RotationManipulationResult {
+  return Object.freeze({
+    kind: "rotation",
+    sessionId,
+    objectId: "object-1",
+    rotation: Object.freeze({
+      deltaRadians: finalObjectRotation - initialObjectRotation,
+    }),
+    initialObjectRotation,
+    finalObjectRotation,
+    sessionTimestamp: 1,
+  });
+}
+
+function createScaleResult(
+  sessionId: string,
+  initialObjectScale: number,
+  finalObjectScale: number,
+): ScaleManipulationResult {
+  return Object.freeze({
+    kind: "scale",
+    sessionId,
+    objectId: "object-1",
+    scale: Object.freeze({ factor: finalObjectScale / initialObjectScale }),
+    initialObjectScale,
+    finalObjectScale,
     sessionTimestamp: 1,
   });
 }

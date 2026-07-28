@@ -7,7 +7,12 @@ const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const workspaceRoot = join(packageRoot, "..", "..");
 const sourceRoot = join(packageRoot, "src");
 const moveCommandPath = join(sourceRoot, "history", "move-command.ts");
+const rotateCommandPath = join(sourceRoot, "history", "rotate-command.ts");
+const scaleCommandPath = join(sourceRoot, "history", "scale-command.ts");
+const deleteCommandPath = join(sourceRoot, "history", "delete-command.ts");
+const duplicateCommandPath = join(sourceRoot, "history", "duplicate-command.ts");
 const coordinatorPath = join(sourceRoot, "history", "editor-history-coordinator.ts");
+const commandAdapterPath = join(sourceRoot, "history", "manipulation-command-adapter.ts");
 const shortcutsPath = join(sourceRoot, "history", "editor-history-shortcuts.ts");
 const canvasSurfacePath = join(sourceRoot, "CanvasSurface.tsx");
 
@@ -50,9 +55,18 @@ describe("Stage 6 command dependency boundary", () => {
 
     expect(barrel).not.toContain("MoveCommand");
     expect(barrel).not.toContain("createMoveCommand");
+    expect(barrel).not.toContain("createRotateCommand");
+    expect(barrel).not.toContain("createScaleCommand");
+    expect(barrel).not.toContain("createDeleteCommand");
+    expect(barrel).not.toContain("createDuplicateCommand");
     expect(barrel).not.toContain("EditorHistoryCoordinator");
     expect(barrel).not.toContain("createEditorHistoryCoordinator");
+    expect(barrel).not.toContain("createCommandForManipulation");
     expect(barrel).not.toContain("installEditorHistoryShortcuts");
+    expect(barrel).not.toContain("resolveScalarTransformCommandInput");
+    expect(barrel).not.toContain("transitionScalarTransform");
+    expect(barrel).not.toContain("resolveLifecycleMetadata");
+    expect(barrel).not.toContain("requireLifecycleObject");
   });
 
   it("stores no document aggregate or page object in the command", async () => {
@@ -79,15 +93,46 @@ describe("Stage 6 command dependency boundary", () => {
   });
 
   it("keeps History construction private and removes direct move mutation from CanvasSurface", async () => {
-    const [coordinator, shortcuts, canvasSurface] = await Promise.all([
+    const [
+      coordinator,
+      commandAdapter,
+      shortcuts,
+      canvasSurface,
+      rotateCommand,
+      scaleCommand,
+      deleteCommand,
+      duplicateCommand,
+    ] = await Promise.all([
       readFile(coordinatorPath, "utf8"),
+      readFile(commandAdapterPath, "utf8"),
       readFile(shortcutsPath, "utf8"),
       readFile(canvasSurfacePath, "utf8"),
+      readFile(rotateCommandPath, "utf8"),
+      readFile(scaleCommandPath, "utf8"),
+      readFile(deleteCommandPath, "utf8"),
+      readFile(duplicateCommandPath, "utf8"),
     ]);
 
     expect(coordinator).toContain("createEditorHistoryManager");
     expect(coordinator).toContain("createHistoryController");
+    expect(coordinator).toContain("createCommandForManipulation");
+    expect(coordinator).not.toContain("createMoveCommand");
+    expect(commandAdapter).toContain('case "translation"');
+    expect(commandAdapter).toContain('case "rotation"');
+    expect(commandAdapter).toContain('case "scale"');
+    expect(commandAdapter).toContain('case "delete"');
+    expect(commandAdapter).toContain('case "duplicate"');
+    expect(commandAdapter).toContain("createMoveCommand");
+    expect(commandAdapter).toContain("createRotateCommand");
+    expect(commandAdapter).toContain("createScaleCommand");
+    expect(commandAdapter).toContain("createDeleteCommand");
+    expect(commandAdapter).toContain("createDuplicateCommand");
+    expect(rotateCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
+    expect(scaleCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
+    expect(deleteCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
+    expect(duplicateCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
     expect(canvasSurface).toContain("createEditorHistoryCoordinator");
+    expect(canvasSurface).toContain("executeManipulation");
     expect(canvasSurface).not.toContain("createEditorHistoryManager");
     expect(canvasSurface).not.toContain("createHistoryController");
     expect(canvasSurface).not.toMatch(/documentSession\.translateObject\s*\(/u);

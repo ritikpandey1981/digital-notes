@@ -1,4 +1,6 @@
 import type { PagePoint } from "@folio/selection";
+import type { RotationEngine } from "./rotation-engine";
+import type { ScaleEngine } from "./scale-engine";
 import type { TranslationEngine } from "./translation-engine";
 import type {
   BeginManipulationInput,
@@ -34,6 +36,8 @@ export interface ManipulationManager {
 export interface ManipulationManagerOptions {
   readonly configuration?: Partial<ManipulationConfiguration>;
   readonly translationEngine?: TranslationEngine;
+  readonly rotationEngine?: RotationEngine;
+  readonly scaleEngine?: ScaleEngine;
   readonly createSessionId?: () => string;
   readonly now?: () => number;
 }

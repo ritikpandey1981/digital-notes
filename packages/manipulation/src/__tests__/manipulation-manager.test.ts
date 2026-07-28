@@ -112,5 +112,55 @@ describe("ManipulationManager", () => {
     expect(() => createManipulationManager({ configuration: { dragThreshold: -1 } })).toThrow(
       RangeError,
     );
+    expect(() =>
+      createManipulationManager({ configuration: { minimumScale: 2, maximumScale: 1 } }),
+    ).toThrow(RangeError);
+  });
+
+  it("reuses one session lifecycle for rotation and clamped scale", () => {
+    const rotation = manager(0);
+    rotation.beginSession({
+      kind: "rotation",
+      objectId: "object",
+      pointerId: 1,
+      position: pagePoint(10, 0),
+      objectCenter: pagePoint(0, 0),
+      initialObjectTranslation: { x: 3, y: 4 },
+      initialObjectRotation: 0.25,
+      initialObjectScale: 2,
+    });
+    const rotated = rotation.updateSession(pagePoint(0, 10));
+    expect(rotated).toMatchObject({
+      kind: "rotation",
+      phase: "dragging",
+      finalObjectTranslation: { x: 3, y: 4 },
+      finalObjectRotation: 0.25 + Math.PI / 2,
+      finalObjectScale: 2,
+    });
+
+    const scale = createManipulationManager({
+      configuration: { dragThreshold: 0, minimumScale: 0.5, maximumScale: 3 },
+      createSessionId: () => "scale-session",
+      now: () => 43,
+    });
+    scale.beginSession({
+      kind: "scale",
+      objectId: "object",
+      pointerId: 1,
+      position: pagePoint(10, 0),
+      objectCenter: pagePoint(0, 0),
+      initialObjectTranslation: { x: 3, y: 4 },
+      initialObjectRotation: 0.25,
+      initialObjectScale: 2,
+    });
+    const scaled = scale.updateSession(pagePoint(100, 0));
+    expect(scaled).toMatchObject({
+      kind: "scale",
+      phase: "dragging",
+      finalObjectTranslation: { x: 3, y: 4 },
+      finalObjectRotation: 0.25,
+      finalObjectScale: 3,
+      scale: { factor: 1.5 },
+    });
   });
 });

@@ -18,6 +18,8 @@ describe("@folio/document public API", () => {
       "isObjectBounds",
       "isObjectMetadata",
       "isPageObject",
+      "rotateObject",
+      "scaleObject",
       "translateObject",
       "validateObject",
       "validateObjectCollection",

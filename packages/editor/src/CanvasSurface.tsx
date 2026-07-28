@@ -2,16 +2,20 @@ import { InkObject, type ObjectCollection } from "@folio/document";
 import type { HistoryNotification, IHistoryController, IHistoryState } from "@folio/history";
 import { createStrokeVisual, PointerInputController, StrokeRenderer } from "@folio/ink";
 import {
+  createDeleteManipulationResult,
+  createDuplicateManipulationResult,
   createManipulationController,
   createManipulationManager,
   type ManipulationController,
+  type ManipulationKind,
   type ManipulationPointerInput,
+  type ManipulationResult,
   type ManipulationState,
 } from "@folio/manipulation";
 import {
   CanvasController,
   SelectionOverlayRenderer,
-  TranslationPreviewRenderer,
+  TransformPreviewRenderer,
   type CanvasBounds,
   type CanvasControllerSnapshot,
   type RenderTheme,
@@ -36,7 +40,13 @@ import { PageManipulationCoordinateMapper } from "./PageManipulationCoordinateMa
 import { PageSelectionCoordinateMapper } from "./PageSelectionCoordinateMapper";
 
 /** Interaction capabilities currently routed by the editor adapter. */
-export type CanvasInteractionMode = "select" | "move" | "ink" | "disabled";
+export type CanvasInteractionMode = "select" | "move" | "rotate" | "scale" | "ink" | "disabled";
+
+/** Session-scoped object lifecycle actions exposed to the desktop composition layer. */
+export interface ObjectLifecycleActions {
+  readonly deleteSelection: () => boolean;
+  readonly duplicateSelection: () => boolean;
+}
 
 /** Public composition and lifecycle callbacks accepted by {@link CanvasSurface}. */
 export interface CanvasSurfaceProps {
@@ -49,9 +59,13 @@ export interface CanvasSurfaceProps {
   /** Receives the interface-oriented selection controller. */
   readonly onSelectionControllerReady?: (controller: SelectionController) => void;
   /** Receives the interface-oriented manipulation controller. */
-  readonly onManipulationControllerReady?: (controller: ManipulationController) => void;
+  readonly onManipulationControllerReady?: (
+    controller: ManipulationController<ManipulationResult>,
+  ) => void;
   /** Receives the interface-oriented History controller for programmatic operations. */
   readonly onHistoryControllerReady?: (controller: IHistoryController<ObjectCollection>) => void;
+  /** Receives session-bound delete/duplicate actions and null during cleanup. */
+  readonly onObjectLifecycleActionsReady?: (actions: ObjectLifecycleActions | null) => void;
   /** Receives immutable selection state only after logical changes. */
   readonly onSelectionChange?: (state: SelectionState) => void;
   /** Receives immutable manipulation state only after logical transitions. */
@@ -81,6 +95,21 @@ function readTheme(): RenderTheme {
   });
 }
 
+function manipulationKindForMode(mode: CanvasInteractionMode): ManipulationKind | null {
+  switch (mode) {
+    case "move":
+      return "translation";
+    case "rotate":
+      return "rotation";
+    case "scale":
+      return "scale";
+    case "select":
+    case "ink":
+    case "disabled":
+      return null;
+  }
+}
+
 /** Mounts and owns one editor canvas stack for the lifetime of the React host. */
 export function CanvasSurface({
   className,
@@ -89,6 +118,7 @@ export function CanvasSurface({
   onSelectionControllerReady,
   onManipulationControllerReady,
   onHistoryControllerReady,
+  onObjectLifecycleActionsReady,
   onSelectionChange,
   onManipulationChange,
   onHistoryChange,
@@ -97,15 +127,18 @@ export function CanvasSurface({
 }: CanvasSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const interactionModeRef = useRef(interactionMode);
-  const manipulationControllerRef = useRef<ManipulationController | null>(null);
+  const manipulationControllerRef = useRef<ManipulationController<ManipulationResult> | null>(null);
   const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
   const historyChangeRef = useRef(onHistoryChange);
+  const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
 
   useEffect(() => {
     interactionModeRef.current = interactionMode;
-    if (interactionMode !== "move") {
+    const kind = manipulationKindForMode(interactionMode);
+    const activeKind = manipulationControllerRef.current?.getManipulationState().kind ?? null;
+    if (kind === null || (activeKind !== null && activeKind !== kind)) {
       manipulationControllerRef.current?.cancelManipulation();
       releaseManipulationPointerCaptureRef.current?.();
     }
@@ -122,6 +155,10 @@ export function CanvasSurface({
   useEffect(() => {
     historyChangeRef.current = onHistoryChange;
   }, [onHistoryChange]);
+
+  useEffect(() => {
+    objectLifecycleActionsReadyRef.current = onObjectLifecycleActionsReady;
+  }, [onObjectLifecycleActionsReady]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -142,8 +179,8 @@ export function CanvasSurface({
     let selectionController: SelectionController | null = null;
     let unsubscribeSelection: (() => void) | null = null;
     let manipulationLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
-    let translationPreviewRenderer: TranslationPreviewRenderer | null = null;
-    let manipulationController: ManipulationController | null = null;
+    let transformPreviewRenderer: TransformPreviewRenderer | null = null;
+    let manipulationController: ManipulationController<ManipulationResult> | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
     let uninstallHistoryShortcuts: (() => void) | null = null;
@@ -248,12 +285,16 @@ export function CanvasSurface({
         host.dataset.selectionVersion = String(state.selectionVersion);
         host.dataset.selectedObjectBoundsX = String(selectedObject?.bounds.x ?? 0);
         host.dataset.selectedObjectBoundsY = String(selectedObject?.bounds.y ?? 0);
+        host.dataset.selectedObjectBoundsWidth = String(selectedObject?.bounds.width ?? 0);
+        host.dataset.selectedObjectBoundsHeight = String(selectedObject?.bounds.height ?? 0);
         host.dataset.selectedObjectTranslationX = String(
           selectedObject?.transform.translation.x ?? 0,
         );
         host.dataset.selectedObjectTranslationY = String(
           selectedObject?.transform.translation.y ?? 0,
         );
+        host.dataset.selectedObjectRotation = String(selectedObject?.transform.rotation ?? 0);
+        host.dataset.selectedObjectScale = String(selectedObject?.transform.scale ?? 1);
         inkLayer?.canvas.setAttribute("data-selection-state", selectionState);
         inkLayer?.canvas.setAttribute("data-selected-object-id", selectedObjectId);
         selectionLayer?.canvas.setAttribute("data-selected-object-type", selectedObjectType);
@@ -276,14 +317,14 @@ export function CanvasSurface({
       });
       manipulationLayer = controller.createOverlayLayer({
         name: "manipulation-preview",
-        ariaLabel: "Object movement preview",
+        ariaLabel: "Object transform preview",
       });
-      translationPreviewRenderer = new TranslationPreviewRenderer({
+      transformPreviewRenderer = new TransformPreviewRenderer({
         context: manipulationLayer.context,
         canvas: manipulationLayer.canvas,
         viewport,
       });
-      const activeTranslationPreviewRenderer = translationPreviewRenderer;
+      const activeTransformPreviewRenderer = transformPreviewRenderer;
       manipulationLayer.canvas.style.zIndex = "2";
       const manipulationCoordinateMapper = new PageManipulationCoordinateMapper({
         coordinateConverter,
@@ -302,16 +343,29 @@ export function CanvasSurface({
         host.dataset.historyLastCommandId = state.lastCommand?.id ?? "";
       };
       const synchronizeDocumentFromHistory = (): void => {
-        for (const object of documentSession.collection.objects) {
-          if (object instanceof InkObject) {
-            activeStrokeRenderer.setStrokeTranslation(
-              object.stroke.id,
-              object.transform.translation,
-            );
-          }
+        const inkObjects = documentSession.collection.objects.filter(
+          (object): object is InkObject => object instanceof InkObject,
+        );
+        activeStrokeRenderer.replaceFinalizedStrokes(
+          Object.freeze(
+            inkObjects.map((object) =>
+              Object.freeze({ id: object.id, stroke: object.stroke, transform: object.transform }),
+            ),
+          ),
+        );
+        for (const objectId of strokeVisuals.keys()) {
+          if (!documentSession.collection.has(objectId)) strokeVisuals.delete(objectId);
         }
         updateDocumentDiagnostics();
-        updateSelection(activeSelectionController.getSelection(), false);
+        const selection = activeSelectionController.getSelection();
+        if (
+          selection.selectedObjectId !== null &&
+          !documentSession.collection.has(selection.selectedObjectId)
+        ) {
+          activeSelectionController.clearSelection();
+        } else {
+          updateSelection(selection, false);
+        }
       };
       historyCoordinator = createEditorHistoryCoordinator({
         documentSession,
@@ -332,15 +386,15 @@ export function CanvasSurface({
         manager: manipulationManager,
         selectionSource: activeSelectionController,
         objectSource,
-        onCommit: (commit) => {
+        onResult: (result) => {
           try {
-            activeHistoryCoordinator.commitMove(commit);
+            activeHistoryCoordinator.executeManipulation(result);
             return true;
           } catch (cause) {
             const error =
               cause instanceof Error
                 ? cause
-                : new Error("History move execution failed.", { cause });
+                : new Error("History transform execution failed.", { cause });
             onError?.(error);
             return false;
           }
@@ -349,32 +403,83 @@ export function CanvasSurface({
       });
       const activeManipulationController = manipulationController;
       manipulationControllerRef.current = activeManipulationController;
+      const objectLifecycleActions: ObjectLifecycleActions = Object.freeze({
+        deleteSelection: () => {
+          const objectId = activeSelectionController.getSelection().selectedObjectId;
+          if (objectId === null || !documentSession.collection.has(objectId)) return false;
+          try {
+            activeHistoryCoordinator.executeManipulation(
+              createDeleteManipulationResult({ objectId }),
+            );
+            return true;
+          } catch (cause) {
+            const error =
+              cause instanceof Error
+                ? cause
+                : new Error("History deletion execution failed.", { cause });
+            onError?.(error);
+            return false;
+          }
+        },
+        duplicateSelection: () => {
+          const objectId = activeSelectionController.getSelection().selectedObjectId;
+          if (objectId === null || !documentSession.collection.has(objectId)) return false;
+          const previousIds = new Set(documentSession.collection.objects.map(({ id }) => id));
+          try {
+            activeHistoryCoordinator.executeManipulation(
+              createDuplicateManipulationResult({ objectId }),
+            );
+            const duplicate = documentSession.collection.objects.find(
+              ({ id }) => !previousIds.has(id),
+            );
+            if (duplicate !== undefined) activeSelectionController.selectObject(duplicate.id);
+            return duplicate !== undefined;
+          } catch (cause) {
+            const error =
+              cause instanceof Error
+                ? cause
+                : new Error("History duplication execution failed.", { cause });
+            onError?.(error);
+            return false;
+          }
+        },
+      });
+      objectLifecycleActionsReadyRef.current?.(objectLifecycleActions);
       const updateManipulation = (state: ManipulationState, notify: boolean): void => {
         host.dataset.manipulationPhase = state.phase;
+        host.dataset.manipulationKind = state.kind ?? "";
         host.dataset.manipulationVersion = String(state.version);
         host.dataset.manipulationObjectId = state.objectId ?? "";
         host.dataset.manipulationTranslationX = String(state.translation.translationX);
         host.dataset.manipulationTranslationY = String(state.translation.translationY);
+        host.dataset.manipulationRotation = String(state.finalObjectRotation ?? 0);
+        host.dataset.manipulationScale = String(state.finalObjectScale ?? 1);
         const object =
           state.objectId === null ? undefined : documentSession.collection.lookup(state.objectId);
         if (
           state.phase === "dragging" &&
           object instanceof InkObject &&
-          state.finalObjectTranslation !== null
+          state.finalObjectTranslation !== null &&
+          state.finalObjectRotation !== null &&
+          state.finalObjectScale !== null
         ) {
           let visual = strokeVisuals.get(object.id);
           if (visual === undefined) {
             visual = createStrokeVisual(object.stroke);
             strokeVisuals.set(object.id, visual);
           }
-          activeTranslationPreviewRenderer.setPreview({
+          activeTransformPreviewRenderer.setPreview({
             objectId: object.id,
             bounds: visual.bounds,
-            translation: state.finalObjectTranslation,
+            transform: Object.freeze({
+              translation: state.finalObjectTranslation,
+              rotation: state.finalObjectRotation,
+              scale: state.finalObjectScale,
+            }),
             visual,
           });
         } else {
-          activeTranslationPreviewRenderer.setPreview(null);
+          activeTransformPreviewRenderer.setPreview(null);
         }
         if (state.phase === "committing" || state.phase === "cancelling") {
           releaseManipulationPointerCapture();
@@ -385,10 +490,10 @@ export function CanvasSurface({
         updateManipulation(state, true),
       );
       inkLayer.setResizeHandler(() => activeStrokeRenderer.redraw());
-      manipulationLayer.setResizeHandler(() => activeTranslationPreviewRenderer.redraw());
+      manipulationLayer.setResizeHandler(() => activeTransformPreviewRenderer.redraw());
       selectionLayer.setResizeHandler(() => activeSelectionOverlayRenderer.redraw());
       activeStrokeRenderer.redraw();
-      activeTranslationPreviewRenderer.redraw();
+      activeTransformPreviewRenderer.redraw();
       activeSelectionOverlayRenderer.redraw();
       updateDocumentDiagnostics();
       updateSelection(activeSelectionController.getSelection(), false);
@@ -415,7 +520,9 @@ export function CanvasSurface({
             isPrimary: event.isPrimary,
             position,
           });
-        } else if (mode === "move") {
+        } else if (manipulationKindForMode(mode) !== null) {
+          const manipulationKind = manipulationKindForMode(mode);
+          if (manipulationKind === null) return;
           const pagePosition = manipulationCoordinateMapper.screenToPage(
             position,
             activeManipulationController.hasActiveSession(),
@@ -426,13 +533,15 @@ export function CanvasSurface({
             button: event.button,
             isPrimary: event.isPrimary,
             position: pagePosition,
+            kind: manipulationKind,
           };
           activeManipulationController.handlePointer(input);
         } else {
           return;
         }
         const ownsManipulation = activeManipulationController.hasActiveSession();
-        const shouldCaptureManipulation = mode === "move" && ownsManipulation;
+        const shouldCaptureManipulation =
+          manipulationKindForMode(mode) !== null && ownsManipulation;
         if (
           phase === "down" &&
           event.isPrimary &&
@@ -492,7 +601,11 @@ export function CanvasSurface({
         onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
         onStrokeFinalized: (stroke) => {
           const object = documentSession.completeStroke(stroke);
-          activeStrokeRenderer.finalizeStroke(object.stroke);
+          activeStrokeRenderer.finalizeStroke(
+            object.stroke,
+            object.transform.translation,
+            object.id,
+          );
           updateDocumentDiagnostics();
         },
         onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
@@ -505,6 +618,7 @@ export function CanvasSurface({
       host.dataset.selectionCapability = "ready";
       host.dataset.manipulationCapability = "ready";
       host.dataset.historyCapability = "ready";
+      host.dataset.objectLifecycleCapability = "ready";
       host.dataset.manipulationPointerCapture = "released";
       onControllerReady?.(controller);
       onSelectionControllerReady?.(activeSelectionController);
@@ -528,6 +642,7 @@ export function CanvasSurface({
       host.dataset.selectionCapability = "error";
       host.dataset.manipulationCapability = "error";
       host.dataset.historyCapability = "error";
+      host.dataset.objectLifecycleCapability = "error";
       onError?.(error);
     }
 
@@ -544,11 +659,12 @@ export function CanvasSurface({
       releaseManipulationPointerCaptureRef.current = null;
       uninstallHistoryShortcuts?.();
       historyCoordinator?.destroy();
+      objectLifecycleActionsReadyRef.current?.(null);
       selectionController?.destroy();
       pointerInput?.destroy();
       documentSession.clear();
       selectionOverlayRenderer?.destroy();
-      translationPreviewRenderer?.destroy();
+      transformPreviewRenderer?.destroy();
       strokeRenderer?.destroy();
       selectionLayer?.destroy();
       manipulationLayer?.destroy();

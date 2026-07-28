@@ -2,7 +2,7 @@
 
 `@folio/rendering` is Folio's framework-independent, imperative Canvas 2D engine. It owns canvas lifecycle, camera and viewport geometry, coordinate conversion, demand-driven rendering, HiDPI backing-store management, resize observation, invalidation, and diagnostics. It has no dependency on React, Electron, the domain model, persistence, history, or search.
 
-The base renderer deliberately draws only workspace background and immutable blank-page inputs. Renderer-owned transparent overlays accept immutable visual inputs for selection and translation preview. Editing, pointer input, hit testing, notebook-object ownership, and tool behavior remain outside this package.
+The base renderer deliberately draws only workspace background and immutable blank-page inputs. Renderer-owned transparent overlays accept immutable visual inputs for selection and transform preview. Editing, pointer input, hit testing, notebook-object ownership, and tool behavior remain outside this package.
 
 ## Package structure
 
@@ -20,7 +20,8 @@ src/
 ├── renderer.ts               Deterministic Canvas 2D rendering pipeline
 ├── render-scheduler.ts       One-shot requestAnimationFrame scheduler
 ├── selection-overlay-renderer.ts  Isolated selection visual and invalidation lifecycle
-├── translation-preview-renderer.ts  Isolated translated visual preview lifecycle
+├── transform-preview-renderer.ts    Isolated transform visual preview lifecycle
+├── translation-preview-renderer.ts  Source-compatible translation facade
 ├── types.ts                  Immutable public rendering contracts
 └── index.ts                  Deliberate public API barrel
 ```
@@ -37,7 +38,8 @@ src/
 - `Diagnostics` exposes immutable frame and size snapshots without adding UI.
 - `RenderingError` supplies stable error codes and structured details.
 - `SelectionOverlayRenderer` draws a cached-bounds highlight and outline on a dedicated transparent overlay without reading selection or document state.
-- `TranslationPreviewRenderer` draws an injected cached visual at an absolute page translation and invalidates only previous/current preview bounds.
+- `TransformPreviewRenderer` draws an injected cached visual with absolute translation, rotation, and uniform scale and invalidates only previous/current preview bounds.
+- `TranslationPreviewRenderer` remains a source-compatible facade for translation-only callers.
 
 Public type exports are limited to the inputs, snapshots, geometry values, adapter contracts, and options required by these APIs. Validation, geometry freezing, dirty-region accumulation, default selection styling, and concrete overlay-layer implementations remain internal. A public-API test locks the runtime surface.
 
@@ -53,14 +55,14 @@ flowchart LR
     Scheduler --> Canvas["Transparent HiDPI overlay canvas"]
 ```
 
-## Translation preview overlay
+## Transform preview overlay
 
-`TranslationPreviewRenderer` is independent of manipulation logic. The editor supplies an object ID, raw geometry bounds, absolute page translation, and a cached `TranslationPreviewVisual`. Changes clear the old and new preview regions on a one-shot animation frame, discarding duplicate queued regions. Commit or cancel supplies `null`, which clears transient pixels without repainting the base page. Resize and DPR changes request one full transparent-layer redraw.
+`TransformPreviewRenderer` is independent of manipulation logic. The editor supplies an object ID, raw geometry bounds, absolute page translation, clockwise rotation in radians, positive uniform scale, and a cached visual. Transforms use the raw bounds center as their stable pivot. Changes clear the old and new axis-aligned preview regions on a one-shot animation frame, discarding duplicate queued regions. Commit or cancel supplies `null`, which clears transient pixels without repainting the base page. Resize and DPR changes request one full transparent-layer redraw.
 
 ```mermaid
 flowchart LR
-    Editor["Editor reads immutable manipulation state"] --> Target["ID + raw bounds + absolute translation + cached visual"]
-    Target --> Preview["TranslationPreviewRenderer"]
+    Editor["Editor reads immutable manipulation state"] --> Target["ID + raw bounds + immutable transform + cached visual"]
+    Target --> Preview["TransformPreviewRenderer"]
     Preview --> Scheduler["One-shot RenderScheduler"]
     Scheduler --> Overlay["Transparent HiDPI preview canvas"]
 ```
@@ -137,7 +139,7 @@ Destroying a controller disconnects its `ResizeObserver`, removes DPR and contex
 - Multiple requests are coalesced and a completed frame does not schedule another frame.
 - Overlay layers share the controller's resize and disposal lifecycle while keeping specialized renderers out of the base page pipeline.
 - Selection overlay changes clear only affected old/new bounds; viewport resize requests a full transparent-layer redraw.
-- Translation preview changes reuse cached visuals, clear bounded old/new regions, and perform no idle repainting.
+- Transform preview changes reuse cached visuals, clear bounded old/new regions, and perform no idle repainting.
 - Rectangular invalidation, world bounds, page replacement, background strategies, and ordered overlay hooks are stable seams for future page stacks and object/overlay renderers.
 - Camera rotation is represented as a fixed zero in snapshots, reserving a future contract hook without implementing rotation in Phase 6.
 

@@ -66,6 +66,10 @@ export class ObjectCollection implements Iterable<PageObject> {
   }
 
   add(object: PageObject): ObjectCollection {
+    return this.insert(object, this.size);
+  }
+
+  insert(object: PageObject, index: number): ObjectCollection {
     assertValidObject(object);
     if (this.has(object.id)) {
       throw new DocumentObjectError(
@@ -74,7 +78,18 @@ export class ObjectCollection implements Iterable<PageObject> {
         { id: object.id },
       );
     }
-    return new ObjectCollection([...this.objectsValue, copyObjectWithZIndex(object, this.size)]);
+    if (!Number.isSafeInteger(index) || index < 0 || index > this.size) {
+      throw new DocumentObjectError(
+        "INVALID_INDEX",
+        "Object insertion index is outside the collection.",
+        { index, size: this.size },
+      );
+    }
+    return new ObjectCollection([
+      ...this.objectsValue.slice(0, index),
+      copyObjectWithZIndex(object, index),
+      ...this.objectsValue.slice(index),
+    ]);
   }
 
   remove(id: string): ObjectCollection {

@@ -19,6 +19,8 @@ interface CollectionOptions {
   readonly id?: string;
   readonly modifiedAt?: string;
   readonly translation?: Readonly<{ x: number; y: number }>;
+  readonly rotation?: number;
+  readonly scale?: number;
   readonly visible?: boolean;
   readonly locked?: boolean;
   readonly includeSecondObject?: boolean;
@@ -92,6 +94,24 @@ describe("MoveCommand", () => {
     expect(reapplied.transform.translation).toEqual({ x: 12, y: -8 });
     expect(reapplied.modifiedAt).toBe(FIRST_COMMAND_TIMESTAMP);
     expect(reapplied.stroke).toBe(source.stroke);
+  });
+
+  it("preserves rotation and scale while replacing only translation", () => {
+    const initial = createCollection({ rotation: 0.75, scale: 2 });
+    const command = createMoveCommand(moveInput());
+    const executed = command.execute(initial);
+    const undone = command.undo(executed);
+
+    expect(expectInkObject(executed, "object-1").transform).toMatchObject({
+      translation: { x: 12, y: -8 },
+      rotation: 0.75,
+      scale: 2,
+    });
+    expect(expectInkObject(undone, "object-1").transform).toMatchObject({
+      translation: { x: 0, y: 0 },
+      rotation: 0.75,
+      scale: 2,
+    });
   });
 
   it("executes, undoes, and redoes through the generic History manager", () => {
@@ -305,7 +325,11 @@ function createInkObject(options: CollectionOptions = {}): InkObject {
     visible: options.visible ?? true,
     locked: options.locked ?? false,
     zIndex: id === "object-2" ? 1 : 0,
-    transform: new Transform({ translation: options.translation ?? { x: 0, y: 0 } }),
+    transform: new Transform({
+      translation: options.translation ?? { x: 0, y: 0 },
+      rotation: options.rotation ?? 0,
+      scale: options.scale ?? 1,
+    }),
   });
 }
 

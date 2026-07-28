@@ -63,12 +63,15 @@ function collectTransform(value: unknown, path: string, issues: ObjectValidation
     Number.isFinite(value.translation.x) &&
     typeof value.translation.y === "number" &&
     Number.isFinite(value.translation.y);
-  if (!validTranslation || value.rotation !== 0 || value.scale !== 1) {
+  const validRotation = typeof value.rotation === "number" && Number.isFinite(value.rotation);
+  const validScale =
+    typeof value.scale === "number" && Number.isFinite(value.scale) && value.scale > 0;
+  if (!validTranslation || !validRotation || !validScale) {
     addIssue(
       issues,
       path,
       "invalid_transform",
-      "Phase 10 objects require finite translation, rotation 0, and scale 1.",
+      "Objects require finite translation and rotation with a positive finite scale.",
     );
   }
 }

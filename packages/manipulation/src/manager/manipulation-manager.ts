@@ -8,6 +8,8 @@ import type { BeginManipulationInput, ManipulationState } from "../model/types";
 import { DEFAULT_MANIPULATION_CONFIGURATION } from "../model/types";
 import { ManipulationSessionImplementation } from "../session/manipulation-session";
 import { createIdleState } from "../state/manipulation-state";
+import { createRotationEngine } from "../rotation/rotation-engine";
+import { createScaleEngine } from "../scale/scale-engine";
 import { createTranslationEngine } from "../translation/translation-engine";
 
 function defaultSessionId(): string {
@@ -21,6 +23,10 @@ class ManipulationManagerImplementation implements ManipulationManager {
   private readonly listeners = new Set<ManipulationChangeListener>();
   private readonly dragThreshold: number;
   private readonly translationEngine;
+  private readonly rotationEngine;
+  private readonly scaleEngine;
+  private readonly minimumScale: number;
+  private readonly maximumScale: number;
   private readonly createSessionId: () => string;
   private readonly now: () => number;
   private stateValue = createIdleState(0);
@@ -29,10 +35,25 @@ class ManipulationManagerImplementation implements ManipulationManager {
   constructor(options: ManipulationManagerOptions) {
     this.dragThreshold =
       options.configuration?.dragThreshold ?? DEFAULT_MANIPULATION_CONFIGURATION.dragThreshold;
-    if (!Number.isFinite(this.dragThreshold) || this.dragThreshold < 0) {
-      throw new RangeError("Manipulation drag threshold must be finite and non-negative.");
+    this.minimumScale =
+      options.configuration?.minimumScale ?? DEFAULT_MANIPULATION_CONFIGURATION.minimumScale;
+    this.maximumScale =
+      options.configuration?.maximumScale ?? DEFAULT_MANIPULATION_CONFIGURATION.maximumScale;
+    if (
+      !Number.isFinite(this.dragThreshold) ||
+      this.dragThreshold < 0 ||
+      !Number.isFinite(this.minimumScale) ||
+      this.minimumScale <= 0 ||
+      !Number.isFinite(this.maximumScale) ||
+      this.maximumScale <= this.minimumScale
+    ) {
+      throw new RangeError(
+        "Manipulation configuration requires a non-negative threshold and ordered positive scale limits.",
+      );
     }
     this.translationEngine = options.translationEngine ?? createTranslationEngine();
+    this.rotationEngine = options.rotationEngine ?? createRotationEngine();
+    this.scaleEngine = options.scaleEngine ?? createScaleEngine();
     this.createSessionId = options.createSessionId ?? defaultSessionId;
     this.now = options.now ?? Date.now;
   }
@@ -45,13 +66,22 @@ class ManipulationManagerImplementation implements ManipulationManager {
     if (sessionId.trim().length === 0 || !Number.isFinite(timestamp)) {
       throw new RangeError("Manipulation session identity and timestamp must be valid.");
     }
+    const initialRotation = input.initialObjectRotation ?? 0;
+    const initialScale = input.initialObjectScale ?? 1;
+    if (!Number.isFinite(initialRotation) || !Number.isFinite(initialScale) || initialScale <= 0) {
+      throw new RangeError("Manipulation requires a finite rotation and positive finite scale.");
+    }
     this.session = new ManipulationSessionImplementation({
       ...input,
       sessionId,
       timestamp,
       initialVersion: this.stateValue.version + 1,
       dragThreshold: this.dragThreshold,
+      minimumScale: this.minimumScale,
+      maximumScale: this.maximumScale,
       translationEngine: this.translationEngine,
+      rotationEngine: this.rotationEngine,
+      scaleEngine: this.scaleEngine,
     });
     return this.publish(this.session.state);
   }

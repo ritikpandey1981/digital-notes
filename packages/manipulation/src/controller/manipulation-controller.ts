@@ -3,41 +3,30 @@ import type { PageObject } from "@folio/document";
 import type {
   ManipulationController,
   ManipulationControllerOptions,
+  ManipulationResultControllerOptions,
 } from "../interfaces/manipulation-controller";
 import type { ManipulationChangeListener } from "../interfaces/manipulation-manager";
 import type {
   ManipulationCommit,
+  ManipulationKind,
   ManipulationPointerInput,
+  ManipulationResult,
   ManipulationState,
 } from "../model/types";
+import { createManipulationResult } from "../result/manipulation-result";
+import { createLegacyManipulationCommit } from "../result/translation-manipulation-result";
 
-function createCommit(state: ManipulationState): ManipulationCommit | null {
-  if (
-    state.phase !== "dragging" ||
-    state.sessionId === null ||
-    state.objectId === null ||
-    state.initialObjectTranslation === null ||
-    state.finalObjectTranslation === null ||
-    state.sessionTimestamp === null
-  ) {
-    return null;
-  }
-  return Object.freeze({
-    sessionId: state.sessionId,
-    objectId: state.objectId,
-    translation: state.translation,
-    initialObjectTranslation: state.initialObjectTranslation,
-    finalObjectTranslation: state.finalObjectTranslation,
-    sessionTimestamp: state.sessionTimestamp,
-  });
-}
+type ManipulationControllerConstructionOptions =
+  ManipulationControllerOptions | ManipulationResultControllerOptions;
 
-class ManipulationControllerImplementation implements ManipulationController {
+type ManipulationCompletion = ManipulationCommit | ManipulationResult;
+
+class ManipulationControllerImplementation implements ManipulationController<ManipulationCompletion> {
   private destroyed = false;
 
-  constructor(private readonly options: ManipulationControllerOptions) {}
+  constructor(private readonly options: ManipulationControllerConstructionOptions) {}
 
-  handlePointer(input: ManipulationPointerInput): ManipulationCommit | null {
+  handlePointer(input: ManipulationPointerInput): ManipulationCompletion | null {
     if (this.destroyed) return null;
     if (input.phase === "cancel") {
       this.cancelManipulation(input.pointerId);
@@ -46,7 +35,7 @@ class ManipulationControllerImplementation implements ManipulationController {
     if (!input.isPrimary) return null;
     if (input.phase === "down") {
       if (input.button === 0 && input.position !== null) {
-        this.beginManipulation(input.pointerId, input.position);
+        this.beginManipulation(input.pointerId, input.position, input.kind);
       }
       return null;
     }
@@ -59,7 +48,11 @@ class ManipulationControllerImplementation implements ManipulationController {
     return this.commitManipulation(input.pointerId, input.position ?? undefined);
   }
 
-  beginManipulation(pointerId: number, position: PagePoint): ManipulationState {
+  beginManipulation(
+    pointerId: number,
+    position: PagePoint,
+    kind: ManipulationKind = "translation",
+  ): ManipulationState {
     if (this.destroyed || this.options.manager.hasActiveSession()) {
       return this.options.manager.getState();
     }
@@ -68,11 +61,26 @@ class ManipulationControllerImplementation implements ManipulationController {
     if (objectId === null) return this.options.manager.getState();
     const object = this.resolveManipulableObject(objectId);
     if (object === undefined) return this.options.manager.getState();
+    const objectCenter: PagePoint = Object.freeze({
+      x: object.bounds.x + object.bounds.width / 2,
+      y: object.bounds.y + object.bounds.height / 2,
+      coordinateSpace: "page",
+    });
+    if (
+      kind !== "translation" &&
+      Math.hypot(position.x - objectCenter.x, position.y - objectCenter.y) <= 1e-6
+    ) {
+      return this.options.manager.getState();
+    }
     return this.options.manager.beginSession({
+      kind,
       objectId,
       pointerId,
       position,
       initialObjectTranslation: object.transform.translation,
+      initialObjectRotation: object.transform.rotation,
+      initialObjectScale: object.transform.scale,
+      objectCenter,
     });
   }
 
@@ -85,7 +93,7 @@ class ManipulationControllerImplementation implements ManipulationController {
     return this.options.manager.updateSession(position);
   }
 
-  commitManipulation(pointerId: number, position?: PagePoint): ManipulationCommit | null {
+  commitManipulation(pointerId: number, position?: PagePoint): ManipulationCompletion | null {
     let state = this.options.manager.getState();
     if (this.destroyed || state.pointerId !== pointerId) return null;
     if (position !== undefined) state = this.updateManipulation(pointerId, position);
@@ -97,16 +105,19 @@ class ManipulationControllerImplementation implements ManipulationController {
       this.options.manager.cancelSession();
       return null;
     }
-    const commit = createCommit(state);
-    if (commit === null) {
+    const result = createManipulationResult(state);
+    if (result === null) {
       this.options.manager.cancelSession();
       return null;
     }
+    let submittedCommit: ManipulationCompletion;
     try {
-      if (!this.options.onCommit(commit)) {
+      const submission = this.submitResult(result);
+      if (!submission.accepted) {
         this.options.manager.cancelSession();
         return null;
       }
+      submittedCommit = submission.commit;
     } catch (cause) {
       this.options.manager.cancelSession();
       const error = cause instanceof Error ? cause : new Error("Manipulation commit failed.");
@@ -114,7 +125,7 @@ class ManipulationControllerImplementation implements ManipulationController {
       return null;
     }
     this.options.manager.commitSession();
-    return commit;
+    return submittedCommit;
   }
 
   cancelManipulation(pointerId?: number): ManipulationState {
@@ -147,11 +158,30 @@ class ManipulationControllerImplementation implements ManipulationController {
     const object = this.options.objectSource.getObject(objectId);
     return object !== undefined && object.visible && !object.locked ? object : undefined;
   }
+
+  private submitResult(
+    result: ManipulationResult,
+  ): Readonly<{ accepted: boolean; commit: ManipulationCompletion }> {
+    if ("onResult" in this.options) {
+      return Object.freeze({ accepted: this.options.onResult(result), commit: result });
+    }
+    if (result.kind !== "translation") {
+      throw new TypeError("Rotation and scale require the generalized onResult boundary.");
+    }
+    const commit = createLegacyManipulationCommit(result);
+    return Object.freeze({ accepted: this.options.onCommit(commit), commit });
+  }
 }
 
 /** Composes selection, document queries, session transitions, and commit decisions. */
 export function createManipulationController(
   options: ManipulationControllerOptions,
-): ManipulationController {
+): ManipulationController;
+export function createManipulationController(
+  options: ManipulationResultControllerOptions,
+): ManipulationController<ManipulationResult>;
+export function createManipulationController(
+  options: ManipulationControllerConstructionOptions,
+): ManipulationController<ManipulationCompletion> {
   return new ManipulationControllerImplementation(options);
 }

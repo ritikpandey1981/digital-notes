@@ -41,8 +41,8 @@ packages/ink/
 - `StrokeBuilder` filters duplicate or invalid samples and incrementally calculates movement, velocity, acceleration, bounds, length, duration, and pressure statistics.
 - `StrokeSmoother` supplies replaceable `none` and lightweight `average` modes plus explicit Catmull-Rom and Bezier hook seams.
 - `Stroke` is the deeply immutable finalized aggregate containing identity, ordered points, style, metrics, bounds, and statistics.
-- `StrokeRenderer` uses a transparent overlay canvas for dirty-region live preview and finalized session-stroke rendering without repainting the permanent page canvas.
-- `createStrokeVisual` retains one immutable `Stroke` reference and exposes the shared stroke drawing path to renderer-owned translation previews.
+- `StrokeRenderer` uses a transparent overlay canvas for dirty-region live preview and transformed finalized session-stroke rendering without repainting the permanent page canvas. Its immutable retained-visual projection uses editor-supplied object identity, allowing multiple document objects to reuse one immutable stroke safely.
+- `createStrokeVisual` retains one immutable `Stroke` reference and exposes the shared stroke drawing path to renderer-owned transform previews.
 - `InkError` reports stable structured error codes and immutable details.
 - Public types describe points, styles, metrics, statistics, updates, cancellation, hooks, callbacks, and snapshots. Geometry and style helpers remain private.
 
@@ -126,7 +126,7 @@ The default lightweight averaging uses a bounded window, so its work per point r
 - Duplicate consecutive positions are discarded before smoothing or allocation of a finalized point.
 - Live updates reuse the builder's append-only point buffer; only finalized strokes copy and deeply freeze their point sequence.
 - One-shot animation-frame scheduling coalesces input bursts and creates no idle render loop.
-- Permanent stroke translation reuses immutable stroke geometry and redraws only the union of old and new bounds.
+- Permanent transform updates reuse immutable stroke geometry and redraw affected bounds. Ordered retained-visual replacement supports lifecycle additions, removals, and duplicate objects with shared stroke geometry through one demand-driven redraw.
 - Live drawing clips to the unioned dirty region and draws only the unrendered tail of the stroke.
 - The default smoothing window is bounded, and the long-stroke sanity test exercises 10,000 points.
 - Resize/DPR changes redraw only the ink overlay, preserving session strokes without forcing notebook or page-object work.

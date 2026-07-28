@@ -108,8 +108,48 @@ export class ObjectFactory {
     );
   }
 
+  /** Creates a same-identity immutable replacement at an absolute rotation. */
+  rotateObject<TObject extends PageObject>(object: TObject, rotation: number): TObject {
+    assertValidObject(object);
+    return this.replaceObjectTransform(object, object.transform.withRotation(rotation), "rotated");
+  }
+
+  /** Creates a same-identity immutable replacement at an absolute uniform scale. */
+  scaleObject<TObject extends PageObject>(object: TObject, scale: number): TObject {
+    assertValidObject(object);
+    return this.replaceObjectTransform(object, object.transform.withScale(scale), "scaled");
+  }
+
   validateObject(value: unknown): ObjectValidationResult {
     return validateObject(value);
+  }
+
+  private replaceObjectTransform<TObject extends PageObject>(
+    object: TObject,
+    transform: Transform,
+    operation: "rotated" | "scaled",
+  ): TObject {
+    assertValidObject(object);
+    if (object.type === "ink") {
+      const source = object as unknown as InkObject;
+      return this.createInkObject({
+        id: source.id,
+        stroke: source.stroke,
+        createdAt: source.createdAt,
+        modifiedAt: this.nowValue(),
+        visible: source.visible,
+        locked: source.locked,
+        metadata: source.metadata,
+        zIndex: source.zIndex,
+        transform,
+        renderingHints: source.renderingHints,
+      }) as unknown as TObject;
+    }
+    throw new DocumentObjectError(
+      "UNSUPPORTED_OBJECT_TYPE",
+      `Only InkObject can be ${operation}.`,
+      { type: object.type },
+    );
   }
 }
 
@@ -134,4 +174,20 @@ export function translateObject<TObject extends PageObject>(
   factoryOptions: ObjectFactoryOptions = {},
 ): TObject {
   return new ObjectFactory(factoryOptions).translateObject(object, delta);
+}
+
+export function rotateObject<TObject extends PageObject>(
+  object: TObject,
+  rotation: number,
+  factoryOptions: ObjectFactoryOptions = {},
+): TObject {
+  return new ObjectFactory(factoryOptions).rotateObject(object, rotation);
+}
+
+export function scaleObject<TObject extends PageObject>(
+  object: TObject,
+  scale: number,
+  factoryOptions: ObjectFactoryOptions = {},
+): TObject {
+  return new ObjectFactory(factoryOptions).scaleObject(object, scale);
 }

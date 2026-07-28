@@ -4,10 +4,12 @@ import { drawStrokePoints } from "./internal/draw-stroke";
 import { freezeRect, unionRects } from "./internal/geometry";
 import type { Stroke } from "./stroke";
 import type {
+  FinalizedStrokeVisual,
   StrokePoint,
   StrokeRendererOptions,
   StrokeRendererSnapshot,
   StrokeStyle,
+  StrokeTransform,
   StrokeUpdate,
 } from "./types";
 
@@ -19,8 +21,9 @@ interface LiveStrokeState {
 }
 
 interface FinalizedStrokeState {
+  readonly id: string;
   readonly stroke: Stroke;
-  readonly translation: Point;
+  readonly transform: StrokeTransform;
   readonly bounds: Rect;
 }
 
@@ -31,17 +34,46 @@ function freezeTranslation(translation: Point): Point {
   return Object.freeze({ x: translation.x, y: translation.y });
 }
 
-function createFinalizedStrokeState(stroke: Stroke, translation: Point): FinalizedStrokeState {
-  const frozenTranslation = freezeTranslation(translation);
+function freezeTransform(transform: StrokeTransform): StrokeTransform {
+  const translation = freezeTranslation(transform.translation);
+  if (
+    !Number.isFinite(transform.rotation) ||
+    !Number.isFinite(transform.scale) ||
+    transform.scale <= 0
+  ) {
+    throw new InkError(
+      "INVALID_STROKE",
+      "Stroke rotation must be finite and scale must be positive and finite.",
+    );
+  }
+  return Object.freeze({ translation, rotation: transform.rotation, scale: transform.scale });
+}
+
+function transformedBounds(stroke: Stroke, transform: StrokeTransform): Rect {
+  const bounds = stroke.inflatedBounds;
+  const cosine = Math.abs(Math.cos(transform.rotation));
+  const sine = Math.abs(Math.sin(transform.rotation));
+  const width = transform.scale * (bounds.width * cosine + bounds.height * sine);
+  const height = transform.scale * (bounds.width * sine + bounds.height * cosine);
+  const centerX = bounds.x + bounds.width / 2 + transform.translation.x;
+  const centerY = bounds.y + bounds.height / 2 + transform.translation.y;
+  return freezeRect({ x: centerX - width / 2, y: centerY - height / 2, width, height });
+}
+
+function createFinalizedStrokeState(
+  id: string,
+  stroke: Stroke,
+  transform: StrokeTransform,
+): FinalizedStrokeState {
+  if (typeof id !== "string" || id.trim().length === 0 || !Object.isFrozen(stroke)) {
+    throw new InkError("INVALID_STROKE", "A retained stroke requires identity and immutability.");
+  }
+  const frozenTransform = freezeTransform(transform);
   return Object.freeze({
+    id,
     stroke,
-    translation: frozenTranslation,
-    bounds: freezeRect({
-      x: stroke.inflatedBounds.x + frozenTranslation.x,
-      y: stroke.inflatedBounds.y + frozenTranslation.y,
-      width: stroke.inflatedBounds.width,
-      height: stroke.inflatedBounds.height,
-    }),
+    transform: frozenTransform,
+    bounds: transformedBounds(stroke, frozenTransform),
   });
 }
 
@@ -102,9 +134,18 @@ export class StrokeRenderer {
     this.invalidate(update.dirtyRect);
   }
 
-  finalizeStroke(stroke: Stroke, translation: Point = { x: 0, y: 0 }): void {
+  finalizeStroke(stroke: Stroke, translation: Point = { x: 0, y: 0 }, visualId = stroke.id): void {
     this.assertActive();
-    const finalized = createFinalizedStrokeState(stroke, translation);
+    if (this.finalizedStrokes.some(({ id }) => id === visualId)) {
+      throw new InkError("INVALID_STROKE", "A finalized stroke visual ID already exists.", {
+        visualId,
+      });
+    }
+    const finalized = createFinalizedStrokeState(visualId, stroke, {
+      translation,
+      rotation: 0,
+      scale: 1,
+    });
     if (this.liveStroke !== null && this.liveStroke.id === stroke.id) {
       // Finalization releases the builder's mutable point buffer. Swap to the
       // immutable stroke points before flushing the final pending segment.
@@ -124,17 +165,75 @@ export class StrokeRenderer {
   /** Updates one permanent stroke's absolute page translation and redraws only affected bounds. */
   setStrokeTranslation(strokeId: string, translation: Point): boolean {
     this.assertActive();
-    const index = this.finalizedStrokes.findIndex(({ stroke }) => stroke.id === strokeId);
+    const index = this.finalizedStrokes.findIndex(({ id }) => id === strokeId);
     const current = this.finalizedStrokes[index];
     if (current === undefined) return false;
-    if (current.translation.x === translation.x && current.translation.y === translation.y) {
+    if (
+      current.transform.translation.x === translation.x &&
+      current.transform.translation.y === translation.y
+    ) {
       return false;
     }
-    const next = createFinalizedStrokeState(current.stroke, translation);
+    return this.setStrokeTransform(strokeId, {
+      translation,
+      rotation: current.transform.rotation,
+      scale: current.transform.scale,
+    });
+  }
+
+  /** Updates one permanent stroke's complete absolute transform. */
+  setStrokeTransform(strokeId: string, transform: StrokeTransform): boolean {
+    this.assertActive();
+    const index = this.finalizedStrokes.findIndex(({ id }) => id === strokeId);
+    const current = this.finalizedStrokes[index];
+    if (current === undefined) return false;
+    if (
+      current.transform.translation.x === transform.translation.x &&
+      current.transform.translation.y === transform.translation.y &&
+      current.transform.rotation === transform.rotation &&
+      current.transform.scale === transform.scale
+    ) {
+      return false;
+    }
+    const next = createFinalizedStrokeState(current.id, current.stroke, transform);
     this.finalizedStrokes[index] = next;
     const affected = unionRects(current.bounds, next.bounds);
     this.recordInvalidation(affected);
     this.clearAndRedrawRegion(affected);
+    return true;
+  }
+
+  /** Replaces retained visuals from one immutable editor-document projection. */
+  replaceFinalizedStrokes(visuals: readonly FinalizedStrokeVisual[]): boolean {
+    this.assertActive();
+    if (!Array.isArray(visuals)) {
+      throw new InkError("INVALID_STROKE", "Finalized stroke visuals must be an array.");
+    }
+    const ids = new Set<string>();
+    const next = visuals.map((visual) => {
+      if (visual === null || typeof visual !== "object" || ids.has(visual.id)) {
+        throw new InkError("INVALID_STROKE", "Finalized stroke visual identities must be unique.");
+      }
+      ids.add(visual.id);
+      return createFinalizedStrokeState(visual.id, visual.stroke, visual.transform);
+    });
+    const unchanged =
+      next.length === this.finalizedStrokes.length &&
+      next.every((state, index) => {
+        const current = this.finalizedStrokes[index];
+        return (
+          current !== undefined &&
+          current.id === state.id &&
+          current.stroke === state.stroke &&
+          current.transform.translation.x === state.transform.translation.x &&
+          current.transform.translation.y === state.transform.translation.y &&
+          current.transform.rotation === state.transform.rotation &&
+          current.transform.scale === state.transform.scale
+        );
+      });
+    if (unchanged) return false;
+    this.finalizedStrokes.splice(0, this.finalizedStrokes.length, ...next);
+    this.redraw();
     return true;
   }
 
@@ -284,8 +383,19 @@ export class StrokeRenderer {
   }
 
   private drawFinalizedStroke(state: FinalizedStrokeState): void {
+    const bounds = state.stroke.inflatedBounds;
+    const pivotX = bounds.x + bounds.width / 2;
+    const pivotY = bounds.y + bounds.height / 2;
     this.context.save();
-    this.context.translate(state.translation.x, state.translation.y);
+    this.context.translate(state.transform.translation.x, state.transform.translation.y);
+    if (state.transform.rotation !== 0 || state.transform.scale !== 1) {
+      this.context.translate(pivotX, pivotY);
+      if (state.transform.rotation !== 0) this.context.rotate(state.transform.rotation);
+      if (state.transform.scale !== 1) {
+        this.context.scale(state.transform.scale, state.transform.scale);
+      }
+      this.context.translate(-pivotX, -pivotY);
+    }
     drawStrokePoints(this.context, state.stroke.points, state.stroke.style);
     this.context.restore();
   }

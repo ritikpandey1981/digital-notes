@@ -7,6 +7,7 @@ export { StrokeSmoother } from "./stroke-smoother";
 export { createStrokeVisual, type StrokeVisual } from "./stroke-visual";
 export {
   DEFAULT_STROKE_STYLE,
+  type FinalizedStrokeVisual,
   type InkErrorLike,
   type InkPointerType,
   type PointerInputCallbacks,
@@ -25,5 +26,6 @@ export {
   type StrokeSmoothingMode,
   type StrokeStatistics,
   type StrokeStyle,
+  type StrokeTransform,
   type StrokeUpdate,
 } from "./types";

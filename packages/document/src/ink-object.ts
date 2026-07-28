@@ -38,12 +38,7 @@ export class InkObject implements InkObjectView {
     this.renderingHints = freezeJsonObject(data.renderingHints, "$.renderingHints");
     this.boundsValue = this.transform.isIdentity
       ? this.stroke.inflatedBounds
-      : Object.freeze({
-          x: this.stroke.inflatedBounds.x + this.transform.translation.x,
-          y: this.stroke.inflatedBounds.y + this.transform.translation.y,
-          width: this.stroke.inflatedBounds.width,
-          height: this.stroke.inflatedBounds.height,
-        });
+      : this.transform.transformBounds(this.stroke.inflatedBounds);
     assertValidObject(this);
     Object.freeze(this);
   }

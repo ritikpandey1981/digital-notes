@@ -1,4 +1,4 @@
-import { InkObject, type ObjectCollection } from "@folio/document";
+import type { ObjectCollection } from "@folio/document";
 import {
   createEditorHistoryManager,
   createHistoryController,
@@ -7,9 +7,9 @@ import {
   type IHistoryController,
   type IHistoryState,
 } from "@folio/history";
-import type { ManipulationCommit } from "@folio/manipulation";
+import type { ManipulationResult } from "@folio/manipulation";
 import type { InkDocumentSession } from "../InkDocumentSession";
-import { createMoveCommand } from "./move-command";
+import { createCommandForManipulation } from "./manipulation-command-adapter";
 
 interface EditorHistoryCoordinatorOptions {
   readonly documentSession: InkDocumentSession;
@@ -26,7 +26,7 @@ interface EditorHistoryCoordinatorOptions {
 /** Package-private editor boundary around one manager/controller lifetime. */
 export interface EditorHistoryCoordinator {
   readonly controller: IHistoryController<ObjectCollection>;
-  readonly commitMove: (commit: ManipulationCommit) => IHistoryState;
+  readonly executeManipulation: (result: ManipulationResult) => IHistoryState;
   readonly undo: () => IHistoryState;
   readonly redo: () => IHistoryState;
   readonly destroy: () => void;
@@ -63,18 +63,10 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     });
   }
 
-  commitMove(commit: ManipulationCommit): IHistoryState {
-    const object = this.#documentSession.collection.lookup(commit.objectId);
-    const expectedObjectModifiedAt =
-      object instanceof InkObject ? object.modifiedAt : new Date(0).toISOString();
-    const command = createMoveCommand({
-      objectId: commit.objectId,
-      expectedObjectModifiedAt,
-      initialTranslation: commit.initialObjectTranslation,
-      finalTranslation: commit.finalObjectTranslation,
-      id: `move-${commit.sessionId}`,
-      timestamp: nextRevisionTimestamp(expectedObjectModifiedAt, this.#now()),
-      description: `Move object ${commit.objectId}`,
+  executeManipulation(result: ManipulationResult): IHistoryState {
+    const command = createCommandForManipulation(result, {
+      document: this.#documentSession.collection,
+      timestamp: this.#now(),
     });
     return this.controller.executeCommand(command);
   }
@@ -100,15 +92,6 @@ export function createEditorHistoryCoordinator(
   options: EditorHistoryCoordinatorOptions,
 ): EditorHistoryCoordinator {
   return new EditorHistoryCoordinatorImplementation(options);
-}
-
-function nextRevisionTimestamp(currentRevision: string, candidate: string): string {
-  const currentMilliseconds = Date.parse(currentRevision);
-  const candidateMilliseconds = Date.parse(candidate);
-  if (!Number.isFinite(currentMilliseconds) || !Number.isFinite(candidateMilliseconds)) {
-    return candidate;
-  }
-  return new Date(Math.max(candidateMilliseconds, currentMilliseconds + 1)).toISOString();
 }
 
 function normalizeError(cause: unknown, message: string): Error {

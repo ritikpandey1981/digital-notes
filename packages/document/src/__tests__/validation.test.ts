@@ -37,6 +37,16 @@ describe("document object validation", () => {
       { transform: { translation: { x: Number.NaN, y: 0 }, rotation: 0, scale: 1 } },
       "invalid_transform",
     ],
+    [
+      "invalid rotation",
+      { transform: { translation: { x: 0, y: 0 }, rotation: Infinity, scale: 1 } },
+      "invalid_transform",
+    ],
+    [
+      "invalid scale",
+      { transform: { translation: { x: 0, y: 0 }, rotation: 0, scale: 0 } },
+      "invalid_transform",
+    ],
     ["invalid version", { version: 2 }, "invalid_version"],
     ["invalid z-index", { zIndex: -1 }, "invalid_value"],
     ["invalid visibility", { visible: "yes" }, "invalid_type"],

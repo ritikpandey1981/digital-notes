@@ -128,6 +128,20 @@ export interface StrokeRendererOptions {
   readonly onInvalidate?: (dirtyRect: Rect) => void;
 }
 
+/** Absolute page transform applied to one finalized immutable stroke. */
+export interface StrokeTransform {
+  readonly translation: Point;
+  readonly rotation: number;
+  readonly scale: number;
+}
+
+/** Immutable retained visual supplied by an editor document adapter. */
+export interface FinalizedStrokeVisual {
+  readonly id: string;
+  readonly stroke: import("./stroke").Stroke;
+  readonly transform: StrokeTransform;
+}
+
 export interface StrokeRendererSnapshot {
   readonly finalizedStrokeCount: number;
   readonly finalizedPointCount: number;

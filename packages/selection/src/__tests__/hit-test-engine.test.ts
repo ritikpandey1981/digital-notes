@@ -113,6 +113,26 @@ describe("HitTestEngine", () => {
     expect(engine.hitTest(pagePoint(50, 10))).toBeNull();
   });
 
+  it("evaluates geometry in rotated and uniformly scaled object frames", () => {
+    const factory = new ObjectFactory({ now: () => "2026-07-27T10:00:01.000Z" });
+    const original = createInkFixture();
+    const rotated = factory.rotateObject(original, Math.PI / 2);
+    const rotatedEngine = createHitTestEngine({
+      objectSource: createObjectSource([rotated]),
+      configuration: { tolerance: 2 },
+    });
+    expect(rotatedEngine.hitTest(pagePoint(60, 40))?.objectReference).toBe(rotated);
+    expect(rotatedEngine.hitTest(pagePoint(90, 10))).toBeNull();
+
+    const scaled = factory.scaleObject(original, 2);
+    const scaledEngine = createHitTestEngine({
+      objectSource: createObjectSource([scaled]),
+      configuration: { tolerance: 2 },
+    });
+    expect(scaledEngine.hitTest(pagePoint(150, 10))?.objectReference).toBe(scaled);
+    expect(scaledEngine.hitTest(pagePoint(175, 10))).toBeNull();
+  });
+
   it("supports large linear object sets without copying document objects", () => {
     const builder = new StrokeBuilder({
       id: "shared-stroke",

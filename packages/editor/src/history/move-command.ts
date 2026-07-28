@@ -175,7 +175,11 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
         locked: object.locked,
         metadata: object.metadata,
         zIndex: object.zIndex,
-        transform: new Transform({ translation: targetTranslation }),
+        transform: new Transform({
+          translation: targetTranslation,
+          rotation: object.transform.rotation,
+          scale: object.transform.scale,
+        }),
         renderingHints: object.renderingHints,
       });
       return document.replace(replacement);

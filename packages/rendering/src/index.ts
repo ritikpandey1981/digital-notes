@@ -14,6 +14,15 @@ export {
   type SelectionOverlayTarget,
 } from "./selection-overlay-renderer";
 export {
+  TransformPreviewRenderer,
+  type TransformPreviewRendererOptions,
+  type TransformPreviewRendererSnapshot,
+  type TransformPreviewStyle,
+  type TransformPreviewTarget,
+  type TransformPreviewValue,
+  type TransformPreviewVisual,
+} from "./transform-preview-renderer";
+export {
   TranslationPreviewRenderer,
   type TranslationPreviewRendererOptions,
   type TranslationPreviewRendererSnapshot,

@@ -21,6 +21,7 @@ function createContext(): CanvasRenderingContext2D {
     rect: vi.fn(),
     clip: vi.fn(),
     translate: vi.fn(),
+    rotate: vi.fn(),
     scale: vi.fn(),
     arc: vi.fn(),
     fill: vi.fn(),
@@ -91,6 +92,17 @@ function createHarness(style: Partial<StrokeStyle> = {}) {
     return update;
   };
   return { context, canvas, viewport, renderer, builder, frames, invalidations, flush, add };
+}
+
+function createStroke(id = "shared-stroke") {
+  const builder = new StrokeBuilder({
+    id,
+    timestamp: 0,
+    smoother: new StrokeSmoother({ mode: "none" }),
+  });
+  builder.addPoint(point(10, 10, 0));
+  builder.addPoint(point(30, 20, 10));
+  return builder.finalize();
 }
 
 describe("StrokeRenderer", () => {
@@ -195,6 +207,83 @@ describe("StrokeRenderer", () => {
     expect(vi.mocked(harness.context.clearRect).mock.calls.length).toBe(clears + 1);
     expect(harness.renderer.setStrokeTranslation(stroke.id, { x: 30, y: -12 })).toBe(false);
     expect(harness.renderer.setStrokeTranslation("missing", { x: 1, y: 1 })).toBe(false);
+  });
+
+  it("rotates and scales finalized strokes through one absolute transform update", () => {
+    const harness = createHarness();
+    harness.renderer.beginStroke(harness.add(point(10, 10, 0)));
+    harness.renderer.updateStroke(harness.add(point(30, 10, 10)));
+    const stroke = harness.builder.finalize();
+    harness.renderer.finalizeStroke(stroke);
+    const clears = vi.mocked(harness.context.clearRect).mock.calls.length;
+
+    expect(
+      harness.renderer.setStrokeTransform(stroke.id, {
+        translation: { x: 5, y: -2 },
+        rotation: Math.PI / 2,
+        scale: 2,
+      }),
+    ).toBe(true);
+    expect(harness.context.translate).toHaveBeenCalledWith(5, -2);
+    expect(harness.context.rotate).toHaveBeenCalledWith(Math.PI / 2);
+    expect(harness.context.scale).toHaveBeenCalledWith(2, 2);
+    expect(vi.mocked(harness.context.clearRect).mock.calls.length).toBe(clears + 1);
+    expect(stroke.points[0]).toMatchObject({ x: 10, y: 10 });
+    expect(
+      harness.renderer.setStrokeTransform(stroke.id, {
+        translation: { x: 5, y: -2 },
+        rotation: Math.PI / 2,
+        scale: 2,
+      }),
+    ).toBe(false);
+  });
+
+  it("synchronizes independently identified visuals that reuse one immutable stroke", () => {
+    const harness = createHarness();
+    const stroke = createStroke();
+    const visuals = Object.freeze([
+      Object.freeze({
+        id: "object-a",
+        stroke,
+        transform: Object.freeze({
+          translation: Object.freeze({ x: 0, y: 0 }),
+          rotation: 0,
+          scale: 1,
+        }),
+      }),
+      Object.freeze({
+        id: "object-b",
+        stroke,
+        transform: Object.freeze({
+          translation: Object.freeze({ x: 20, y: 10 }),
+          rotation: Math.PI / 4,
+          scale: 2,
+        }),
+      }),
+    ]);
+
+    expect(harness.renderer.replaceFinalizedStrokes(visuals)).toBe(true);
+    expect(harness.renderer.snapshot().finalizedStrokeCount).toBe(2);
+    expect(harness.renderer.snapshot().finalizedPointCount).toBe(stroke.pointCount * 2);
+    expect(harness.renderer.replaceFinalizedStrokes(visuals)).toBe(false);
+    expect(harness.renderer.replaceFinalizedStrokes(Object.freeze([visuals[1]!]))).toBe(true);
+    expect(harness.renderer.snapshot().finalizedStrokeCount).toBe(1);
+  });
+
+  it("rejects duplicate retained visual identities", () => {
+    const harness = createHarness();
+    const stroke = createStroke();
+    const transform = Object.freeze({
+      translation: Object.freeze({ x: 0, y: 0 }),
+      rotation: 0,
+      scale: 1,
+    });
+    expect(() =>
+      harness.renderer.replaceFinalizedStrokes([
+        { id: "same", stroke, transform },
+        { id: "same", stroke, transform },
+      ]),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_STROKE" }));
   });
 
   it("keeps temporary and finalized stroke lifecycles separate", () => {

@@ -1,6 +1,6 @@
 # @folio/document
 
-`@folio/document` is Folio's framework-independent immutable page-object architecture. It implements the generic `PageObject` contract, lifecycle metadata, validation, factories, immutable collections, serialization interfaces, and exactly one concrete visual object: `InkObject`. Phase 10 activates finite page-space translation while rotation and scale remain reserved identity-only fields.
+`@folio/document` is Folio's framework-independent immutable page-object architecture. It implements the generic `PageObject` contract, lifecycle metadata, validation, factories, immutable collections, serialization interfaces, and exactly one concrete visual object: `InkObject`. The object transform supports finite page-space translation, clockwise rotation in radians, and positive uniform scale.
 
 The package does not implement editing, selection, rendering, persistence, history, Electron, React, or notebook mutation. `InkObject` imports `Stroke` only as a TypeScript type and retains the finalized immutable stroke by reference, so stroke points, metrics, statistics, and style are never duplicated.
 
@@ -70,6 +70,7 @@ classDiagram
         +PageObject[] objects
         +ObjectCollectionStatistics statistics
         +add(PageObject)
+        +insert(PageObject, index)
         +remove(id)
         +replace(PageObject)
         +reorder(id, index)
@@ -96,19 +97,19 @@ flowchart LR
     Reload["Session reload"] --> Empty["New empty ObjectCollection"]
 ```
 
-Creation and cloning use injectable identifier and ISO timestamp providers. Clones receive a new object identity and lifecycle while reusing the original immutable stroke. Collection operations return new collections and never mutate earlier versions.
+Creation and cloning use injectable identifier and ISO timestamp providers. Clones receive a new object identity and lifecycle while reusing the original immutable stroke. Collection `add`, positional `insert`, `remove`, `replace`, and `reorder` operations return new collections and never mutate earlier versions. Positional insertion validates its index and duplicate identity, then normalizes all resulting z-indices and statistics inside the document layer.
 
 ## Transform policy
 
-`Transform` structurally supports translation, rotation, and uniform scale. Phase 10 accepts finite translation while retaining the following constraints:
+`Transform` supports the following immutable values:
 
 ```text
 translation = { x: finite, y: finite }
-rotation = 0
-scale = 1
+rotation = finite radians
+scale = positive finite factor
 ```
 
-`Transform.translatedBy()` and `ObjectFactory.translateObject()` create new immutable values. A translated `InkObject` keeps its identity and `Stroke` reference, updates its lifecycle timestamp and bounds, and replaces the prior object through `ObjectCollection.replace()`. Non-finite translation, non-zero rotation, or non-unit scale produce structured validation failures.
+Translation is applied in page space. Rotation and uniform scale use the center of the stroke's local inflated bounds as a stable pivot. `Transform.translatedBy()`, `Transform.withRotation()`, `Transform.withScale()`, and the corresponding `ObjectFactory` operations create new immutable values while preserving the other transform axes. A transformed `InkObject` keeps its identity and `Stroke` reference, updates its lifecycle timestamp and axis-aligned page bounds, and replaces the prior object through `ObjectCollection.replace()`. Non-finite translations or rotations and non-positive or non-finite scales produce structured validation failures.
 
 ## Validation
 
@@ -154,10 +155,10 @@ There is no dependency from document objects to React, Electron, rendering, hist
 ## Future extension points
 
 - Additional `PageObjectType` variants and factory branches
-- Rotation and scale transform operations
+- Additional transform operations beyond translation, rotation, and uniform scale
 - Object-specific rendering hints
 - Persistence serialization adapters and migrations
 - History commands around immutable collection successors
 - Selection, hit testing, spatial indexing, and editor state
 
-All of these remain outside Phase 10.
+All of these remain outside the frozen Phase 12 scope.

@@ -55,7 +55,7 @@ flowchart LR
     ZOrder --> Hit["Frozen result"]
 ```
 
-Ink testing measures distance to line segments and single-point stroke circles. It evaluates source stroke geometry in the immutable object's translated coordinate frame, while broad-phase rejection uses translated cached bounds. Segment width calls the immutable stroke's canonical pressure-width method, so distance is measured from rendered geometry rather than only the stroke centerline and cannot diverge from ink styling. No pixels, canvas readback, rasterization, or rendered geometry are queried.
+Ink testing measures distance to line segments and single-point stroke circles. It inverse-transforms the page point into the immutable object's local coordinate frame, while broad-phase rejection uses the transformed axis-aligned cached bounds. Segment width calls the immutable stroke's canonical pressure-width method and the resulting distance is scaled back to page units, so hit testing remains aligned with translated, rotated, and uniformly scaled rendering. No pixels, canvas readback, rasterization, or rendered geometry are queried.
 
 ## Coordinate ownership
 
@@ -68,6 +68,7 @@ Ink testing measures distance to line segments and single-point stroke circles. 
 - Dragged, cancelled, secondary, and non-primary pointer sequences do not select.
 - Invalid object IDs and empty pages return existing/empty state rather than throwing.
 - Selection changes never alter document objects, history, persistence, or notebook files.
+- Editor synchronization clears an identity removed by document replacement and selects the newly created duplicate after the initiating lifecycle action; Selection itself remains document-read-only.
 - Session destruction releases transient pointer state; a new session begins empty.
 
 ## Performance and future extension
@@ -80,4 +81,4 @@ Ink testing measures distance to line segments and single-point stroke circles. 
 
 ## Testing
 
-Focused tests cover immutable state, notifications, repeated clicks, clear/replace behavior, coordinate mapping, translated geometry, bounds rejection, vector tolerance, point strokes, visibility, locked objects, z-order, nearby queries, deterministic results, invalid inputs, destroyed controllers, public exports, and a 5,000-object query. Electron coverage verifies Pen/Select/Move routing, stable selection during translation, overlay invalidation, empty-space clearing, resize, retained canvas identity, session reset, and unchanged document counts.
+Focused tests cover immutable state, notifications, repeated clicks, clear/replace behavior, coordinate mapping, transformed geometry, bounds rejection, vector tolerance, point strokes, visibility, locked objects, z-order, nearby queries, deterministic results, invalid inputs, destroyed controllers, public exports, and a 5,000-object query. Electron coverage verifies transform routing, lifecycle selection synchronization, overlay invalidation, empty-space clearing, resize, retained canvas identity, session reset, and document counts.

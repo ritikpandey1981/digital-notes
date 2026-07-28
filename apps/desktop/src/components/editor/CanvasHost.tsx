@@ -1,20 +1,28 @@
-import { CanvasSurface } from "@folio/editor";
+import { CanvasSurface, type ObjectLifecycleActions } from "@folio/editor";
 import { memo } from "react";
 import type { EditorTool } from "./editor-types";
 
 interface CanvasHostProps {
   readonly activeTool: EditorTool;
+  readonly onObjectLifecycleActionsReady: (actions: ObjectLifecycleActions | null) => void;
 }
 
-export const CanvasHost = memo(function CanvasHost({ activeTool }: CanvasHostProps) {
+export const CanvasHost = memo(function CanvasHost({
+  activeTool,
+  onObjectLifecycleActionsReady,
+}: CanvasHostProps) {
   const interactionMode =
     activeTool === "Select"
       ? "select"
       : activeTool === "Move"
         ? "move"
-        : activeTool === "Pen"
-          ? "ink"
-          : "disabled";
+        : activeTool === "Rotate"
+          ? "rotate"
+          : activeTool === "Scale"
+            ? "scale"
+            : activeTool === "Pen"
+              ? "ink"
+              : "disabled";
   return (
     <div
       className="absolute inset-0 overflow-hidden"
@@ -25,7 +33,11 @@ export const CanvasHost = memo(function CanvasHost({ activeTool }: CanvasHostPro
       data-selection-capability="ready"
       data-manipulation-capability="ready"
     >
-      <CanvasSurface className="relative size-full" interactionMode={interactionMode} />
+      <CanvasSurface
+        className="relative size-full"
+        interactionMode={interactionMode}
+        onObjectLifecycleActionsReady={onObjectLifecycleActionsReady}
+      />
     </div>
   );
 });

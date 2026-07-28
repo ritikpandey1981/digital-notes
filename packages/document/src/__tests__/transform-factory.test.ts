@@ -15,22 +15,55 @@ describe("Transform", () => {
     expect(Object.isFrozen(transform.translation)).toBe(true);
   });
 
-  it.each([{ rotation: 1 }, { scale: 2 }, { translation: { x: Number.NaN, y: 0 } }])(
-    "rejects unsupported or invalid Phase 10 transforms",
-    (input) => {
-      expect(() => new Transform(input)).toThrowError(
-        expect.objectContaining({ code: "OBJECT_VALIDATION_FAILED" }),
-      );
-    },
-  );
+  it.each([
+    { rotation: Number.POSITIVE_INFINITY },
+    { scale: 0 },
+    { scale: -1 },
+    { translation: { x: Number.NaN, y: 0 } },
+  ])("rejects invalid transform values", (input) => {
+    expect(() => new Transform(input)).toThrowError(
+      expect.objectContaining({ code: "OBJECT_VALIDATION_FAILED" }),
+    );
+  });
 
-  it("supports finite immutable translation while retaining rotation and scale guards", () => {
-    const transform = new Transform({ translation: { x: 12, y: -8 } });
+  it("composes finite translation, rotation, and positive uniform scale immutably", () => {
+    const transform = new Transform({
+      translation: { x: 12, y: -8 },
+      rotation: Math.PI / 4,
+      scale: 2,
+    });
     const moved = transform.translatedBy({ x: 3, y: 5 });
+    const rotated = moved.withRotation(Math.PI / 2);
+    const scaled = rotated.withScale(3);
     expect(transform.translation).toEqual({ x: 12, y: -8 });
-    expect(moved.translation).toEqual({ x: 15, y: -3 });
+    expect(moved).toMatchObject({
+      translation: { x: 15, y: -3 },
+      rotation: Math.PI / 4,
+      scale: 2,
+    });
+    expect(rotated.rotation).toBe(Math.PI / 2);
+    expect(scaled.scale).toBe(3);
     expect(moved).not.toBe(transform);
     expect(Object.isFrozen(moved.translation)).toBe(true);
+  });
+
+  it("applies and inverts center-pivot geometry and returns transformed bounds", () => {
+    const transform = new Transform({
+      translation: { x: 10, y: 20 },
+      rotation: Math.PI / 2,
+      scale: 2,
+    });
+    const pivot = { x: 5, y: 5 };
+    const transformed = transform.applyToPoint({ x: 10, y: 5 }, pivot);
+    expect(transformed.x).toBeCloseTo(15);
+    expect(transformed.y).toBeCloseTo(35);
+    expect(transform.invertPoint(transformed, pivot)).toEqual({ x: 10, y: 5 });
+    expect(transform.transformBounds({ x: 0, y: 0, width: 10, height: 20 })).toMatchObject({
+      x: -5,
+      y: 20,
+      width: 40,
+      height: 20,
+    });
   });
 });
 
@@ -142,5 +175,31 @@ describe("ObjectFactory", () => {
       height: source.bounds.height,
     });
     expect(source.transform.translation).toEqual({ x: 0, y: 0 });
+  });
+
+  it("creates rotated and scaled same-identity replacements around stable local bounds", () => {
+    const stroke = createStroke();
+    const source = createInkObject(
+      { id: "transformable", stroke, createdAt: FIRST_TIMESTAMP },
+      { now: () => FIRST_TIMESTAMP },
+    );
+    const rotated = new ObjectFactory({ now: () => SECOND_TIMESTAMP }).rotateObject(
+      source,
+      Math.PI / 2,
+    );
+    const scaled = new ObjectFactory({ now: () => SECOND_TIMESTAMP }).scaleObject(source, 2);
+
+    expect(rotated).toMatchObject({
+      id: source.id,
+      modifiedAt: SECOND_TIMESTAMP,
+      transform: { rotation: Math.PI / 2, scale: 1 },
+    });
+    expect(rotated.stroke).toBe(source.stroke);
+    expect(rotated.bounds.width).toBeCloseTo(source.bounds.height);
+    expect(rotated.bounds.height).toBeCloseTo(source.bounds.width);
+    expect(scaled.transform.scale).toBe(2);
+    expect(scaled.bounds.width).toBeCloseTo(source.bounds.width * 2);
+    expect(scaled.bounds.height).toBeCloseTo(source.bounds.height * 2);
+    expect(source.transform).toEqual(Transform.identity());
   });
 });

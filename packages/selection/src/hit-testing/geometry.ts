@@ -46,18 +46,26 @@ function distanceToSegment(point: PagePoint, start: InkStrokePoint, end: InkStro
  * Segment radii mirror the public pressure-width contract used by ink rendering.
  */
 export function distanceToInkGeometry(point: PagePoint, object: InkObjectView): number {
-  const translatedPoint: PagePoint = {
-    x: point.x - object.transform.translation.x,
-    y: point.y - object.transform.translation.y,
+  const localBounds = object.stroke.inflatedBounds;
+  const localPoint = object.transform.invertPoint(point, {
+    x: localBounds.x + localBounds.width / 2,
+    y: localBounds.y + localBounds.height / 2,
+  });
+  const transformedPoint: PagePoint = {
+    x: localPoint.x,
+    y: localPoint.y,
     coordinateSpace: "page",
   };
   const points = object.stroke.points;
   const first = points[0];
   if (first === undefined) return Number.POSITIVE_INFINITY;
   if (points.length === 1) {
-    return Math.max(
-      0,
-      distanceToPoint(translatedPoint, first) - object.stroke.widthAtPressure(first.pressure) / 2,
+    return (
+      Math.max(
+        0,
+        distanceToPoint(transformedPoint, first) -
+          object.stroke.widthAtPressure(first.pressure) / 2,
+      ) * object.transform.scale
     );
   }
 
@@ -72,8 +80,8 @@ export function distanceToInkGeometry(point: PagePoint, object: InkObjectView): 
       4;
     shortestDistance = Math.min(
       shortestDistance,
-      Math.max(0, distanceToSegment(translatedPoint, start, end) - segmentRadius),
+      Math.max(0, distanceToSegment(transformedPoint, start, end) - segmentRadius),
     );
   }
-  return shortestDistance;
+  return shortestDistance * object.transform.scale;
 }
