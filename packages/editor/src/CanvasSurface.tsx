@@ -1,4 +1,5 @@
-import { InkObject } from "@folio/document";
+import { InkObject, type ObjectCollection } from "@folio/document";
+import type { HistoryNotification, IHistoryController, IHistoryState } from "@folio/history";
 import { createStrokeVisual, PointerInputController, StrokeRenderer } from "@folio/ink";
 import {
   createManipulationController,
@@ -25,6 +26,11 @@ import {
   type SelectionState,
 } from "@folio/selection";
 import { useEffect, useRef } from "react";
+import {
+  createEditorHistoryCoordinator,
+  type EditorHistoryCoordinator,
+} from "./history/editor-history-coordinator";
+import { installEditorHistoryShortcuts } from "./history/editor-history-shortcuts";
 import { InkDocumentSession } from "./InkDocumentSession";
 import { PageManipulationCoordinateMapper } from "./PageManipulationCoordinateMapper";
 import { PageSelectionCoordinateMapper } from "./PageSelectionCoordinateMapper";
@@ -44,10 +50,14 @@ export interface CanvasSurfaceProps {
   readonly onSelectionControllerReady?: (controller: SelectionController) => void;
   /** Receives the interface-oriented manipulation controller. */
   readonly onManipulationControllerReady?: (controller: ManipulationController) => void;
+  /** Receives the interface-oriented History controller for programmatic operations. */
+  readonly onHistoryControllerReady?: (controller: IHistoryController<ObjectCollection>) => void;
   /** Receives immutable selection state only after logical changes. */
   readonly onSelectionChange?: (state: SelectionState) => void;
   /** Receives immutable manipulation state only after logical transitions. */
   readonly onManipulationChange?: (state: ManipulationState) => void;
+  /** Receives immutable post-operation History notifications. */
+  readonly onHistoryChange?: (notification: HistoryNotification) => void;
   /** Receives immutable rendering diagnostics at lifecycle checkpoints. */
   readonly onDiagnostics?: (snapshot: CanvasControllerSnapshot) => void;
   /** Receives initialization or rendering adapter failures. */
@@ -78,8 +88,10 @@ export function CanvasSurface({
   onControllerReady,
   onSelectionControllerReady,
   onManipulationControllerReady,
+  onHistoryControllerReady,
   onSelectionChange,
   onManipulationChange,
+  onHistoryChange,
   onDiagnostics,
   onError,
 }: CanvasSurfaceProps) {
@@ -89,6 +101,7 @@ export function CanvasSurface({
   const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
+  const historyChangeRef = useRef(onHistoryChange);
 
   useEffect(() => {
     interactionModeRef.current = interactionMode;
@@ -105,6 +118,10 @@ export function CanvasSurface({
   useEffect(() => {
     manipulationChangeRef.current = onManipulationChange;
   }, [onManipulationChange]);
+
+  useEffect(() => {
+    historyChangeRef.current = onHistoryChange;
+  }, [onHistoryChange]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -128,6 +145,8 @@ export function CanvasSurface({
     let translationPreviewRenderer: TranslationPreviewRenderer | null = null;
     let manipulationController: ManipulationController | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
+    let historyCoordinator: EditorHistoryCoordinator | null = null;
+    let uninstallHistoryShortcuts: (() => void) | null = null;
     let manipulationPointerCapture: Readonly<{
       canvas: HTMLCanvasElement;
       pointerId: number;
@@ -273,23 +292,58 @@ export function CanvasSurface({
       });
       const manipulationManager = createManipulationManager();
       const strokeVisuals = new Map<string, ReturnType<typeof createStrokeVisual>>();
+      const updateHistoryDiagnostics = (state: IHistoryState): void => {
+        host.dataset.historyCanUndo = String(state.canUndo);
+        host.dataset.historyCanRedo = String(state.canRedo);
+        host.dataset.historyUndoDepth = String(state.undoDepth);
+        host.dataset.historyRedoDepth = String(state.redoDepth);
+        host.dataset.historyVersion = String(state.historyVersion);
+        host.dataset.historyExecutionCount = String(state.executionCounter);
+        host.dataset.historyLastCommandId = state.lastCommand?.id ?? "";
+      };
+      const synchronizeDocumentFromHistory = (): void => {
+        for (const object of documentSession.collection.objects) {
+          if (object instanceof InkObject) {
+            activeStrokeRenderer.setStrokeTranslation(
+              object.stroke.id,
+              object.transform.translation,
+            );
+          }
+        }
+        updateDocumentDiagnostics();
+        updateSelection(activeSelectionController.getSelection(), false);
+      };
+      historyCoordinator = createEditorHistoryCoordinator({
+        documentSession,
+        onDocumentChange: () => synchronizeDocumentFromHistory(),
+        onHistoryChange: (notification) => {
+          updateHistoryDiagnostics(notification.state);
+          historyChangeRef.current?.(notification);
+        },
+        onError: (error) => onError?.(error),
+      });
+      const activeHistoryCoordinator = historyCoordinator;
+      uninstallHistoryShortcuts = installEditorHistoryShortcuts({
+        controller: activeHistoryCoordinator.controller,
+        onError: (error) => onError?.(error),
+      });
+      updateHistoryDiagnostics(activeHistoryCoordinator.controller.getHistoryState());
       manipulationController = createManipulationController({
         manager: manipulationManager,
         selectionSource: activeSelectionController,
         objectSource,
         onCommit: (commit) => {
-          const translated = documentSession.translateObject(
-            commit.objectId,
-            commit.translation.movementVector,
-          );
-          if (translated === null) return false;
-          activeStrokeRenderer.setStrokeTranslation(
-            translated.stroke.id,
-            translated.transform.translation,
-          );
-          updateDocumentDiagnostics();
-          updateSelection(activeSelectionController.getSelection(), false);
-          return true;
+          try {
+            activeHistoryCoordinator.commitMove(commit);
+            return true;
+          } catch (cause) {
+            const error =
+              cause instanceof Error
+                ? cause
+                : new Error("History move execution failed.", { cause });
+            onError?.(error);
+            return false;
+          }
         },
         onError: (error) => onError?.(error),
       });
@@ -450,10 +504,12 @@ export function CanvasSurface({
       host.dataset.documentState = "ready";
       host.dataset.selectionCapability = "ready";
       host.dataset.manipulationCapability = "ready";
+      host.dataset.historyCapability = "ready";
       host.dataset.manipulationPointerCapture = "released";
       onControllerReady?.(controller);
       onSelectionControllerReady?.(activeSelectionController);
       onManipulationControllerReady?.(activeManipulationController);
+      onHistoryControllerReady?.(activeHistoryCoordinator.controller);
       onDiagnostics?.(controller.snapshot());
       themeObserver = new MutationObserver(() => {
         if (controller.status === "mounted") {
@@ -471,6 +527,7 @@ export function CanvasSurface({
       host.dataset.documentState = "error";
       host.dataset.selectionCapability = "error";
       host.dataset.manipulationCapability = "error";
+      host.dataset.historyCapability = "error";
       onError?.(error);
     }
 
@@ -485,6 +542,8 @@ export function CanvasSurface({
       releaseManipulationPointerCapture();
       manipulationControllerRef.current = null;
       releaseManipulationPointerCaptureRef.current = null;
+      uninstallHistoryShortcuts?.();
+      historyCoordinator?.destroy();
       selectionController?.destroy();
       pointerInput?.destroy();
       documentSession.clear();
@@ -500,6 +559,7 @@ export function CanvasSurface({
     onControllerReady,
     onDiagnostics,
     onError,
+    onHistoryControllerReady,
     onManipulationControllerReady,
     onSelectionControllerReady,
   ]);
@@ -512,6 +572,7 @@ export function CanvasSurface({
       data-renderer-state="initializing"
       data-selection-capability="initializing"
       data-manipulation-capability="initializing"
+      data-history-capability="initializing"
     />
   );
 }

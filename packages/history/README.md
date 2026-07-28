@@ -1,182 +1,77 @@
-# Folio History
+# @folio/history
 
-`@folio/history` is Folio's framework-independent, command-based notebook history package. It is the architectural entry point for future notebook state changes and has no React, Electron, rendering, canvas, search, editor-store, toolbar, or UI dependency.
+`@folio/history` contains two deliberately separate, framework-independent History surfaces:
 
-Commands use `@folio/domain` aggregate operations to calculate immutable successor notebooks. Each command retains references to its exact before and after aggregates, making undo and redo deterministic and avoiding history-layer cloning. Optional `@folio/persistence` integration coordinates its `DirtyTracker`; notebook data remains the only value that crosses the persistence boundary.
+- the frozen Phase 5 compatibility API for immutable `@folio/domain.Notebook` aggregates; and
+- the Phase 11 model-neutral editor History API used by `@folio/editor`.
 
-History is session-only. Commands, stacks, transactions, and save points are deliberately excluded from notebook serialization and are cleared when a notebook session is discarded.
+Both are session-memory systems. Commands, stacks, transactions, save points, counters, and notifications are never serialized.
 
-## Command architecture
+## Phase 11 generic editor History
 
-```mermaid
-classDiagram
-  class Command {
-    +string id
-    +string timestamp
-    +string description
-    +CommandCategory category
-    +HistoryChangeTarget[] affectedTargets
-    +execute(Notebook) Notebook
-    +undo(Notebook) Notebook
-    +redo(Notebook) Notebook
-  }
-
-  class NotebookCommands {
-    +RenameNotebook
-    +UpdateNotebookMetadata
-  }
-
-  class SectionCommands {
-    +AddSection
-    +DeleteSection
-    +RenameSection
-    +ReorderSections
-  }
-
-  class PageCommands {
-    +AddPage
-    +DeletePage
-    +DuplicatePage
-    +ReorderPages
-  }
-
-  class HistoryManager {
-    +execute(Command)
-    +undo()
-    +redo()
-    +clear()
-    +beginTransaction()
-    +commitTransaction()
-    +rollbackTransaction()
-    +markSavePoint()
-  }
-
-  Command <|.. NotebookCommands
-  Command <|.. SectionCommands
-  Command <|.. PageCommands
-  HistoryManager o-- Command
-```
-
-Concrete command factories precompute their immutable successor through the corresponding `@folio/domain` operation. Undo restores the captured predecessor reference; redo restores the captured successor reference. Applying a command to a different reference fails with `COMMAND_STATE_MISMATCH`, preventing stale commands from silently overwriting newer state.
-
-## Public API
-
-- `HistoryManager` owns the current notebook, bounded undo/redo stacks, transaction state, and save point.
-- `Command` defines immutable identity, time, description, category, persistence effects, and reversible transitions.
-- `Transaction` describes the currently active group without exposing mutable implementation state.
-- `HistorySnapshot` references the current immutable notebook and monotonic notebook-transition revision.
-- `HistoryState` reports the snapshot, stack depths, limit, dirty state, capabilities, and active transaction.
-- Notebook command factories create rename and metadata-update commands.
-- Section command factories create add, delete, rename, and reorder commands.
-- Page command factories create add, delete, duplicate, and reorder commands.
-- `HistoryError` provides stable error codes and structured details for invalid commands, results, limits, and transaction state.
-
-The default history limit is 100 undo steps. A positive safe-integer limit can be supplied when constructing the manager. Transactions count as one step regardless of their command count.
-
-## Undo and redo flow
+The generic subsystem is parameterized by `TDocument`. It imports no Folio model package and knows documents only through `HistoryDocumentSession<TDocument>`. Concrete commands own document validation and produce immutable successors; History owns command protocol validation, bounded undo/redo stacks, lifecycle state, non-nested transactions, and immutable notifications.
 
 ```mermaid
 flowchart LR
-  A["Current immutable notebook"] --> B{"Operation"}
-  B -- Undo --> C["Peek newest undo entry"]
-  C --> D["Command.undo(current)"]
-  D --> E["Verify exact captured predecessor"]
-  E --> F["Move entry to redo stack"]
-  B -- Redo --> G["Peek newest redo entry"]
-  G --> H["Command.redo(current)"]
-  H --> I["Verify exact captured successor"]
-  I --> J["Move entry to undo stack"]
-  F --> K["Publish lightweight snapshot"]
-  J --> K
+    Editor["Editor coordinator"] --> Command["EditorCommand<TDocument>"]
+    Command --> Controller["IHistoryController<TDocument>"]
+    Controller --> Manager["IHistoryManager<TDocument>"]
+    Manager --> Session["HistoryDocumentSession<TDocument>"]
+    Session --> Document["Active immutable document"]
+    Manager --> Stacks["Bounded command-only stacks"]
+    Manager --> Transaction["Optional command group"]
 ```
 
-Executing a new, non-no-op command clears the redo stack. Empty undo and redo calls return the unchanged current snapshot.
-
-## Transaction flow
-
-```mermaid
-flowchart TD
-  A["beginTransaction"] --> B["Capture starting notebook reference"]
-  B --> C["Execute commands sequentially"]
-  C --> D{"Finish transaction"}
-  D -- Commit --> E["Combine effects and before/after references"]
-  E --> F["Push one transaction command"]
-  D -- Rollback --> G["Call child undo operations in reverse"]
-  G --> H["Restore exact starting reference"]
-  F --> I["One undo step"]
-  H --> J["No stack change"]
-```
-
-Nested transactions are rejected. Undo, redo, history clearing, and save-point changes are unavailable during an active transaction. Persistence dirty targets are deferred until commit, so a rollback leaves persistence state untouched.
-
-## Dirty-state integration
-
-```mermaid
-stateDiagram-v2
-  [*] --> Clean
-  Clean --> Dirty: Execute command
-  Dirty --> Clean: Successful save then markSavePoint
-  Clean --> Dirty: Undo away from save point
-  Dirty --> Clean: Redo back to save point
-  Dirty --> Dirty: Undo or redo elsewhere
-```
-
-The manager compares immutable notebook references rather than serializing or hashing state. When a persistence `DirtyTracker` is supplied, command effects map to metadata, section, and page targets. Returning exactly to the save point clears those targets automatically.
-
-Capture the submitted notebook reference and pass it to `markSavePoint()` only after `saveNotebook()` resolves successfully. If newer commands execute while the asynchronous save is running, they remain dirty:
+Create one manager and one controller per editor session:
 
 ```ts
-const tracker = new DirtyTracker();
-const history = new HistoryManager(notebook, { dirtyTracker: tracker });
+const manager = createEditorHistoryManager({ documentSession, historyLimit: 100 });
+const controller = createHistoryController({ manager });
 
-history.execute(createRenameNotebookCommand(history.notebook, "Project Atlas II"));
+const unsubscribe = controller.subscribe((notification) => {
+  // Synchronize editor-owned consumers from the installed session document.
+});
 
-const savedSnapshot = history.notebook;
-await saveNotebook(notebookPath, savedSnapshot, { dirtyTracker: tracker });
-history.markSavePoint(savedSnapshot);
+controller.executeCommand(command);
+controller.undo();
+controller.redo();
+
+unsubscribe();
+controller.destroy();
 ```
 
-## Example command lifecycle
+`createEditorHistoryManager()` and `createHistoryController()` return public interfaces; their concrete implementations, stacks, transaction records, state builders, validation helpers, and lifecycle ownership hook are private. A manager can be claimed by only one active controller. Destroying the controller clears listeners and releases that claim.
 
-```ts
-const history = new HistoryManager(notebook, { historyLimit: 250 });
+### Generic public contracts
 
-const command = createRenameSectionCommand(
-  history.notebook,
-  "research-section",
-  "Primary Research",
-);
+- `EditorCommand<TDocument>`: immutable identity, timestamp, description, and `execute`/`undo`/`redo` transitions.
+- `HistoryDocumentSession<TDocument>`: reads and replaces the current immutable document.
+- `IHistoryManager<TDocument>`: command, stack, state, and transaction operations.
+- `IHistoryController<TDocument>`: the editor-facing manager boundary plus subscriptions and destruction.
+- `IHistoryState` and execution-state types: immutable, document-free state, depths, capabilities, counters, lifecycle phase, active transaction, and last-command metadata.
+- `HistoryCommandMetadata`, `HistoryOperation`, `HistoryOperationOutcome`, and `HistoryTransactionOptions`: immutable operation metadata.
+- `HistoryNotification`, success/failure variants, and `HistoryListener`: immutable post-execute/undo/redo observations.
+- `EditorHistoryManagerOptions<TDocument>` and `EditorHistoryControllerOptions<TDocument>`: factory inputs.
+- `HistoryError`, `HistoryErrorCode`, `HistoryErrorOptions`, and `isHistoryError()`: shared structured errors.
 
-const executed = history.execute(command);
-const restored = history.undo();
-const repeated = history.redo();
+The default history limit is 100. Executing a distinct successor outside a transaction pushes one command-only entry and clears redo. Undo and redo calculate and install new immutable successors before changing stacks. Empty operations return current state without publishing a notification.
 
-executed.notebook; // immutable renamed aggregate
-restored.notebook; // exact original aggregate reference
-repeated.notebook; // exact executed aggregate reference
-```
+Transactions are explicit and non-nested. Child commands execute immediately and are collected in order. Commit stores their commands as one undo unit; undo runs children in reverse and redo runs them forward. Rollback calculates the reverse chain and performs one final document replacement. No Phase 11 entry retains a whole before/after document aggregate.
 
-Commands should be created against `history.notebook` immediately before execution. Future drawing, object-editing, and text commands can implement the same interface, but are intentionally outside Phase 5.
+Controller listeners observe `completed` state synchronously before the manager returns to `idle`. Listener failures are isolated. Begin, commit, and rollback do not create separate notification kinds; child execute and later grouped undo/redo operations use the normal command notification contract.
 
-## Serialization boundary
+## Phase 5 compatibility surface
 
-Only `history.notebook` is passed to `@folio/persistence`. The following remain in memory and are never written to notebook JSON:
+The public `HistoryManager` class and its `Command` contract remain notebook-specific. Built-in factories cover notebook rename/metadata, section add/delete/rename/reorder, and page add/delete/duplicate/reorder. The compatibility manager retains exact immutable before/after `Notebook` references, snapshot transactions, save-point dirtiness, and domain validation.
 
-- Command identifiers, descriptions, timestamps, and closures.
-- Undo and redo stacks.
-- Transaction metadata and child commands.
-- Save-point references and history revisions.
+`LegacyHistoryDirtySink` is owned by History and is structurally satisfied by the existing Persistence `DirtyTracker`. This preserves the `dirtyTracker` option without a production dependency from History to Persistence. `@folio/persistence` is a development-only compatibility-test dependency.
 
-Reopening a saved notebook therefore starts a clean `HistoryManager` with empty stacks, as required by the current-session history architecture.
+The compatibility surface includes `HistorySnapshot`, `HistoryState`, `Transaction`, `HistoryManagerOptions`, command metadata/target types, all ten command factories, `DuplicatePageCommand`, and the shared error contracts. It is not used by the mounted editor and does not share state with the Phase 11 manager.
 
-## Performance considerations
+## Dependency boundary
 
-- Snapshots and history entries retain immutable notebook references; they do not deep-clone aggregates.
-- Previously verified notebook references are cached, keeping repeated undo and redo validation constant-overhead at the history layer.
-- Undo and redo use array-end operations.
-- History limits discard the oldest complete steps and prevent unbounded stack growth.
-- Transactions retain only their child commands and snapshot references until commit or rollback.
-- No-op commands do not consume history or invalidate redo.
-- The test baseline executes, undoes, and redoes 2,000 sequential commands.
+The package-level production dependency on `@folio/domain` exists only for the Phase 5 modules. The generic `src/editor-history` subtree has no Folio-package dependency. Production imports from Document, Editor, Manipulation, Selection, Rendering, Persistence, React, Electron, and UI are forbidden.
 
-The aggregate allocation cost remains owned by `@folio/domain`, where the business operation is performed. Future object commands should capture only the immutable aggregates or minimal reversible data they need.
+## Documentation
+
+See [Phase 11 History Architecture and Developer Guide](../../docs/architecture/PHASE11_HISTORY_ARCHITECTURE.md) for the complete command lifecycle, transaction model, failure guarantees, extension rules, editor integration, tests, and known scope boundaries.

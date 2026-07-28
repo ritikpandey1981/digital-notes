@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron } from "@playwright/test";
 
-test("launches the shell with the Phase 10 translation manipulation lifecycle", async () => {
+test("launches the shell with the Phase 11 History-backed manipulation lifecycle", async () => {
   const repositoryRoot = process.cwd();
   const electronApp = await electron.launch({
     args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
@@ -38,6 +38,11 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
     await expect(canvasSurface).toHaveAttribute("data-document-state", "ready");
     await expect(canvasSurface).toHaveAttribute("data-selection-capability", "ready");
     await expect(canvasSurface).toHaveAttribute("data-manipulation-capability", "ready");
+    await expect(canvasSurface).toHaveAttribute("data-history-capability", "ready");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute("data-history-can-undo", "false");
+    await expect(canvasSurface).toHaveAttribute("data-history-can-redo", "false");
     await expect(canvas).toHaveAttribute("data-render-count", /[1-9]\d*/);
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "0");
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "0");
@@ -167,6 +172,12 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
     const previewRenderBeforeMove = Number(
       await manipulationCanvas.getAttribute("data-manipulation-render-count"),
     );
+    const historyVersionBeforeMove = Number(
+      await canvasSurface.getAttribute("data-history-version"),
+    );
+    const historyExecutionCountBeforeMove = Number(
+      await canvasSurface.getAttribute("data-history-execution-count"),
+    );
     const boundsXBeforeMove = Number(
       await canvasSurface.getAttribute("data-selected-object-bounds-x"),
     );
@@ -221,6 +232,17 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
       "data-document-object-count",
       objectCountBeforeMove ?? "",
     );
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute("data-history-can-undo", "true");
+    await expect(canvasSurface).toHaveAttribute("data-history-can-redo", "false");
+    await expect(canvasSurface).toHaveAttribute("data-history-last-command-id", /.+/);
+    expect(Number(await canvasSurface.getAttribute("data-history-version"))).toBe(
+      historyVersionBeforeMove + 1,
+    );
+    expect(Number(await canvasSurface.getAttribute("data-history-execution-count"))).toBe(
+      historyExecutionCountBeforeMove + 1,
+    );
     expect(
       Number(await canvasSurface.getAttribute("data-selected-object-bounds-x")),
     ).toBeGreaterThan(boundsXBeforeMove);
@@ -258,6 +280,59 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
     const committedTranslationY = await canvasSurface.getAttribute(
       "data-selected-object-translation-y",
     );
+    const inkRenderBeforeShortcutUndo = Number(
+      await inkCanvas.getAttribute("data-ink-render-count"),
+    );
+
+    await window.keyboard.press("Control+Z");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-can-undo", "false");
+    await expect(canvasSurface).toHaveAttribute("data-history-can-redo", "true");
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-bounds-x",
+      String(boundsXBeforeMove),
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-bounds-y",
+      String(boundsYBeforeMove),
+    );
+    await expect(canvasSurface).toHaveAttribute("data-selected-object-translation-x", "0");
+    await expect(canvasSurface).toHaveAttribute("data-selected-object-translation-y", "0");
+    await expect
+      .poll(async () => Number(await inkCanvas.getAttribute("data-ink-render-count")))
+      .toBeGreaterThan(inkRenderBeforeShortcutUndo);
+    expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
+
+    await window.keyboard.press("Control+Shift+Z");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-translation-x",
+      committedTranslationX ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-translation-y",
+      committedTranslationY ?? "",
+    );
+
+    await window.keyboard.press("Control+Z");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "1");
+    await window.keyboard.press("Control+Y");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-bounds-x",
+      committedBoundsX ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-selected-object-bounds-y",
+      committedBoundsY ?? "",
+    );
+
+    const historyDepthAfterCommit = await canvasSurface.getAttribute("data-history-undo-depth");
+    const historyVersionAfterCommit = await canvasSurface.getAttribute("data-history-version");
     await window.mouse.move(start.x + 60, start.y + 40);
     await window.mouse.down();
     await window.mouse.move(start.x + 80, start.y + 60, { steps: 4 });
@@ -293,6 +368,14 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
       "data-document-object-count",
       objectCountBeforeMove ?? "",
     );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-history-undo-depth",
+      historyDepthAfterCommit ?? "",
+    );
+    await expect(canvasSurface).toHaveAttribute(
+      "data-history-version",
+      historyVersionAfterCommit ?? "",
+    );
     await window.mouse.up();
 
     await window.getByRole("button", { name: "Show notification preview" }).click();
@@ -310,6 +393,7 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
     await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
 
     const beforeResize = Number(await canvas.getAttribute("data-render-count"));
     const inkBeforeResize = Number(await inkCanvas.getAttribute("data-ink-render-count"));
@@ -384,6 +468,14 @@ test("launches the shell with the Phase 10 translation manipulation lifecycle", 
     await expect(freshManipulationCanvas).toHaveAttribute(
       "data-manipulation-preview-state",
       "empty",
+    );
+    await expect(window.getByTestId("canvas-surface")).toHaveAttribute(
+      "data-history-capability",
+      "ready",
+    );
+    await expect(window.getByTestId("canvas-surface")).toHaveAttribute(
+      "data-history-undo-depth",
+      "0",
     );
     await expect(window.getByText("Page 1 of 12")).toBeVisible();
   } finally {

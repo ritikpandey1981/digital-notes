@@ -1,4 +1,5 @@
-import { InkObject } from "@folio/document";
+import { InkObject, ObjectCollection } from "@folio/document";
+import type { HistoryDocumentSession } from "@folio/history";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
 import { describe, expect, it } from "vitest";
 import { InkDocumentSession } from "../InkDocumentSession";
@@ -82,5 +83,23 @@ describe("InkDocumentSession", () => {
     expect(session.collection.lookup(original.id)).toBe(translated);
     expect(original.transform.translation).toEqual({ x: 0, y: 0 });
     expect(session.translateObject("missing", { x: 1, y: 1 })).toBeNull();
+  });
+
+  it("implements the generic History document replacement boundary", () => {
+    const session = new InkDocumentSession({
+      createId: () => "object",
+      now: () => "2026-07-27T08:00:00.000Z",
+    });
+    const boundary: HistoryDocumentSession<ObjectCollection> = session;
+    session.completeStroke(stroke("stroke"));
+    const initial = boundary.getDocument();
+    const successor = new ObjectCollection(initial.objects);
+
+    boundary.replaceDocument(successor);
+
+    expect(boundary.getDocument()).toBe(successor);
+    expect(session.collection).toBe(successor);
+    expect(Object.isFrozen(successor)).toBe(true);
+    expect(() => boundary.replaceDocument({} as ObjectCollection)).toThrowError(TypeError);
   });
 });

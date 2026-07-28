@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import * as history from "../index";
 import {
   HistoryError,
   HistoryManager,
+  createEditorHistoryManager,
+  createHistoryController,
   createAddPageCommand,
   createAddSectionCommand,
   createDeletePageCommand,
@@ -17,6 +20,28 @@ import {
 import { buildNotebook } from "./helpers";
 
 describe("@folio/history public API", () => {
+  it("preserves Phase 5 exports while adding only the approved generic factories", () => {
+    expect(Object.keys(history).sort()).toEqual(
+      [
+        "HistoryError",
+        "HistoryManager",
+        "createAddPageCommand",
+        "createAddSectionCommand",
+        "createDeletePageCommand",
+        "createDeleteSectionCommand",
+        "createDuplicatePageCommand",
+        "createEditorHistoryManager",
+        "createHistoryController",
+        "createRenameNotebookCommand",
+        "createRenameSectionCommand",
+        "createReorderPagesCommand",
+        "createReorderSectionsCommand",
+        "createUpdateNotebookMetadataCommand",
+        "isHistoryError",
+      ].sort(),
+    );
+  });
+
   it("exports the manager and every Phase 5 command factory", () => {
     expect(HistoryManager).toBeTypeOf("function");
     expect(createRenameNotebookCommand).toBeTypeOf("function");
@@ -30,6 +55,14 @@ describe("@folio/history public API", () => {
     expect(createDuplicatePageCommand).toBeTypeOf("function");
     expect(createReorderPagesCommand).toBeTypeOf("function");
     expect(new HistoryManager(buildNotebook())).toBeInstanceOf(HistoryManager);
+  });
+
+  it("exports only the approved generic History factories at runtime", () => {
+    expect(createEditorHistoryManager).toBeTypeOf("function");
+    expect(createHistoryController).toBeTypeOf("function");
+    expect(Object.keys(history)).not.toContain("EditorHistoryManagerImplementation");
+    expect(Object.keys(history)).not.toContain("HistoryControllerImplementation");
+    expect(Object.keys(history)).not.toContain("BoundedCommandStack");
   });
 
   it("provides a structured public error and type guard", () => {

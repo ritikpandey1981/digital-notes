@@ -8,7 +8,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@folio/domain": "workspace:*",
+    "@folio/domain": "workspace:*"
+  },
+  "devDependencies": {
     "@folio/persistence": "workspace:*"
   }
 }

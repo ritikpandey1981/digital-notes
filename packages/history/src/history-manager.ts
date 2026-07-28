@@ -1,14 +1,14 @@
 import { assertValidNotebook } from "@folio/domain";
 import type { Notebook } from "@folio/domain";
-import type { DirtyTracker } from "@folio/persistence";
 import type { Command, CommandFactoryOptions, HistoryChangeTarget } from "./command";
+import type { LegacyHistoryDirtySink } from "./compatibility/legacy-history-dirty-sink";
 import { HistoryError } from "./errors";
 import { createSnapshotCommand, resolveCommandMetadata } from "./internal/snapshot-command";
 import type { HistorySnapshot, HistoryState, Transaction } from "./state";
 
 export interface HistoryManagerOptions {
   readonly historyLimit?: number;
-  readonly dirtyTracker?: DirtyTracker;
+  readonly dirtyTracker?: LegacyHistoryDirtySink;
 }
 
 interface HistoryEntry {
@@ -29,7 +29,7 @@ const DEFAULT_HISTORY_LIMIT = 100;
 
 export class HistoryManager {
   readonly #historyLimit: number;
-  readonly #dirtyTracker: DirtyTracker | undefined;
+  readonly #dirtyTracker: LegacyHistoryDirtySink | undefined;
   readonly #verifiedNotebooks = new WeakSet<object>();
   readonly #undoStack: HistoryEntry[] = [];
   readonly #redoStack: HistoryEntry[] = [];

@@ -122,6 +122,9 @@ importers:
       '@folio/document':
         specifier: workspace:*
         version: link:../document
+      '@folio/history':
+        specifier: workspace:*
+        version: link:../history
       '@folio/ink':
         specifier: workspace:*
         version: link:../ink
@@ -147,6 +150,7 @@ importers:
       '@folio/domain':
         specifier: workspace:*
         version: link:../domain
+    devDependencies:
       '@folio/persistence':
         specifier: workspace:*
         version: link:../persistence

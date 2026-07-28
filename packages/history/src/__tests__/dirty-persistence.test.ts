@@ -2,7 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DirtyTracker, loadNotebook, saveNotebook, serializeNotebook } from "@folio/persistence";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { LegacyHistoryDirtySink } from "../index";
 import { createRenameNotebookCommand } from "../commands/notebook-commands";
 import { createDeletePageCommand } from "../commands/page-commands";
 import { createRenameSectionCommand } from "../commands/section-commands";
@@ -72,6 +73,17 @@ describe("save points and dirty state", () => {
 });
 
 describe("DirtyTracker coordination", () => {
+  it("accepts the persistence tracker through the History-owned compatibility contract", () => {
+    const tracker = new DirtyTracker();
+    const compatibleSink: LegacyHistoryDirtySink = tracker;
+
+    expectTypeOf<DirtyTracker>().toMatchTypeOf<LegacyHistoryDirtySink>();
+    expect(compatibleSink).toBe(tracker);
+    expect(new HistoryManager(buildNotebook(), { dirtyTracker: tracker }).getState().isDirty).toBe(
+      false,
+    );
+  });
+
   it("maps notebook, section, and page command effects to persistence targets", () => {
     const tracker = new DirtyTracker();
     const manager = new HistoryManager(buildNotebook(), { dirtyTracker: tracker });

@@ -1,5 +1,6 @@
 import { InkObject, ObjectCollection, ObjectFactory } from "@folio/document";
 import type { ObjectFactoryOptions } from "@folio/document";
+import type { HistoryDocumentSession } from "@folio/history";
 import type { Stroke } from "@folio/ink";
 
 export interface InkDocumentSessionSnapshot {
@@ -8,7 +9,7 @@ export interface InkDocumentSessionSnapshot {
   readonly allObjectsImmutable: boolean;
 }
 
-export class InkDocumentSession {
+export class InkDocumentSession implements HistoryDocumentSession<ObjectCollection> {
   private readonly factory: ObjectFactory;
   private collectionValue = ObjectCollection.empty();
 
@@ -18,6 +19,19 @@ export class InkDocumentSession {
 
   get collection(): ObjectCollection {
     return this.collectionValue;
+  }
+
+  /** Returns the active immutable document at the generic History boundary. */
+  getDocument(): ObjectCollection {
+    return this.collectionValue;
+  }
+
+  /** Installs the exact immutable successor produced by an editor command. */
+  replaceDocument(document: ObjectCollection): void {
+    if (!(document instanceof ObjectCollection) || !Object.isFrozen(document)) {
+      throw new TypeError("InkDocumentSession requires an immutable ObjectCollection successor.");
+    }
+    this.collectionValue = document;
   }
 
   completeStroke(stroke: Stroke): InkObject {

@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@folio/document": "workspace:*",
+    "@folio/history": "workspace:*",
     "@folio/ink": "workspace:*",
     "@folio/manipulation": "workspace:*",
     "@folio/rendering": "workspace:*",
