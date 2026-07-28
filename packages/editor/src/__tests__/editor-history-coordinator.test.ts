@@ -196,6 +196,59 @@ describe("EditorHistoryCoordinator", () => {
     coordinator.destroy();
   });
 
+  it("routes each completed stroke through exactly one generic History command", () => {
+    const session = new InkDocumentSession({
+      createId: () => "object-1",
+      now: () => OBJECT_TIMESTAMP,
+    });
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      onDocumentChange: () => undefined,
+    });
+    const object = session.createStrokeObject(createStroke());
+
+    expect(coordinator.executeStroke(object)).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+    expect(session.collection.lookup(object.id)).toBe(object);
+    coordinator.undo();
+    expect(session.collection.size).toBe(0);
+    coordinator.redo();
+    expect(session.collection.lookup(object.id)).toBe(object);
+    coordinator.destroy();
+  });
+
+  it("groups duplicate creation and its deterministic offset into one undo step", () => {
+    const session = createDocumentSession();
+    const source = expectInkObject(session);
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      now: () => FIRST_MOVE_TIMESTAMP,
+      onDocumentChange: () => undefined,
+    });
+
+    const result = coordinator.executeDuplicateWithOffset(
+      createDuplicateManipulationResult({
+        objectId: source.id,
+        sessionId: "duplicate-offset",
+        sessionTimestamp: 1,
+      }),
+      { x: 10, y: 10 },
+    );
+    const duplicate = session.collection.lookup(result.duplicateObjectId);
+    expect(duplicate).toBeInstanceOf(InkObject);
+    expect(duplicate?.transform.translation).toEqual({ x: 10, y: 10 });
+    expect(result.state).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+
+    coordinator.undo();
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([source.id]);
+    coordinator.redo();
+    expect(session.collection.lookup(result.duplicateObjectId)?.transform.translation).toEqual({
+      x: 10,
+      y: 10,
+    });
+    expect(coordinator.controller.getHistoryState()).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+    coordinator.destroy();
+  });
+
   it("rejects a stale manipulation through History and lets Manipulation cancel", () => {
     let objectTimestamp = OBJECT_TIMESTAMP;
     const session = createDocumentSession(() => objectTimestamp);

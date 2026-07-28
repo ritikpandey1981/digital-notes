@@ -84,10 +84,15 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     if (inkBounds === null) throw new Error("Ink canvas has no visible bounds.");
     const scaleX = inkBounds.width / metrics.logicalWidth;
     const scaleY = inkBounds.height / metrics.logicalHeight;
-    const start = {
-      x: inkBounds.x + (metrics.pageX + metrics.pageWidth * 0.3) * scaleX,
-      y: inkBounds.y + (metrics.pageY + metrics.pageHeight * 0.35) * scaleY,
-    };
+    const zoom = Number(await canvasSurface.getAttribute("data-viewport-zoom"));
+    const pageToScreen = (x: number, y: number) => ({
+      x: inkBounds.x + (metrics.pageX + x * zoom) * scaleX,
+      y: inkBounds.y + (metrics.pageY + y * zoom) * scaleY,
+    });
+    const start = pageToScreen(
+      (metrics.pageWidth / zoom) * 0.3,
+      (metrics.pageHeight / zoom) * 0.35,
+    );
     const baseRenderBeforeInk = Number(await canvas.getAttribute("data-render-count"));
     const inkRenderBefore = Number(await inkCanvas.getAttribute("data-ink-render-count"));
     await window.getByRole("button", { name: "Pen", exact: true }).click();
@@ -101,6 +106,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "1");
     await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "1");
     await expect(canvasSurface).toHaveAttribute("data-document-object-count", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
     expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeInk);
     expect(Number(await inkCanvas.getAttribute("data-ink-render-count"))).toBeGreaterThan(
       inkRenderBefore,
@@ -128,6 +134,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-document-objects-immutable", "true");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "2");
 
     const baseRenderBeforeSelection = Number(await canvas.getAttribute("data-render-count"));
     const selectionRenderBefore = Number(
@@ -184,14 +191,23 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     const boundsYBeforeMove = Number(
       await canvasSurface.getAttribute("data-selected-object-bounds-y"),
     );
-    await window.getByRole("button", { name: "Move", exact: true }).click();
-    await expect(window.getByRole("button", { name: "Move", exact: true })).toHaveAttribute(
+    const boundsWidthBeforeMove = Number(
+      await canvasSurface.getAttribute("data-selected-object-bounds-width"),
+    );
+    const boundsHeightBeforeMove = Number(
+      await canvasSurface.getAttribute("data-selected-object-bounds-height"),
+    );
+    const moveStart = pageToScreen(
+      boundsXBeforeMove + boundsWidthBeforeMove / 2,
+      boundsYBeforeMove + boundsHeightBeforeMove / 2,
+    );
+    await expect(window.getByRole("button", { name: "Select", exact: true })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await window.mouse.move(start.x, start.y);
+    await window.mouse.move(moveStart.x, moveStart.y);
     await window.mouse.down();
-    await window.mouse.move(start.x + 60, start.y + 40, { steps: 6 });
+    await window.mouse.move(moveStart.x + 60, moveStart.y + 40, { steps: 6 });
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
     await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "captured");
     await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
@@ -207,13 +223,13 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     const translationBeforeLeavingCanvas = await canvasSurface.getAttribute(
       "data-manipulation-translation-x",
     );
-    await window.mouse.move(inkBounds.x - 8, start.y + 40, { steps: 3 });
+    await window.mouse.move(inkBounds.x - 8, moveStart.y + 40, { steps: 3 });
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
     await expect(manipulationCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
     expect(await canvasSurface.getAttribute("data-manipulation-translation-x")).not.toBe(
       translationBeforeLeavingCanvas,
     );
-    await window.mouse.move(start.x + 60, start.y + 40, { steps: 3 });
+    await window.mouse.move(moveStart.x + 60, moveStart.y + 40, { steps: 3 });
     expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
     await window.mouse.up();
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "idle");
@@ -232,7 +248,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       "data-document-object-count",
       objectCountBeforeMove ?? "",
     );
-    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "3");
     await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
     await expect(canvasSurface).toHaveAttribute("data-history-can-undo", "true");
     await expect(canvasSurface).toHaveAttribute("data-history-can-redo", "false");
@@ -285,9 +301,9 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     );
 
     await window.keyboard.press("Control+Z");
-    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "2");
     await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "1");
-    await expect(canvasSurface).toHaveAttribute("data-history-can-undo", "false");
+    await expect(canvasSurface).toHaveAttribute("data-history-can-undo", "true");
     await expect(canvasSurface).toHaveAttribute("data-history-can-redo", "true");
     await expect(canvasSurface).toHaveAttribute(
       "data-selected-object-bounds-x",
@@ -305,7 +321,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
 
     await window.keyboard.press("Control+Shift+Z");
-    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "3");
     await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
     await expect(canvasSurface).toHaveAttribute(
       "data-selected-object-translation-x",
@@ -317,10 +333,10 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     );
 
     await window.keyboard.press("Control+Z");
-    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "0");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "2");
     await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "1");
     await window.keyboard.press("Control+Y");
-    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "3");
     await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
     await expect(canvasSurface).toHaveAttribute(
       "data-selected-object-bounds-x",
@@ -333,9 +349,10 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
 
     const historyDepthAfterCommit = await canvasSurface.getAttribute("data-history-undo-depth");
     const historyVersionAfterCommit = await canvasSurface.getAttribute("data-history-version");
-    await window.mouse.move(start.x + 60, start.y + 40);
+    await window.getByRole("button", { name: "Move", exact: true }).click();
+    await window.mouse.move(moveStart.x + 60, moveStart.y + 40);
     await window.mouse.down();
-    await window.mouse.move(start.x + 80, start.y + 60, { steps: 4 });
+    await window.mouse.move(moveStart.x + 80, moveStart.y + 60, { steps: 4 });
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
     await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "captured");
     await window
@@ -393,7 +410,10 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-document-object-count", "2");
     await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
-    await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(canvasSurface).toHaveAttribute(
+      "data-history-undo-depth",
+      historyDepthAfterCommit ?? "",
+    );
 
     const beforeResize = Number(await canvas.getAttribute("data-render-count"));
     const inkBeforeResize = Number(await inkCanvas.getAttribute("data-ink-render-count"));

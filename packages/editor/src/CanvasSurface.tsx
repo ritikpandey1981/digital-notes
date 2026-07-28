@@ -21,7 +21,6 @@ import {
   type RenderTheme,
 } from "@folio/rendering";
 import {
-  createHitTestEngine,
   createSelectionController,
   createSelectionManager,
   type ScreenPoint,
@@ -30,6 +29,7 @@ import {
   type SelectionState,
 } from "@folio/selection";
 import { useEffect, useRef } from "react";
+import { createEditorSelectionHitTestEngine } from "./EditorSelectionHitTestEngine";
 import {
   createEditorHistoryCoordinator,
   type EditorHistoryCoordinator,
@@ -38,6 +38,7 @@ import { installEditorHistoryShortcuts } from "./history/editor-history-shortcut
 import { InkDocumentSession } from "./InkDocumentSession";
 import { PageManipulationCoordinateMapper } from "./PageManipulationCoordinateMapper";
 import { PageSelectionCoordinateMapper } from "./PageSelectionCoordinateMapper";
+import { resolveSelectionManipulationTarget } from "./SelectionManipulationTarget";
 
 /** Interaction capabilities currently routed by the editor adapter. */
 export type CanvasInteractionMode = "select" | "move" | "rotate" | "scale" | "ink" | "disabled";
@@ -110,6 +111,8 @@ function manipulationKindForMode(mode: CanvasInteractionMode): ManipulationKind 
   }
 }
 
+const DUPLICATE_OFFSET = Object.freeze({ x: 10, y: 10 });
+
 /** Mounts and owns one editor canvas stack for the lifetime of the React host. */
 export function CanvasSurface({
   className,
@@ -128,6 +131,7 @@ export function CanvasSurface({
   const hostRef = useRef<HTMLDivElement>(null);
   const interactionModeRef = useRef(interactionMode);
   const manipulationControllerRef = useRef<ManipulationController<ManipulationResult> | null>(null);
+  const selectionControllerRef = useRef<SelectionController | null>(null);
   const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
@@ -142,6 +146,7 @@ export function CanvasSurface({
       manipulationControllerRef.current?.cancelManipulation();
       releaseManipulationPointerCaptureRef.current?.();
     }
+    if (interactionMode === "ink") selectionControllerRef.current?.clearSelection();
   }, [interactionMode]);
 
   useEffect(() => {
@@ -188,12 +193,14 @@ export function CanvasSurface({
       canvas: HTMLCanvasElement;
       pointerId: number;
     }> | null = null;
+    const selectPointerRoutes = new Map<number, "selection" | ManipulationKind>();
     const editorPointerListeners: Array<readonly [keyof HTMLElementEventMap, EventListener]> = [];
     const documentSession = new InkDocumentSession();
     const releaseManipulationPointerCapture = (): void => {
       const capture = manipulationPointerCapture;
       manipulationPointerCapture = null;
       if (capture === null) return;
+      selectPointerRoutes.delete(capture.pointerId);
       try {
         capture.canvas.releasePointerCapture(capture.pointerId);
       } catch {
@@ -232,7 +239,7 @@ export function CanvasSurface({
         getObject: (objectId: string) => documentSession.collection.lookup(objectId),
       };
       const selectionManager = createSelectionManager();
-      const hitTestEngine = createHitTestEngine({ objectSource });
+      const hitTestEngine = createEditorSelectionHitTestEngine(objectSource);
       const selectionCoordinateMapper = new PageSelectionCoordinateMapper({
         coordinateConverter,
         viewport,
@@ -245,6 +252,7 @@ export function CanvasSurface({
         coordinateMapper: selectionCoordinateMapper,
       });
       const activeSelectionController = selectionController;
+      selectionControllerRef.current = activeSelectionController;
       selectionLayer = controller.createOverlayLayer({
         name: "selection",
         ariaLabel: "Selection overlay",
@@ -257,6 +265,9 @@ export function CanvasSurface({
       const activeSelectionOverlayRenderer = selectionOverlayRenderer;
       inkLayer.canvas.style.zIndex = "1";
       selectionLayer.canvas.style.zIndex = "3";
+      const updateViewportDiagnostics = (): void => {
+        host.dataset.viewportZoom = String(viewport.camera.zoom);
+      };
       const updateDocumentDiagnostics = (): void => {
         const snapshot = documentSession.snapshot();
         if (inkLayer !== null) {
@@ -265,6 +276,7 @@ export function CanvasSurface({
           inkLayer.canvas.dataset.documentObjectsImmutable = String(snapshot.allObjectsImmutable);
         }
         host.dataset.documentObjectCount = String(snapshot.objectCount);
+        updateViewportDiagnostics();
       };
       const updateSelection = (state: SelectionState, notify: boolean): void => {
         const selectedObject =
@@ -424,16 +436,15 @@ export function CanvasSurface({
         duplicateSelection: () => {
           const objectId = activeSelectionController.getSelection().selectedObjectId;
           if (objectId === null || !documentSession.collection.has(objectId)) return false;
-          const previousIds = new Set(documentSession.collection.objects.map(({ id }) => id));
           try {
-            activeHistoryCoordinator.executeManipulation(
-              createDuplicateManipulationResult({ objectId }),
-            );
-            const duplicate = documentSession.collection.objects.find(
-              ({ id }) => !previousIds.has(id),
-            );
-            if (duplicate !== undefined) activeSelectionController.selectObject(duplicate.id);
-            return duplicate !== undefined;
+            const { duplicateObjectId, state } =
+              activeHistoryCoordinator.executeDuplicateWithOffset(
+                createDuplicateManipulationResult({ objectId }),
+                DUPLICATE_OFFSET,
+              );
+            updateHistoryDiagnostics(state);
+            activeSelectionController.selectObject(duplicateObjectId);
+            return true;
           } catch (cause) {
             const error =
               cause instanceof Error
@@ -489,7 +500,10 @@ export function CanvasSurface({
       unsubscribeManipulation = activeManipulationController.subscribe((state) =>
         updateManipulation(state, true),
       );
-      inkLayer.setResizeHandler(() => activeStrokeRenderer.redraw());
+      inkLayer.setResizeHandler(() => {
+        updateViewportDiagnostics();
+        activeStrokeRenderer.redraw();
+      });
       manipulationLayer.setResizeHandler(() => activeTransformPreviewRenderer.redraw());
       selectionLayer.setResizeHandler(() => activeSelectionOverlayRenderer.redraw());
       activeStrokeRenderer.redraw();
@@ -513,13 +527,48 @@ export function CanvasSurface({
           coordinateSpace: "screen",
         });
         if (mode === "select") {
-          activeSelectionController.handlePointer({
-            phase,
-            pointerId: event.pointerId,
-            button: event.button,
-            isPrimary: event.isPrimary,
-            position,
-          });
+          let route = selectPointerRoutes.get(event.pointerId);
+          if (phase === "down") {
+            const selectedObjectId = activeSelectionController.getSelection().selectedObjectId;
+            const selectedObject =
+              selectedObjectId === null
+                ? undefined
+                : documentSession.collection.lookup(selectedObjectId);
+            const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
+            const target =
+              selectedObject === undefined || pagePosition === null
+                ? null
+                : resolveSelectionManipulationTarget({
+                    bounds: selectedObject.bounds,
+                    position: pagePosition,
+                    zoom: viewport.camera.zoom,
+                  });
+            route = target ?? "selection";
+            selectPointerRoutes.set(event.pointerId, route);
+          }
+          if (route === undefined) return;
+          if (route === "selection") {
+            activeSelectionController.handlePointer({
+              phase,
+              pointerId: event.pointerId,
+              button: event.button,
+              isPrimary: event.isPrimary,
+              position,
+            });
+          } else {
+            const pagePosition = manipulationCoordinateMapper.screenToPage(
+              position,
+              activeManipulationController.hasActiveSession(),
+            );
+            activeManipulationController.handlePointer({
+              phase,
+              pointerId: event.pointerId,
+              button: event.button,
+              isPrimary: event.isPrimary,
+              position: pagePosition,
+              kind: route,
+            });
+          }
         } else if (manipulationKindForMode(mode) !== null) {
           const manipulationKind = manipulationKindForMode(mode);
           if (manipulationKind === null) return;
@@ -541,7 +590,9 @@ export function CanvasSurface({
         }
         const ownsManipulation = activeManipulationController.hasActiveSession();
         const shouldCaptureManipulation =
-          manipulationKindForMode(mode) !== null && ownsManipulation;
+          (manipulationKindForMode(mode) !== null ||
+            (mode === "select" && selectPointerRoutes.get(event.pointerId) !== "selection")) &&
+          ownsManipulation;
         if (
           phase === "down" &&
           event.isPrimary &&
@@ -572,6 +623,7 @@ export function CanvasSurface({
               // Selection capture may already have been released by the browser.
             }
           }
+          selectPointerRoutes.delete(event.pointerId);
         }
       };
       const addEditorPointerListener = (
@@ -600,13 +652,22 @@ export function CanvasSurface({
         onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),
         onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
         onStrokeFinalized: (stroke) => {
-          const object = documentSession.completeStroke(stroke);
+          const object = documentSession.createStrokeObject(stroke);
           activeStrokeRenderer.finalizeStroke(
             object.stroke,
             object.transform.translation,
             object.id,
           );
-          updateDocumentDiagnostics();
+          try {
+            activeHistoryCoordinator.executeStroke(object);
+          } catch (cause) {
+            synchronizeDocumentFromHistory();
+            const error =
+              cause instanceof Error
+                ? cause
+                : new Error("History stroke execution failed.", { cause });
+            onError?.(error);
+          }
         },
         onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
         onError: (error) => onError?.(error),
@@ -656,6 +717,7 @@ export function CanvasSurface({
       manipulationController?.destroy();
       releaseManipulationPointerCapture();
       manipulationControllerRef.current = null;
+      selectionControllerRef.current = null;
       releaseManipulationPointerCaptureRef.current = null;
       uninstallHistoryShortcuts?.();
       historyCoordinator?.destroy();

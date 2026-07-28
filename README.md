@@ -12,6 +12,7 @@ The repository currently contains the implemented and frozen foundation through 
 - transform-aware selection and hit testing plus translation, rotation, and scale manipulation
 - legacy notebook History plus generic editor undo/redo, transactions, and keyboard integration
 - generalized immutable manipulation results and editor adapters for Move, Rotate, Scale, Delete, and Duplicate commands
+- one-entry stroke undo/redo, universal Select-tool move/scale/rotate targeting, forgiving bounds selection, deterministic duplicate offset, and Pen-driven selection clearing
 - ESLint, Prettier, Vitest, and Playwright configuration
 - Package-oriented project structure
 

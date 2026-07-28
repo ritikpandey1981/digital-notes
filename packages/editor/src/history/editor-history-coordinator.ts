@@ -1,4 +1,4 @@
-import type { ObjectCollection } from "@folio/document";
+import { InkObject, type ObjectCollection } from "@folio/document";
 import {
   createEditorHistoryManager,
   createHistoryController,
@@ -7,8 +7,13 @@ import {
   type IHistoryController,
   type IHistoryState,
 } from "@folio/history";
-import type { ManipulationResult } from "@folio/manipulation";
+import type {
+  DuplicateManipulationResult,
+  ManipulationResult,
+  TranslationManipulationResult,
+} from "@folio/manipulation";
 import type { InkDocumentSession } from "../InkDocumentSession";
+import { createAddStrokeCommand } from "./add-stroke-command";
 import { createCommandForManipulation } from "./manipulation-command-adapter";
 
 interface EditorHistoryCoordinatorOptions {
@@ -26,7 +31,12 @@ interface EditorHistoryCoordinatorOptions {
 /** Package-private editor boundary around one manager/controller lifetime. */
 export interface EditorHistoryCoordinator {
   readonly controller: IHistoryController<ObjectCollection>;
+  readonly executeStroke: (object: InkObject) => IHistoryState;
   readonly executeManipulation: (result: ManipulationResult) => IHistoryState;
+  readonly executeDuplicateWithOffset: (
+    result: DuplicateManipulationResult,
+    offset: Readonly<{ x: number; y: number }>,
+  ) => Readonly<{ duplicateObjectId: string; state: IHistoryState }>;
   readonly undo: () => IHistoryState;
   readonly redo: () => IHistoryState;
   readonly destroy: () => void;
@@ -71,6 +81,55 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     return this.controller.executeCommand(command);
   }
 
+  executeStroke(object: InkObject): IHistoryState {
+    return this.controller.executeCommand(
+      createAddStrokeCommand({
+        object,
+        insertionIndex: object.zIndex,
+        timestamp: object.modifiedAt,
+      }),
+    );
+  }
+
+  executeDuplicateWithOffset(
+    result: DuplicateManipulationResult,
+    offset: Readonly<{ x: number; y: number }>,
+  ): Readonly<{ duplicateObjectId: string; state: IHistoryState }> {
+    if (
+      !Number.isFinite(offset.x) ||
+      !Number.isFinite(offset.y) ||
+      (offset.x === 0 && offset.y === 0)
+    ) {
+      throw new RangeError("Duplicate offset must be a non-zero finite page-space vector.");
+    }
+    const originalIds = new Set(this.#documentSession.collection.objects.map(({ id }) => id));
+    const transactionTimestamp = this.#now();
+    this.controller.beginTransaction({
+      id: `duplicate-offset-${result.sessionId}`,
+      timestamp: transactionTimestamp,
+      description: `Duplicate and offset object ${result.objectId}`,
+    });
+    try {
+      this.executeManipulation(result);
+      const duplicate = this.#documentSession.collection.objects.find(
+        ({ id }) => !originalIds.has(id),
+      );
+      if (!(duplicate instanceof InkObject)) {
+        throw new Error("Duplicate command did not create a successor object.");
+      }
+      this.executeManipulation(createDuplicateOffsetResult(result, duplicate, offset));
+      return Object.freeze({
+        duplicateObjectId: duplicate.id,
+        state: this.controller.commitTransaction(),
+      });
+    } catch (cause) {
+      if (this.controller.getHistoryState().activeTransaction !== null) {
+        this.controller.rollbackTransaction();
+      }
+      throw cause;
+    }
+  }
+
   undo(): IHistoryState {
     return this.controller.undo();
   }
@@ -96,4 +155,33 @@ export function createEditorHistoryCoordinator(
 
 function normalizeError(cause: unknown, message: string): Error {
   return cause instanceof Error ? cause : new Error(message, { cause });
+}
+
+function createDuplicateOffsetResult(
+  source: DuplicateManipulationResult,
+  duplicate: InkObject,
+  offset: Readonly<{ x: number; y: number }>,
+): TranslationManipulationResult {
+  const initialObjectTranslation = Object.freeze({
+    x: duplicate.transform.translation.x,
+    y: duplicate.transform.translation.y,
+  });
+  const finalObjectTranslation = Object.freeze({
+    x: initialObjectTranslation.x + offset.x,
+    y: initialObjectTranslation.y + offset.y,
+  });
+  return Object.freeze({
+    kind: "translation",
+    sessionId: `${source.sessionId}-offset`,
+    objectId: duplicate.id,
+    translation: Object.freeze({
+      translationX: offset.x,
+      translationY: offset.y,
+      totalDistance: Math.hypot(offset.x, offset.y),
+      movementVector: Object.freeze({ x: offset.x, y: offset.y }),
+    }),
+    initialObjectTranslation,
+    finalObjectTranslation,
+    sessionTimestamp: source.sessionTimestamp,
+  });
 }

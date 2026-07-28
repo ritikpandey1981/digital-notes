@@ -11,6 +11,7 @@ const rotateCommandPath = join(sourceRoot, "history", "rotate-command.ts");
 const scaleCommandPath = join(sourceRoot, "history", "scale-command.ts");
 const deleteCommandPath = join(sourceRoot, "history", "delete-command.ts");
 const duplicateCommandPath = join(sourceRoot, "history", "duplicate-command.ts");
+const addStrokeCommandPath = join(sourceRoot, "history", "add-stroke-command.ts");
 const coordinatorPath = join(sourceRoot, "history", "editor-history-coordinator.ts");
 const commandAdapterPath = join(sourceRoot, "history", "manipulation-command-adapter.ts");
 const shortcutsPath = join(sourceRoot, "history", "editor-history-shortcuts.ts");
@@ -59,6 +60,7 @@ describe("Stage 6 command dependency boundary", () => {
     expect(barrel).not.toContain("createScaleCommand");
     expect(barrel).not.toContain("createDeleteCommand");
     expect(barrel).not.toContain("createDuplicateCommand");
+    expect(barrel).not.toContain("createAddStrokeCommand");
     expect(barrel).not.toContain("EditorHistoryCoordinator");
     expect(barrel).not.toContain("createEditorHistoryCoordinator");
     expect(barrel).not.toContain("createCommandForManipulation");
@@ -102,6 +104,7 @@ describe("Stage 6 command dependency boundary", () => {
       scaleCommand,
       deleteCommand,
       duplicateCommand,
+      addStrokeCommand,
     ] = await Promise.all([
       readFile(coordinatorPath, "utf8"),
       readFile(commandAdapterPath, "utf8"),
@@ -111,11 +114,13 @@ describe("Stage 6 command dependency boundary", () => {
       readFile(scaleCommandPath, "utf8"),
       readFile(deleteCommandPath, "utf8"),
       readFile(duplicateCommandPath, "utf8"),
+      readFile(addStrokeCommandPath, "utf8"),
     ]);
 
     expect(coordinator).toContain("createEditorHistoryManager");
     expect(coordinator).toContain("createHistoryController");
     expect(coordinator).toContain("createCommandForManipulation");
+    expect(coordinator).toContain("createAddStrokeCommand");
     expect(coordinator).not.toContain("createMoveCommand");
     expect(commandAdapter).toContain('case "translation"');
     expect(commandAdapter).toContain('case "rotation"');
@@ -131,6 +136,7 @@ describe("Stage 6 command dependency boundary", () => {
     expect(scaleCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
     expect(deleteCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
     expect(duplicateCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
+    expect(addStrokeCommand).not.toMatch(/@folio\/(?:manipulation|rendering|selection|ui)/u);
     expect(canvasSurface).toContain("createEditorHistoryCoordinator");
     expect(canvasSurface).toContain("executeManipulation");
     expect(canvasSurface).not.toContain("createEditorHistoryManager");

@@ -42,6 +42,9 @@ const DEFAULT_SELECTION_OVERLAY_STYLE: SelectionOverlayStyle = Object.freeze({
   padding: 4,
 });
 
+const HANDLE_SIZE_PIXELS = 8;
+const ROTATION_HANDLE_OFFSET_PIXELS = 28;
+
 function resolveStyle(style: Partial<SelectionOverlayStyle> = {}): SelectionOverlayStyle {
   const resolved = Object.freeze({ ...DEFAULT_SELECTION_OVERLAY_STYLE, ...style });
   if (
@@ -211,7 +214,11 @@ export class SelectionOverlayRenderer {
     if (this.fullRedraw) {
       context.clearRect(0, 0, snapshot.size.width, snapshot.size.height);
     } else {
-      const padding = this.style.padding + this.style.outlineWidth + 2;
+      const padding =
+        this.style.padding +
+        this.style.outlineWidth +
+        ROTATION_HANDLE_OFFSET_PIXELS +
+        HANDLE_SIZE_PIXELS;
       for (const dirtyPageRect of this.dirtyPageRects) {
         const viewportRect = this.pageRectToViewport(dirtyPageRect);
         context.clearRect(
@@ -255,7 +262,37 @@ export class SelectionOverlayRenderer {
     context.strokeStyle = this.style.outlineColor;
     context.lineWidth = this.style.outlineWidth / snapshot.camera.zoom;
     context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+    this.drawHandles(bounds, snapshot.camera.zoom);
     context.restore();
+  }
+
+  private drawHandles(bounds: Rect, zoom: number): void {
+    const context = this.context;
+    const handleSize = HANDLE_SIZE_PIXELS / zoom;
+    const halfHandle = handleSize / 2;
+    const rotationOffset = ROTATION_HANDLE_OFFSET_PIXELS / zoom;
+    const centerX = bounds.x + bounds.width / 2;
+    const rotationY = bounds.y - rotationOffset;
+    const corners = [
+      { x: bounds.x, y: bounds.y },
+      { x: bounds.x + bounds.width, y: bounds.y },
+      { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
+      { x: bounds.x, y: bounds.y + bounds.height },
+    ];
+
+    context.beginPath();
+    context.moveTo(centerX, bounds.y);
+    context.lineTo(centerX, rotationY);
+    context.stroke();
+    context.fillStyle = "#ffffff";
+    for (const corner of corners) {
+      context.fillRect(corner.x - halfHandle, corner.y - halfHandle, handleSize, handleSize);
+      context.strokeRect(corner.x - halfHandle, corner.y - halfHandle, handleSize, handleSize);
+    }
+    context.beginPath();
+    context.arc(centerX, rotationY, halfHandle, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
   }
 
   private pageRectToViewport(rect: Rect): Rect {
@@ -275,6 +312,7 @@ export class SelectionOverlayRenderer {
   private updateDiagnostics(): void {
     if (this.canvas === undefined) return;
     this.canvas.dataset.selectionState = this.target === null ? "empty" : "selected";
+    this.canvas.dataset.selectionHandles = this.target === null ? "hidden" : "visible";
     this.canvas.dataset.selectedObjectId = this.target?.objectId ?? "";
     this.canvas.dataset.selectionRenderCount = String(this.renderCountValue);
     this.canvas.dataset.selectionInvalidationCount = String(this.invalidationCountValue);

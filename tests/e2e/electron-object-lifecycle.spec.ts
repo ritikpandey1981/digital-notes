@@ -53,27 +53,55 @@ test("duplicates and deletes one selected object through immutable History", asy
     await window.mouse.move(start.x + 80, start.y + 20, { steps: 8 });
     await window.mouse.up();
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
+
+    await window.keyboard.press("Control+Z");
+    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "0");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
+    await window.keyboard.press("Control+Y");
+    await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
 
     await window.getByRole("button", { name: "Select", exact: true }).click();
     await window.mouse.click(start.x + 30, start.y + 8);
     await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
     const originalId = await selectionCanvas.getAttribute("data-selected-object-id");
+    const originalTranslation = {
+      x: Number(await surface.getAttribute("data-selected-object-translation-x")),
+      y: Number(await surface.getAttribute("data-selected-object-translation-y")),
+    };
+
+    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");
+    await window.getByRole("button", { name: "Select", exact: true }).click();
+    await window.mouse.click(start.x + 30, start.y + 8);
+    await expect(selectionCanvas).toHaveAttribute("data-selected-object-id", originalId ?? "");
 
     await window.getByRole("button", { name: "Duplicate selected object" }).click();
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
-    await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "2");
     const duplicateId = await selectionCanvas.getAttribute("data-selected-object-id");
     expect(duplicateId).not.toBe(originalId);
     expect(duplicateId).toBeTruthy();
+    await expect(surface).toHaveAttribute(
+      "data-selected-object-translation-x",
+      String(originalTranslation.x + 10),
+    );
+    await expect(surface).toHaveAttribute(
+      "data-selected-object-translation-y",
+      String(originalTranslation.y + 10),
+    );
 
     await window.keyboard.press("Control+Z");
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
     await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
     await window.keyboard.press("Control+Y");
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "2");
 
     await window.mouse.click(start.x + 30, start.y + 8);
     await expect(selectionCanvas).toHaveAttribute("data-selected-object-id", duplicateId ?? "");
@@ -81,14 +109,16 @@ test("duplicates and deletes one selected object through immutable History", asy
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
     await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");
-    await expect(surface).toHaveAttribute("data-history-undo-depth", "2");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "3");
 
     await window.keyboard.press("Control+Z");
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "2");
     await window.keyboard.press("Control+Shift+Z");
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "3");
     expect(consoleErrors).toEqual([]);
   } finally {
     await electronApp.close();

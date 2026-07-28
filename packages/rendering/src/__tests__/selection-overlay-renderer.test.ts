@@ -45,6 +45,11 @@ function createContextHarness() {
     clip: () => calls.push("clip"),
     fillRect: (...values: number[]) => calls.push(`fill:${values.join(",")}`),
     strokeRect: (...values: number[]) => calls.push(`stroke:${values.join(",")}`),
+    moveTo: (...values: number[]) => calls.push(`move:${values.join(",")}`),
+    lineTo: (...values: number[]) => calls.push(`line:${values.join(",")}`),
+    arc: (...values: number[]) => calls.push(`arc:${values.join(",")}`),
+    fill: () => calls.push("fill-path"),
+    stroke: () => calls.push("stroke-path"),
     translate: (...values: number[]) => calls.push(`translate:${values.join(",")}`),
     scale: (...values: number[]) => calls.push(`scale:${values.join(",")}`),
   } as unknown as CanvasRenderingContext2D;
@@ -85,6 +90,7 @@ describe("SelectionOverlayRenderer", () => {
     expect(calls).toContain("transform:2,0,0,2,0,0");
     expect(calls.some((call) => call.startsWith("fill:"))).toBe(true);
     expect(calls.some((call) => call.startsWith("stroke:"))).toBe(true);
+    expect(calls.some((call) => call.startsWith("arc:"))).toBe(true);
     expect(renderer.snapshot()).toMatchObject({
       selectedObjectId: "object-1",
       renderCount: 1,
@@ -92,6 +98,7 @@ describe("SelectionOverlayRenderer", () => {
       hasPendingRender: false,
     });
     expect(canvas.dataset.selectionState).toBe("selected");
+    expect(canvas.dataset.selectionHandles).toBe("visible");
   });
 
   it("does not invalidate for the same identity and cached bounds", () => {
@@ -113,6 +120,7 @@ describe("SelectionOverlayRenderer", () => {
     flush();
     expect(calls.filter((call) => call.startsWith("clear:")).length).toBe(clearCount + 1);
     expect(canvas.dataset.selectionState).toBe("empty");
+    expect(canvas.dataset.selectionHandles).toBe("hidden");
     expect(renderer.snapshot().selectedObjectId).toBeNull();
   });
 

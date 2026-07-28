@@ -34,11 +34,16 @@ export class InkDocumentSession implements HistoryDocumentSession<ObjectCollecti
     this.collectionValue = document;
   }
 
-  completeStroke(stroke: Stroke): InkObject {
-    const object = this.factory.createInkObject({
+  /** Creates one immutable stroke object without installing it in the active document. */
+  createStrokeObject(stroke: Stroke): InkObject {
+    return this.factory.createInkObject({
       stroke,
       zIndex: this.collectionValue.size,
     });
+  }
+
+  completeStroke(stroke: Stroke): InkObject {
+    const object = this.createStrokeObject(stroke);
     this.collectionValue = this.collectionValue.add(object);
     const stored = this.collectionValue.lookup(object.id);
     if (!(stored instanceof InkObject)) {
