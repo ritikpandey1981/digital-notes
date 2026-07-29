@@ -1,6 +1,7 @@
 import type { CanvasBounds } from "@folio/rendering";
 import { InkError } from "./errors";
 import { StrokeBuilder } from "./stroke-builder";
+import { StrokeSmoother } from "./stroke-smoother";
 import type {
   InkPointerType,
   PointerInputControllerOptions,
@@ -17,6 +18,7 @@ function isPointerType(value: string): value is InkPointerType {
 
 export class PointerInputController {
   private readonly options: PointerInputControllerOptions;
+  private readonly inputSmoother: StrokeSmoother;
   private readonly supportedPointerTypes: ReadonlySet<InkPointerType>;
   private target: HTMLElement | null = null;
   private activePointerId: number | null = null;
@@ -25,6 +27,8 @@ export class PointerInputController {
 
   constructor(options: PointerInputControllerOptions) {
     this.options = options;
+    // Preserve raw endpoints and intent for the one-time adaptive finalized fit.
+    this.inputSmoother = options.smoother ?? new StrokeSmoother({ mode: "none" });
     this.supportedPointerTypes = new Set(options.supportedPointerTypes ?? DEFAULT_POINTER_TYPES);
   }
 
@@ -110,7 +114,7 @@ export class PointerInputController {
       builder = new StrokeBuilder({
         timestamp: point.timestamp,
         ...(this.options.style === undefined ? {} : { style: this.options.style }),
-        ...(this.options.smoother === undefined ? {} : { smoother: this.options.smoother }),
+        smoother: this.inputSmoother,
         ...(this.options.createId === undefined ? {} : { createId: this.options.createId }),
         ...(this.options.now === undefined ? {} : { now: this.options.now }),
       });

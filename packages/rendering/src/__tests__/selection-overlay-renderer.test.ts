@@ -91,6 +91,8 @@ describe("SelectionOverlayRenderer", () => {
     expect(calls.some((call) => call.startsWith("fill:"))).toBe(true);
     expect(calls.some((call) => call.startsWith("stroke:"))).toBe(true);
     expect(calls.some((call) => call.startsWith("arc:"))).toBe(true);
+    expect(calls).toContain("fill:1,11,10,10");
+    expect(calls).toContain(`arc:60,-12,5,0,${Math.PI * 2}`);
     expect(renderer.snapshot()).toMatchObject({
       selectedObjectId: "object-1",
       renderCount: 1,

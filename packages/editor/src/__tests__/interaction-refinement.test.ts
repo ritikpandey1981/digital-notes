@@ -3,7 +3,11 @@ import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
 import type { PagePoint } from "@folio/selection";
 import { describe, expect, it } from "vitest";
 import { createEditorSelectionHitTestEngine } from "../EditorSelectionHitTestEngine";
-import { resolveSelectionManipulationTarget } from "../SelectionManipulationTarget";
+import {
+  resolveSelectionManipulationHit,
+  resolveSelectionManipulationTarget,
+  selectionManipulationCursorCss,
+} from "../SelectionManipulationTarget";
 
 describe("editor selection hit policy", () => {
   it("selects inside transformed object bounds even away from stroke geometry", () => {
@@ -64,6 +68,43 @@ describe("Select tool manipulation targeting", () => {
     expect(
       resolveSelectionManipulationTarget({ bounds, position: pagePoint(0, 100), zoom: 1 }),
     ).toBeNull();
+  });
+
+  it("uses a larger screen-space handle target without activating unrelated points", () => {
+    expect(
+      resolveSelectionManipulationTarget({ bounds, position: pagePoint(-5, 16), zoom: 1 }),
+    ).toBe("scale");
+    expect(
+      resolveSelectionManipulationTarget({ bounds, position: pagePoint(-7, 16), zoom: 1 }),
+    ).toBeNull();
+    expect(
+      resolveSelectionManipulationTarget({ bounds, position: pagePoint(2.5, 18), zoom: 2 }),
+    ).toBe("scale");
+  });
+
+  it("maps every hover region to the platform cursor for its upcoming manipulation", () => {
+    const cases = [
+      { position: pagePoint(8, 18), kind: "scale", cursor: "nwse-resize" },
+      { position: pagePoint(112, 18), kind: "scale", cursor: "nesw-resize" },
+      { position: pagePoint(8, 62), kind: "scale", cursor: "nesw-resize" },
+      { position: pagePoint(112, 62), kind: "scale", cursor: "nwse-resize" },
+      { position: pagePoint(60, 4), kind: "rotation", cursor: "rotation" },
+      { position: pagePoint(60, 40), kind: "translation", cursor: "grab" },
+    ] as const;
+
+    for (const expected of cases) {
+      expect(
+        resolveSelectionManipulationHit({ bounds, position: expected.position, zoom: 2 }),
+      ).toEqual({ kind: expected.kind, cursor: expected.cursor });
+    }
+    expect(
+      resolveSelectionManipulationHit({ bounds, position: pagePoint(0, 100), zoom: 2 }),
+    ).toBeNull();
+    expect(selectionManipulationCursorCss("rotation")).toMatch(
+      /^url\("data:image\/svg\+xml,.+"\) 12 12, crosshair$/u,
+    );
+    expect(selectionManipulationCursorCss("grab")).toBe("grab");
+    expect(selectionManipulationCursorCss("grabbing")).toBe("grabbing");
   });
 });
 

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { expect, test, _electron as electron } from "@playwright/test";
+import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
 test("launches the shell with the Phase 11 History-backed manipulation lifecycle", async () => {
   const repositoryRoot = process.cwd();
@@ -18,7 +18,26 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     await expect(window).toHaveTitle("Folio");
-    await expect(window.getByRole("toolbar", { name: "Notebook tools" })).toBeVisible();
+    const toolbar = window.getByRole("toolbar", { name: "Notebook tools" });
+    await expect(toolbar).toBeVisible();
+    for (const obsoleteTool of ["Move", "Rotate", "Scale"] as const) {
+      await expect(toolbar.getByRole("button", { name: obsoleteTool, exact: true })).toHaveCount(0);
+    }
+    for (const retainedTool of [
+      "Select",
+      "Pen",
+      "Highlighter",
+      "Eraser",
+      "Text",
+      "Image",
+      "Shape",
+      "Table",
+      "Sticky Note",
+      "Duplicate selected object",
+      "Delete selected object",
+    ] as const) {
+      await expect(toolbar.getByRole("button", { name: retainedTool, exact: true })).toBeVisible();
+    }
     await expect(window.getByRole("complementary", { name: "Sidebar" })).toBeVisible();
     await expect(window.getByLabel("Notebook workspace")).toBeVisible();
     const canvasHost = window.getByTestId("canvas-host");
@@ -205,7 +224,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       "aria-pressed",
       "true",
     );
-    await window.mouse.move(moveStart.x, moveStart.y);
+    await hoverForCursor(window, inkCanvas, moveStart, "grab");
     await window.mouse.down();
     await window.mouse.move(moveStart.x + 60, moveStart.y + 40, { steps: 6 });
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
@@ -349,14 +368,13 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
 
     const historyDepthAfterCommit = await canvasSurface.getAttribute("data-history-undo-depth");
     const historyVersionAfterCommit = await canvasSurface.getAttribute("data-history-version");
-    await window.getByRole("button", { name: "Move", exact: true }).click();
-    await window.mouse.move(moveStart.x + 60, moveStart.y + 40);
+    await hoverForCursor(window, inkCanvas, { x: moveStart.x + 60, y: moveStart.y + 40 }, "grab");
     await window.mouse.down();
     await window.mouse.move(moveStart.x + 80, moveStart.y + 60, { steps: 4 });
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "dragging");
     await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "captured");
     await window
-      .getByRole("button", { name: "Select", exact: true })
+      .getByRole("button", { name: "Eraser", exact: true })
       .evaluate((button: HTMLButtonElement) => button.click());
     await expect(canvasSurface).toHaveAttribute("data-manipulation-phase", "idle");
     await expect(canvasSurface).toHaveAttribute("data-manipulation-pointer-capture", "released");
@@ -394,6 +412,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       historyVersionAfterCommit ?? "",
     );
     await window.mouse.up();
+    await window.getByRole("button", { name: "Select", exact: true }).click();
 
     await window.getByRole("button", { name: "Show notification preview" }).click();
     await expect(window.getByRole("status")).toContainText("Shell ready");
@@ -502,3 +521,18 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await electronApp.close();
   }
 });
+
+async function hoverForCursor(
+  window: Page,
+  canvas: Locator,
+  point: Readonly<{ x: number; y: number }>,
+  cursor: string,
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      await window.mouse.move(point.x + 0.5, point.y);
+      await window.mouse.move(point.x, point.y);
+      return canvas.getAttribute("data-manipulation-cursor");
+    })
+    .toBe(cursor);
+}

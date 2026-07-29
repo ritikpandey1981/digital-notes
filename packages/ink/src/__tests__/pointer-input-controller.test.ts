@@ -71,7 +71,10 @@ function pointerEvent(options: EventOptions = {}): PointerEvent {
   } as unknown as PointerEvent;
 }
 
-function createHarness(bounds = { x: 0, y: 0, width: 1_000, height: 800 }) {
+function createHarness(
+  bounds = { x: 0, y: 0, width: 1_000, height: 800 },
+  useDefaultSmoother = false,
+) {
   const viewport = new Viewport({
     size: { width: 1_000, height: 800 },
     pageRect: { x: 0, y: 0, width: 600, height: 700 },
@@ -86,7 +89,7 @@ function createHarness(bounds = { x: 0, y: 0, width: 1_000, height: 800 }) {
   const controller = new PointerInputController({
     coordinateConverter: new CoordinateConverter(viewport),
     getCanvasBounds: () => bounds,
-    smoother: new StrokeSmoother({ mode: "none" }),
+    ...(useDefaultSmoother ? {} : { smoother: new StrokeSmoother({ mode: "none" }) }),
     createId: () => "pointer-stroke",
     onStrokeStart,
     onStrokeUpdate,
@@ -126,6 +129,19 @@ describe("PointerInputController", () => {
     expect(stroke.points[0]).toMatchObject({ x: 300, y: 350, pointerType: "mouse" });
     expect(harness.controller.hasActivePointer).toBe(false);
     expect(harness.captured.size).toBe(0);
+  });
+
+  it("preserves raw pointer endpoints for the adaptive finalized path", () => {
+    const harness = createHarness({ x: 0, y: 0, width: 1_000, height: 800 }, true);
+    harness.controller.handlePointerDown(pointerEvent({ x: 500, y: 400, timestamp: 100 }));
+    harness.controller.handlePointerMove(pointerEvent({ x: 510, y: 410, timestamp: 110 }));
+    harness.controller.handlePointerUp(
+      pointerEvent({ x: 520, y: 420, timestamp: 120, buttons: 0 }),
+    );
+
+    const stroke = harness.onStrokeFinalized.mock.calls[0]?.[0];
+    expect(stroke.points[0]).toMatchObject({ x: 300, y: 350 });
+    expect(stroke.points.at(-1)).toMatchObject({ x: 320, y: 370 });
   });
 
   it.each([

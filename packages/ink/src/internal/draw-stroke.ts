@@ -1,7 +1,8 @@
-import { strokeWidth } from "./style";
 import type { StrokePoint, StrokeStyle } from "../types";
+import type { ProfessionalInkSegment } from "./professional-ink-path";
+import { strokeWidth } from "./style";
 
-/** Shared Canvas 2D stroke path used by permanent ink and preview visuals. */
+/** Shared low-latency path used by live ink; only newly sampled segments are drawn. */
 export function drawStrokePoints(
   context: CanvasRenderingContext2D,
   points: readonly StrokePoint[],
@@ -9,31 +10,120 @@ export function drawStrokePoints(
   startIndex = 0,
 ): void {
   if (points.length === 0) return;
+  prepareContext(context, style);
+  drawStartingDot(context, points, style, startIndex);
+  const firstSegmentIndex = Math.max(1, startIndex + 1);
+  for (let index = firstSegmentIndex; index < points.length; index += 1) {
+    drawPointSegment(context, points, index, style);
+  }
+  context.restore();
+}
+
+/** Draws cached finalized curves without rebuilding spline geometry on later renders. */
+export function drawSmoothStrokeSegments(
+  context: CanvasRenderingContext2D,
+  points: readonly StrokePoint[],
+  segments: readonly ProfessionalInkSegment[],
+  style: StrokeStyle,
+): void {
+  if (points.length === 0) return;
+  prepareContext(context, style);
+  const firstSegment = segments[0];
+  if (firstSegment === undefined) {
+    drawStartingDot(context, points, style, 0);
+    context.restore();
+    return;
+  }
+  context.lineWidth = averageStrokeWidth(points, style);
+  context.beginPath();
+  context.moveTo(firstSegment.start.x, firstSegment.start.y);
+  for (const segment of segments) {
+    context.bezierCurveTo(
+      segment.control1X,
+      segment.control1Y,
+      segment.control2X,
+      segment.control2Y,
+      segment.end.x,
+      segment.end.y,
+    );
+  }
+  context.stroke();
+  context.restore();
+}
+
+function prepareContext(context: CanvasRenderingContext2D, style: StrokeStyle): void {
   context.save();
   context.globalAlpha *= style.opacity;
   context.strokeStyle = style.color;
   context.fillStyle = style.color;
   context.lineCap = style.lineCap;
   context.lineJoin = style.lineJoin;
-  if (startIndex === 0) {
-    const first = points[0];
-    if (first !== undefined) {
-      context.beginPath();
-      context.arc(first.x, first.y, strokeWidth(style, first.pressure) / 2, 0, Math.PI * 2);
-      context.fill();
-    }
-  }
-  const firstSegmentIndex = Math.max(1, startIndex + 1);
-  for (let index = firstSegmentIndex; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const point = points[index];
-    if (previous === undefined || point === undefined) continue;
-    context.lineWidth =
-      (strokeWidth(style, previous.pressure) + strokeWidth(style, point.pressure)) / 2;
-    context.beginPath();
-    context.moveTo(previous.x, previous.y);
-    context.lineTo(point.x, point.y);
-    context.stroke();
-  }
-  context.restore();
+}
+
+function drawStartingDot(
+  context: CanvasRenderingContext2D,
+  points: readonly StrokePoint[],
+  style: StrokeStyle,
+  startIndex: number,
+): void {
+  if (startIndex !== 0) return;
+  const first = points[0];
+  if (first === undefined) return;
+  context.beginPath();
+  context.arc(first.x, first.y, strokeWidth(style, first.pressure) / 2, 0, Math.PI * 2);
+  context.fill();
+}
+
+function drawPointSegment(
+  context: CanvasRenderingContext2D,
+  points: readonly StrokePoint[],
+  endIndex: number,
+  style: StrokeStyle,
+): void {
+  const start = points[endIndex - 1];
+  const end = points[endIndex];
+  if (start === undefined || end === undefined) return;
+  const before = points[endIndex - 2] ?? start;
+  const after = points[endIndex + 1] ?? end;
+  const minX = Math.min(start.x, end.x);
+  const maxX = Math.max(start.x, end.x);
+  const minY = Math.min(start.y, end.y);
+  const maxY = Math.max(start.y, end.y);
+  drawCubicSegment(
+    context,
+    start,
+    clamp(start.x + (end.x - before.x) / 6, minX, maxX),
+    clamp(start.y + (end.y - before.y) / 6, minY, maxY),
+    clamp(end.x - (after.x - start.x) / 6, minX, maxX),
+    clamp(end.y - (after.y - start.y) / 6, minY, maxY),
+    end,
+    style,
+  );
+}
+
+function averageStrokeWidth(points: readonly StrokePoint[], style: StrokeStyle): number {
+  let total = 0;
+  for (const point of points) total += strokeWidth(style, point.pressure);
+  return total / points.length;
+}
+
+function drawCubicSegment(
+  context: CanvasRenderingContext2D,
+  start: StrokePoint,
+  control1X: number,
+  control1Y: number,
+  control2X: number,
+  control2Y: number,
+  end: StrokePoint,
+  style: StrokeStyle,
+): void {
+  context.lineWidth = (strokeWidth(style, start.pressure) + strokeWidth(style, end.pressure)) / 2;
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.bezierCurveTo(control1X, control1Y, control2X, control2Y, end.x, end.y);
+  context.stroke();
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
 }

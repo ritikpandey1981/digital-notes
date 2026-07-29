@@ -27,6 +27,7 @@ function createContext(): CanvasRenderingContext2D {
     fill: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
+    bezierCurveTo: vi.fn(),
     stroke: vi.fn(),
   } as unknown as CanvasRenderingContext2D;
 }
@@ -105,6 +106,18 @@ function createStroke(id = "shared-stroke") {
   return builder.finalize();
 }
 
+function createDenseStroke(id = "dense-stroke", pointCount = 400) {
+  const builder = new StrokeBuilder({
+    id,
+    timestamp: 0,
+    smoother: new StrokeSmoother({ mode: "none" }),
+  });
+  for (let index = 0; index < pointCount; index += 1) {
+    builder.addPoint(point(index * 0.25, Math.sin(index / 25) * 12, index));
+  }
+  return builder.finalize();
+}
+
 describe("StrokeRenderer", () => {
   it("coalesces live updates and draws only invalidated page regions", () => {
     const harness = createHarness();
@@ -160,6 +173,7 @@ describe("StrokeRenderer", () => {
       renderCount: 1,
     });
     expect(harness.context.stroke).toHaveBeenCalledOnce();
+    expect(harness.context.bezierCurveTo).toHaveBeenCalledOnce();
     expect(harness.canvas.dataset.inkStrokeCount).toBe("1");
   });
 
@@ -238,6 +252,39 @@ describe("StrokeRenderer", () => {
     ).toBe(false);
   });
 
+  it("keeps finalized stroke width constant while geometry scales repeatedly", () => {
+    const harness = createHarness({ width: 6, pressureEnabled: false });
+    harness.renderer.beginStroke(harness.add(point(10, 10, 0)));
+    harness.renderer.updateStroke(harness.add(point(30, 10, 10)));
+    const stroke = harness.builder.finalize();
+    harness.renderer.finalizeStroke(stroke);
+
+    expect(harness.context.lineWidth).toBe(6);
+    harness.renderer.setStrokeTransform(stroke.id, {
+      translation: { x: 0, y: 0 },
+      rotation: 0,
+      scale: 2,
+    });
+    expect(harness.context.scale).toHaveBeenLastCalledWith(2, 2);
+    expect(harness.context.lineWidth).toBe(3);
+
+    harness.renderer.setStrokeTransform(stroke.id, {
+      translation: { x: 0, y: 0 },
+      rotation: 0,
+      scale: 4,
+    });
+    expect(harness.context.scale).toHaveBeenLastCalledWith(4, 4);
+    expect(harness.context.lineWidth).toBe(1.5);
+
+    harness.renderer.setStrokeTransform(stroke.id, {
+      translation: { x: 0, y: 0 },
+      rotation: 0,
+      scale: 1,
+    });
+    expect(harness.context.lineWidth).toBe(6);
+    expect(stroke.style.width).toBe(6);
+  });
+
   it("synchronizes independently identified visuals that reuse one immutable stroke", () => {
     const harness = createHarness();
     const stroke = createStroke();
@@ -265,9 +312,94 @@ describe("StrokeRenderer", () => {
     expect(harness.renderer.replaceFinalizedStrokes(visuals)).toBe(true);
     expect(harness.renderer.snapshot().finalizedStrokeCount).toBe(2);
     expect(harness.renderer.snapshot().finalizedPointCount).toBe(stroke.pointCount * 2);
+    expect(harness.canvas.dataset.inkPathBuildCount).toBe("1");
     expect(harness.renderer.replaceFinalizedStrokes(visuals)).toBe(false);
     expect(harness.renderer.replaceFinalizedStrokes(Object.freeze([visuals[1]!]))).toBe(true);
     expect(harness.renderer.snapshot().finalizedStrokeCount).toBe(1);
+  });
+
+  it("submits every finalized cubic as one continuous Canvas path", () => {
+    const harness = createHarness();
+    const stroke = createDenseStroke("continuous-stroke", 600);
+
+    expect(
+      harness.renderer.replaceFinalizedStrokes([
+        {
+          id: stroke.id,
+          stroke,
+          transform: { translation: { x: 0, y: 0 }, rotation: 0, scale: 1 },
+        },
+      ]),
+    ).toBe(true);
+    const segmentCount = Number(harness.canvas.dataset.inkCurveSegmentCount);
+
+    expect(segmentCount).toBeGreaterThan(1);
+    expect(harness.context.moveTo).toHaveBeenCalledOnce();
+    expect(harness.context.bezierCurveTo).toHaveBeenCalledTimes(segmentCount);
+    expect(harness.context.stroke).toHaveBeenCalledOnce();
+  });
+
+  it("reuses the same fitted path when rendering at 800 percent zoom", () => {
+    const harness = createHarness();
+    const stroke = createDenseStroke("zoom-stroke", 600);
+    harness.renderer.replaceFinalizedStrokes([
+      {
+        id: stroke.id,
+        stroke,
+        transform: { translation: { x: 0, y: 0 }, rotation: 0, scale: 1 },
+      },
+    ]);
+    const segmentCount = Number(harness.canvas.dataset.inkCurveSegmentCount);
+    const buildCount = harness.canvas.dataset.inkPathBuildCount;
+    vi.mocked(harness.context.moveTo).mockClear();
+    vi.mocked(harness.context.bezierCurveTo).mockClear();
+    vi.mocked(harness.context.stroke).mockClear();
+    vi.mocked(harness.context.scale).mockClear();
+
+    harness.viewport.zoomAt(8, { x: 500, y: 400 });
+    harness.renderer.redraw();
+
+    expect(harness.context.scale).toHaveBeenCalledWith(8, 8);
+    expect(harness.context.moveTo).toHaveBeenCalledOnce();
+    expect(harness.context.bezierCurveTo).toHaveBeenCalledTimes(segmentCount);
+    expect(harness.context.stroke).toHaveBeenCalledOnce();
+    expect(harness.canvas.dataset.inkPathBuildCount).toBe(buildCount);
+  });
+
+  it("builds finalized geometry once and reuses it across redraws, transforms, and removal", () => {
+    const harness = createHarness();
+    const stroke = createDenseStroke();
+    const initial = Object.freeze({
+      id: "cached-visual",
+      stroke,
+      transform: Object.freeze({
+        translation: Object.freeze({ x: 0, y: 0 }),
+        rotation: 0,
+        scale: 1,
+      }),
+    });
+
+    expect(harness.renderer.replaceFinalizedStrokes(Object.freeze([initial]))).toBe(true);
+    expect(harness.canvas.dataset.inkPathBuildCount).toBe("1");
+    expect(Number(harness.canvas.dataset.inkFilteredPointCount)).toBeLessThan(stroke.pointCount);
+    expect(Number(harness.canvas.dataset.inkCurveSegmentCount)).toBeGreaterThan(0);
+    expect(Number(harness.canvas.dataset.inkCurveSegmentCount)).toBeLessThan(
+      Number(harness.canvas.dataset.inkFilteredPointCount) - 1,
+    );
+
+    for (let index = 0; index < 50; index += 1) {
+      harness.renderer.redraw();
+      harness.renderer.setStrokeTransform(initial.id, {
+        translation: { x: index % 2, y: 0 },
+        rotation: index * 0.001,
+        scale: 1 + index * 0.001,
+      });
+    }
+    expect(harness.renderer.replaceFinalizedStrokes(Object.freeze([]))).toBe(true);
+    expect(harness.renderer.replaceFinalizedStrokes(Object.freeze([initial]))).toBe(true);
+
+    expect(harness.canvas.dataset.inkPathBuildCount).toBe("1");
+    expect(harness.frames.size).toBe(0);
   });
 
   it("rejects duplicate retained visual identities", () => {

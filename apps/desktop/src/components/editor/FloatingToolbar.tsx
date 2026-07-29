@@ -3,11 +3,8 @@ import {
   Eraser,
   Highlighter,
   Image,
-  Move,
   MousePointer2,
   PenLine,
-  RotateCw,
-  Scaling,
   Shapes,
   StickyNote,
   Table2,
@@ -26,9 +23,6 @@ interface FloatingToolbarProps {
 
 const tools = [
   { label: "Select", icon: MousePointer2 },
-  { label: "Move", icon: Move },
-  { label: "Rotate", icon: RotateCw },
-  { label: "Scale", icon: Scaling },
   { label: "Pen", icon: PenLine },
   { label: "Highlighter", icon: Highlighter },
   { label: "Eraser", icon: Eraser },
@@ -52,9 +46,9 @@ export function FloatingToolbar({
         role="toolbar"
         aria-label="Notebook tools"
       >
-        {tools.map(({ label, icon: Icon }, index) => (
+        {tools.map(({ label, icon: Icon }) => (
           <div key={label} className="contents">
-            {index === 4 ? (
+            {label === "Pen" ? (
               <>
                 <span className="mx-0.5 h-6 w-px shrink-0 bg-folio-border" />
                 <button
@@ -77,7 +71,7 @@ export function FloatingToolbar({
                 </button>
                 <span className="mx-0.5 h-6 w-px shrink-0 bg-folio-border" />
               </>
-            ) : index === 7 ? (
+            ) : label === "Text" ? (
               <span className="mx-0.5 h-6 w-px shrink-0 bg-folio-border" />
             ) : null}
             <button

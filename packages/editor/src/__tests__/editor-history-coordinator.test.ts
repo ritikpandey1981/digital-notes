@@ -12,6 +12,7 @@ import {
 } from "@folio/manipulation";
 import { createSelectionManager, type PagePoint } from "@folio/selection";
 import { describe, expect, it } from "vitest";
+import { EditorClipboard } from "../EditorClipboard";
 import { createEditorHistoryCoordinator } from "../history/editor-history-coordinator";
 import { InkDocumentSession } from "../InkDocumentSession";
 
@@ -249,6 +250,130 @@ describe("EditorHistoryCoordinator", () => {
     coordinator.destroy();
   });
 
+  it("groups multi-object paste into one undoable transaction", () => {
+    const session = createMultiObjectSession();
+    const originals = session.collection.objects;
+    let pastedIdentity = 0;
+    const clipboard = new EditorClipboard({
+      createId: () => `pasted-${++pastedIdentity}`,
+      now: () => FIRST_MOVE_TIMESTAMP,
+    });
+    clipboard.copy(originals);
+    const batch = clipboard.preparePaste(session.collection);
+    if (batch === null) throw new Error("Expected a paste batch.");
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      now: () => SECOND_MOVE_TIMESTAMP,
+      onDocumentChange: () => undefined,
+    });
+
+    const state = coordinator.executePaste(batch.objects);
+
+    expect(state).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([
+      "object-1",
+      "object-2",
+      "pasted-1",
+      "pasted-2",
+    ]);
+    coordinator.undo();
+    expect(session.collection.objects).toEqual(originals);
+    coordinator.redo();
+    expect(session.collection.objects.map(({ id }) => id)).toEqual([
+      "object-1",
+      "object-2",
+      "pasted-1",
+      "pasted-2",
+    ]);
+    coordinator.destroy();
+  });
+
+  it("groups multi-object delete and duplicate operations into single History entries", () => {
+    const session = createMultiObjectSession();
+    const originalIds = session.collection.objects.map(({ id }) => id);
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      now: () => SECOND_MOVE_TIMESTAMP,
+      onDocumentChange: () => undefined,
+    });
+
+    const duplicated = coordinator.executeDuplicatesWithOffset(
+      originalIds.map((objectId, index) =>
+        createDuplicateManipulationResult({
+          objectId,
+          sessionId: `duplicate-${index}`,
+          sessionTimestamp: index,
+        }),
+      ),
+      { x: 10, y: 10 },
+    );
+    expect(duplicated.state).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+    expect(duplicated.duplicateObjectIds).toHaveLength(2);
+    expect(
+      duplicated.duplicateObjectIds.map(
+        (objectId) => session.collection.lookup(objectId)?.transform.translation,
+      ),
+    ).toEqual([
+      { x: 10, y: 10 },
+      { x: 10, y: 10 },
+    ]);
+    coordinator.undo();
+    expect(session.collection.objects.map(({ id }) => id)).toEqual(originalIds);
+    coordinator.redo();
+    expect(session.collection.size).toBe(4);
+
+    const deleted = coordinator.executeDeletions(
+      duplicated.duplicateObjectIds.map((objectId, index) =>
+        createDeleteManipulationResult({
+          objectId,
+          sessionId: `delete-${index}`,
+          sessionTimestamp: index,
+        }),
+      ),
+    );
+    expect(deleted).toMatchObject({ undoDepth: 2, redoDepth: 0 });
+    expect(session.collection.objects.map(({ id }) => id)).toEqual(originalIds);
+    coordinator.undo();
+    expect(session.collection.size).toBe(4);
+    coordinator.redo();
+    expect(session.collection.objects.map(({ id }) => id)).toEqual(originalIds);
+    coordinator.destroy();
+  });
+
+  it("executes grouped transform results as one existing History transaction", () => {
+    const session = createMultiObjectSession();
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      now: () => SECOND_MOVE_TIMESTAMP,
+      onDocumentChange: () => undefined,
+    });
+
+    const state = coordinator.executeManipulations(
+      [
+        createTranslationResult("group-first", { x: 0, y: 0 }, { x: 20, y: 10 }),
+        createTranslationResult("group-second", { x: 0, y: 0 }, { x: 20, y: 10 }, "object-2"),
+      ],
+      { id: "group-move", description: "Move two objects" },
+    );
+
+    expect(state).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+    expect(session.collection.objects.map(({ transform }) => transform.translation)).toEqual([
+      { x: 20, y: 10 },
+      { x: 20, y: 10 },
+    ]);
+    coordinator.undo();
+    expect(session.collection.objects.map(({ transform }) => transform.translation)).toEqual([
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+    ]);
+    coordinator.redo();
+    expect(session.collection.objects.map(({ transform }) => transform.translation)).toEqual([
+      { x: 20, y: 10 },
+      { x: 20, y: 10 },
+    ]);
+    coordinator.destroy();
+  });
+
   it("rejects a stale manipulation through History and lets Manipulation cancel", () => {
     let objectTimestamp = OBJECT_TIMESTAMP;
     const session = createDocumentSession(() => objectTimestamp);
@@ -376,10 +501,22 @@ function createDocumentSession(now: () => string = () => OBJECT_TIMESTAMP): InkD
   return session;
 }
 
+function createMultiObjectSession(): InkDocumentSession {
+  let identity = 0;
+  const session = new InkDocumentSession({
+    createId: () => `object-${++identity}`,
+    now: () => OBJECT_TIMESTAMP,
+  });
+  session.completeStroke(createStroke("stroke-1"));
+  session.completeStroke(createStroke("stroke-2"));
+  return session;
+}
+
 function createTranslationResult(
   sessionId: string,
   initialObjectTranslation: Readonly<{ x: number; y: number }>,
   finalObjectTranslation: Readonly<{ x: number; y: number }>,
+  objectId = "object-1",
 ): TranslationManipulationResult {
   const movementVector = Object.freeze({
     x: finalObjectTranslation.x - initialObjectTranslation.x,
@@ -388,7 +525,7 @@ function createTranslationResult(
   return Object.freeze({
     kind: "translation",
     sessionId,
-    objectId: "object-1",
+    objectId,
     translation: Object.freeze({
       translationX: movementVector.x,
       translationY: movementVector.y,
@@ -435,9 +572,9 @@ function createScaleResult(
   });
 }
 
-function createStroke() {
+function createStroke(id = "stroke-1") {
   const builder = new StrokeBuilder({
-    id: "stroke-1",
+    id,
     timestamp: 0,
     smoother: new StrokeSmoother({ mode: "none" }),
   });

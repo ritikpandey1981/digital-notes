@@ -1,4 +1,4 @@
-import { InkObject, type ObjectCollection } from "@folio/document";
+import { InkObject, type ObjectCollection, type PageObject } from "@folio/document";
 import {
   createEditorHistoryManager,
   createHistoryController,
@@ -8,12 +8,14 @@ import {
   type IHistoryState,
 } from "@folio/history";
 import type {
+  DeleteManipulationResult,
   DuplicateManipulationResult,
   ManipulationResult,
   TranslationManipulationResult,
 } from "@folio/manipulation";
 import type { InkDocumentSession } from "../InkDocumentSession";
 import { createAddStrokeCommand } from "./add-stroke-command";
+import { createInsertObjectCommand } from "./insert-object-command";
 import { createCommandForManipulation } from "./manipulation-command-adapter";
 
 interface EditorHistoryCoordinatorOptions {
@@ -33,10 +35,20 @@ export interface EditorHistoryCoordinator {
   readonly controller: IHistoryController<ObjectCollection>;
   readonly executeStroke: (object: InkObject) => IHistoryState;
   readonly executeManipulation: (result: ManipulationResult) => IHistoryState;
+  readonly executeManipulations: (
+    results: readonly ManipulationResult[],
+    transaction: Readonly<{ id: string; description: string }>,
+  ) => IHistoryState;
+  readonly executeDeletions: (results: readonly DeleteManipulationResult[]) => IHistoryState;
+  readonly executePaste: (objects: readonly PageObject[]) => IHistoryState;
   readonly executeDuplicateWithOffset: (
     result: DuplicateManipulationResult,
     offset: Readonly<{ x: number; y: number }>,
   ) => Readonly<{ duplicateObjectId: string; state: IHistoryState }>;
+  readonly executeDuplicatesWithOffset: (
+    results: readonly DuplicateManipulationResult[],
+    offset: Readonly<{ x: number; y: number }>,
+  ) => Readonly<{ duplicateObjectIds: readonly string[]; state: IHistoryState }>;
   readonly undo: () => IHistoryState;
   readonly redo: () => IHistoryState;
   readonly destroy: () => void;
@@ -81,6 +93,25 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     return this.controller.executeCommand(command);
   }
 
+  executeManipulations(
+    results: readonly ManipulationResult[],
+    transaction: Readonly<{ id: string; description: string }>,
+  ): IHistoryState {
+    if (
+      !Array.isArray(results) ||
+      results.length === 0 ||
+      results.some((result) => !["translation", "rotation", "scale"].includes(result.kind))
+    ) {
+      throw new TypeError("Grouped transform execution requires transform results.");
+    }
+    if (transaction.id.trim().length === 0 || transaction.description.trim().length === 0) {
+      throw new TypeError("Grouped transform execution requires transaction metadata.");
+    }
+    return this.#runTransaction(transaction.id, transaction.description, () => {
+      for (const result of results) this.executeManipulation(result);
+    });
+  }
+
   executeStroke(object: InkObject): IHistoryState {
     return this.controller.executeCommand(
       createAddStrokeCommand({
@@ -91,10 +122,55 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     );
   }
 
+  executeDeletions(results: readonly DeleteManipulationResult[]): IHistoryState {
+    requireResults(results, "delete");
+    return this.#runTransaction(
+      `delete-selection-${results[0]?.sessionId ?? "unknown"}`,
+      `Delete ${results.length} selected object${results.length === 1 ? "" : "s"}`,
+      () => {
+        for (const result of results) this.executeManipulation(result);
+      },
+    );
+  }
+
+  executePaste(objects: readonly PageObject[]): IHistoryState {
+    if (!Array.isArray(objects) || objects.length === 0) {
+      throw new TypeError("Paste requires at least one immutable document object.");
+    }
+    return this.#runTransaction(
+      `paste-${objects[0]?.id ?? "unknown"}`,
+      `Paste ${objects.length} object${objects.length === 1 ? "" : "s"}`,
+      () => {
+        for (const object of objects) {
+          this.controller.executeCommand(
+            createInsertObjectCommand({
+              object,
+              insertionIndex: object.zIndex,
+              timestamp: object.modifiedAt,
+            }),
+          );
+        }
+      },
+    );
+  }
+
   executeDuplicateWithOffset(
     result: DuplicateManipulationResult,
     offset: Readonly<{ x: number; y: number }>,
   ): Readonly<{ duplicateObjectId: string; state: IHistoryState }> {
+    const execution = this.executeDuplicatesWithOffset([result], offset);
+    const duplicateObjectId = execution.duplicateObjectIds[0];
+    if (duplicateObjectId === undefined) {
+      throw new Error("Duplicate operation did not produce an object identity.");
+    }
+    return Object.freeze({ duplicateObjectId, state: execution.state });
+  }
+
+  executeDuplicatesWithOffset(
+    results: readonly DuplicateManipulationResult[],
+    offset: Readonly<{ x: number; y: number }>,
+  ): Readonly<{ duplicateObjectIds: readonly string[]; state: IHistoryState }> {
+    requireResults(results, "duplicate");
     if (
       !Number.isFinite(offset.x) ||
       !Number.isFinite(offset.y) ||
@@ -102,32 +178,26 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     ) {
       throw new RangeError("Duplicate offset must be a non-zero finite page-space vector.");
     }
-    const originalIds = new Set(this.#documentSession.collection.objects.map(({ id }) => id));
-    const transactionTimestamp = this.#now();
-    this.controller.beginTransaction({
-      id: `duplicate-offset-${result.sessionId}`,
-      timestamp: transactionTimestamp,
-      description: `Duplicate and offset object ${result.objectId}`,
-    });
-    try {
-      this.executeManipulation(result);
-      const duplicate = this.#documentSession.collection.objects.find(
-        ({ id }) => !originalIds.has(id),
-      );
-      if (!(duplicate instanceof InkObject)) {
-        throw new Error("Duplicate command did not create a successor object.");
-      }
-      this.executeManipulation(createDuplicateOffsetResult(result, duplicate, offset));
-      return Object.freeze({
-        duplicateObjectId: duplicate.id,
-        state: this.controller.commitTransaction(),
-      });
-    } catch (cause) {
-      if (this.controller.getHistoryState().activeTransaction !== null) {
-        this.controller.rollbackTransaction();
-      }
-      throw cause;
-    }
+    const duplicateObjectIds: string[] = [];
+    const state = this.#runTransaction(
+      `duplicate-offset-${results[0]?.sessionId ?? "unknown"}`,
+      `Duplicate ${results.length} object${results.length === 1 ? "" : "s"}`,
+      () => {
+        for (const result of results) {
+          const originalIds = new Set(this.#documentSession.collection.objects.map(({ id }) => id));
+          this.executeManipulation(result);
+          const duplicate = this.#documentSession.collection.objects.find(
+            ({ id }) => !originalIds.has(id),
+          );
+          if (!(duplicate instanceof InkObject)) {
+            throw new Error("Duplicate command did not create a successor object.");
+          }
+          this.executeManipulation(createDuplicateOffsetResult(result, duplicate, offset));
+          duplicateObjectIds.push(duplicate.id);
+        }
+      },
+    );
+    return Object.freeze({ duplicateObjectIds: Object.freeze(duplicateObjectIds), state });
   }
 
   undo(): IHistoryState {
@@ -143,6 +213,19 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     this.#destroyed = true;
     this.#unsubscribe();
     this.controller.destroy();
+  }
+
+  #runTransaction(id: string, description: string, execute: () => void): IHistoryState {
+    this.controller.beginTransaction({ id, timestamp: this.#now(), description });
+    try {
+      execute();
+      return this.controller.commitTransaction();
+    } catch (cause) {
+      if (this.controller.getHistoryState().activeTransaction !== null) {
+        this.controller.rollbackTransaction();
+      }
+      throw cause;
+    }
   }
 }
 
@@ -184,4 +267,17 @@ function createDuplicateOffsetResult(
     finalObjectTranslation,
     sessionTimestamp: source.sessionTimestamp,
   });
+}
+
+function requireResults(
+  results: readonly ManipulationResult[],
+  kind: "delete" | "duplicate",
+): void {
+  if (
+    !Array.isArray(results) ||
+    results.length === 0 ||
+    results.some((result) => result.kind !== kind)
+  ) {
+    throw new TypeError(`${kind} transaction requires at least one matching result.`);
+  }
 }

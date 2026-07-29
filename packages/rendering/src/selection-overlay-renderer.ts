@@ -42,7 +42,7 @@ const DEFAULT_SELECTION_OVERLAY_STYLE: SelectionOverlayStyle = Object.freeze({
   padding: 4,
 });
 
-const HANDLE_SIZE_PIXELS = 8;
+const HANDLE_SIZE_PIXELS = 10;
 const ROTATION_HANDLE_OFFSET_PIXELS = 28;
 
 function resolveStyle(style: Partial<SelectionOverlayStyle> = {}): SelectionOverlayStyle {

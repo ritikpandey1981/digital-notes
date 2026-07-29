@@ -1,5 +1,5 @@
 import path from "node:path";
-import { expect, test, _electron as electron } from "@playwright/test";
+import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
 test("rotates and scales one selected object through History", async () => {
   const repositoryRoot = process.cwd();
@@ -88,7 +88,7 @@ test("rotates and scales one selected object through History", async () => {
       "aria-pressed",
       "true",
     );
-    await window.mouse.move(rotationStart.x, rotationStart.y);
+    await hoverForCursor(window, inkCanvas, rotationStart, "rotation");
     await window.mouse.down();
     await window.mouse.move(rotationEnd.x, rotationEnd.y, { steps: 8 });
     await expect(surface).toHaveAttribute("data-manipulation-kind", "rotation");
@@ -128,7 +128,7 @@ test("rotates and scales one selected object through History", async () => {
       rotatedCenter.y + scaleVector.y * 1.5,
     );
 
-    await window.mouse.move(scaleStart.x, scaleStart.y);
+    await hoverForCursor(window, inkCanvas, scaleStart, "nwse-resize");
     await window.mouse.down();
     await window.mouse.move(scaleEnd.x, scaleEnd.y, { steps: 8 });
     await expect(surface).toHaveAttribute("data-manipulation-kind", "scale");
@@ -153,3 +153,18 @@ test("rotates and scales one selected object through History", async () => {
     await electronApp.close();
   }
 });
+
+async function hoverForCursor(
+  window: Page,
+  canvas: Locator,
+  point: Readonly<{ x: number; y: number }>,
+  cursor: string,
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      await window.mouse.move(point.x + 0.5, point.y);
+      await window.mouse.move(point.x, point.y);
+      return canvas.getAttribute("data-manipulation-cursor");
+    })
+    .toBe(cursor);
+}

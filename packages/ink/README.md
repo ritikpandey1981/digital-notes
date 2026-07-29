@@ -2,9 +2,9 @@
 
 ## Executive summary
 
-`@folio/ink` is Folio's framework-independent freehand input and stroke engine. It captures primary mouse, pen, and touch pointer streams; converts them into page-local samples through `@folio/rendering`; builds immutable, measured strokes; and renders live and finalized session ink on demand. The package depends only on `@folio/rendering` and never reads or mutates notebook state.
+`@folio/ink` is Folio's framework-independent freehand input and stroke engine. It captures primary mouse, pen, and touch pointer streams; converts them into page-local samples through `@folio/rendering`; builds immutable, measured strokes; and renders low-latency live ink plus high-quality finalized ink on demand. The package depends only on `@folio/rendering` and never reads or mutates editor-document state.
 
-Phase 7 ink is intentionally session-only. It is not a page object, does not enter history or persistence, and disappears when the canvas session is recreated. Selection, hit testing, editing, deletion, erasing, shapes, text, images, and multi-touch gestures remain outside this package.
+Finalized `Stroke` aggregates are retained by editor-owned document objects. Selection, History commands, object manipulation, clipboard behavior, and document replacement remain outside this package; the editor projects immutable retained visuals into `StrokeRenderer`.
 
 ## Package structure
 
@@ -17,12 +17,14 @@ packages/ink/
     |-- __tests__/
     |   |-- pointer-input-controller.test.ts
     |   |-- public-api.test.ts
+    |   |-- smooth-stroke-path.test.ts
     |   |-- stroke-builder.test.ts
     |   |-- stroke-renderer.test.ts
     |   `-- stroke-smoother.test.ts
     |-- internal/
     |   |-- draw-stroke.ts
     |   |-- geometry.ts
+    |   |-- professional-ink-path.ts
     |   `-- style.ts
     |-- errors.ts
     |-- index.ts
@@ -41,7 +43,7 @@ packages/ink/
 - `StrokeBuilder` filters duplicate or invalid samples and incrementally calculates movement, velocity, acceleration, bounds, length, duration, and pressure statistics.
 - `StrokeSmoother` supplies replaceable `none` and lightweight `average` modes plus explicit Catmull-Rom and Bezier hook seams.
 - `Stroke` is the deeply immutable finalized aggregate containing identity, ordered points, style, metrics, bounds, and statistics.
-- `StrokeRenderer` uses a transparent overlay canvas for dirty-region live preview and transformed finalized session-stroke rendering without repainting the permanent page canvas. Its immutable retained-visual projection uses editor-supplied object identity, allowing multiple document objects to reuse one immutable stroke safely.
+- `StrokeRenderer` uses a transparent overlay canvas for dirty-region live preview and transformed finalized rendering without repainting the permanent page canvas. A renderer-private weak cache shares one adaptive fitted path for every immutable `Stroke`, including duplicated visuals and undo/redo restoration.
 - `createStrokeVisual` retains one immutable `Stroke` reference and exposes the shared stroke drawing path to renderer-owned transform previews.
 - `InkError` reports stable structured error codes and immutable details.
 - Public types describe points, styles, metrics, statistics, updates, cancellation, hooks, callbacks, and snapshots. Geometry and style helpers remain private.
@@ -58,10 +60,10 @@ flowchart LR
     Capture --> Normalize["Normalize pressure, angles, buttons, and time"]
     Normalize --> Coordinates["CoordinateConverter: screen to page"]
     Coordinates --> Builder["StrokeBuilder"]
-    Builder --> Update["Incremental StrokeUpdate"]
-    Update --> Renderer["StrokeRenderer live path"]
+    Builder --> Update["Raw-endpoint StrokeUpdate"]
+    Update --> Renderer["StrokeRenderer low-latency live path"]
     Builder --> Final["Immutable Stroke"]
-    Final --> Session["StrokeRenderer finalized session path"]
+    Final --> Session["Adaptive filtering and cached finalized path"]
 ```
 
 Only one primary ink pointer is accepted in Phase 7. The controller contract preserves pointer type and IDs so a later gesture coordinator can add multi-touch without changing the stroke pipeline.
@@ -93,7 +95,9 @@ flowchart TD
     RAF --> Clip["Clip to dirty rectangle and page"]
     Clip --> Segment["Draw only new round pressure-width segments"]
     Segment --> Overlay
-    Final["Finalized session strokes"] --> Overlay
+    Final["Finalized immutable strokes"] --> Fit["Adaptive error-tolerance cubic fit"]
+    Fit --> Cache["Weak path cache keyed by Stroke"]
+    Cache --> Overlay
     Resize["Viewport or DPR resize"] --> FullInk["Clear overlay and redraw session strokes"]
     FullInk --> Overlay
     Base --> Composite["Browser canvas compositing"]
@@ -102,22 +106,24 @@ flowchart TD
 
 The base blank-page canvas and temporary/permanent session ink take separate rendering paths. Multiple point updates within a browser frame coalesce into one request. Drawing does not invalidate or repaint the page canvas. A resize necessarily clears the overlay backing store, then redraws retained session strokes using the updated camera, viewport, and DPR.
 
-## Smoothing architecture
+## Two-stage smoothing architecture
 
 ```mermaid
 flowchart LR
-    Raw["Raw ordered samples"] --> Mode{"Smoothing mode"}
-    Mode -- none --> Direct["Current position"]
-    Mode -- average --> Average["Bounded moving average and strength"]
-    Mode -- catmull-rom --> Catmull["Injected Catmull-Rom hook"]
-    Mode -- bezier --> Bezier["Injected future Bezier hook"]
-    Direct --> Builder["StrokeBuilder metrics"]
-    Average --> Builder
-    Catmull --> Builder
-    Bezier --> Builder
+    Raw["Raw ordered pointer samples"] --> Live["Incremental bounded cubic preview"]
+    Raw --> Filter["Distance, angle, and velocity filtering"]
+    Filter --> Corners["Explicit handwriting corner boundaries"]
+    Corners --> Parameterize["Centripetal parameterization"]
+    Parameterize --> Fit["Least-squares multi-point cubic fit"]
+    Fit --> Error{"Within geometric tolerance?"}
+    Error -- no --> Split["Subdivide at maximum deviation"]
+    Split --> Fit
+    Error -- yes --> Bezier["Curvature-limited cubic segments"]
+    Bezier --> Cache["Immutable finalized-path cache"]
+    Cache --> Redraw["Redraw, transforms, duplicates, undo/redo"]
 ```
 
-The default lightweight averaging uses a bounded window, so its work per point remains constant. Interpolation hooks receive the ordered raw buffer and current index, and their output is validated before it enters metrics or rendering.
+Pointer capture preserves exact first and last samples and performs no destructive pre-fit averaging by default. Live rendering remains incremental and allocation-light. At completion, redundant samples are filtered according to distance, local turn angle, elapsed time, and velocity changes. The finalized fitter approximates multiple points with each cubic, subdividing only where measured deviation exceeds an adaptive tolerance. Sharp handwriting corners become explicit fit boundaries. Least-squares controls follow one-sided or shared tangents and may leave an individual endpoint rectangle; curvature-aware handle limits and sampled safety guards prevent introduced loops or excessive overshoot. All finalized cubics are submitted as one continuous Canvas path. The public `StrokeSmoother` modes remain available to explicit callers without changing their contracts.
 
 ## Performance considerations
 
@@ -126,9 +132,11 @@ The default lightweight averaging uses a bounded window, so its work per point r
 - Duplicate consecutive positions are discarded before smoothing or allocation of a finalized point.
 - Live updates reuse the builder's append-only point buffer; only finalized strokes copy and deeply freeze their point sequence.
 - One-shot animation-frame scheduling coalesces input bursts and creates no idle render loop.
+- Finalized filtering and cubic fitting run exactly once per immutable `Stroke`; a weak cache releases geometry when its stroke is no longer reachable.
+- Duplicate visuals, repeated redraws, transforms, resize, and undo/redo reuse cached cubic segments without rebuilding or deep-copying source points.
 - Permanent transform updates reuse immutable stroke geometry and redraw affected bounds. Ordered retained-visual replacement supports lifecycle additions, removals, and duplicate objects with shared stroke geometry through one demand-driven redraw.
 - Live drawing clips to the unioned dirty region and draws only the unrendered tail of the stroke.
-- The default smoothing window is bounded, and the long-stroke sanity test exercises 10,000 points.
+- Error-driven fitting is completion-only, uses an explicit subdivision stack, and the long-stroke benchmark exercises 10,000 points with compact cached output.
 - Resize/DPR changes redraw only the ink overlay, preserving session strokes without forcing notebook or page-object work.
 
 ## Future extension points
@@ -143,4 +151,4 @@ The default lightweight averaging uses a bounded window, so its work per point r
 
 ## Unit test summary
 
-The package suite covers mouse, pen, touch, coalesced events, CSS/DPR coordinate compensation, pressure fallback, tilt metadata, velocity and acceleration, bounds, length, dirty rectangles, duplicate filtering, impossible values, single- and two-point strokes, cancellation, capture loss/failure, duplicate `PointerUp`, very fast and slow samples, 10,000-point construction, all smoothing modes and hooks, live/final render separation, pressure widths, round geometry, incremental clipping, resize redraw, request coalescing, lack of a continuous loop, cleanup, immutability, structured errors, and the deliberate public runtime surface.
+The package suite covers mouse, pen, touch, coalesced events, CSS/DPR coordinate compensation, exact pointer endpoints, pressure fallback, tilt metadata, velocity and acceleration, bounds, dirty rectangles, adaptive filtering, slow/fast sampling, error-tolerance segmentation, small handwriting identity, explicit corner boundaries, tangent continuity, controls beyond endpoint rectangles, loop guards, dots, short strokes, a 10,000-point fit benchmark, one-path finalized Canvas submission, 800% zoom redraw, cache reuse across redraw/transform/removal, shared duplicate geometry, constant-width scaling, request coalescing, cleanup, immutability, structured errors, and the deliberate public runtime surface.
