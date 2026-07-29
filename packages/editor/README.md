@@ -97,7 +97,17 @@ Logical groups reuse the editor-owned selection set without changing the Selecti
 
 Permanent ink continues to project immutable strokes and transforms into `StrokeRenderer`. During transformed drawing, the renderer keeps the existing geometry transform but divides only its internal rendered width by the object scale. Canvas scaling therefore restores the original effective pen width. Document stroke styles, `Transform`, `ScaleCommand`, bounds, History, and object identity remain unchanged.
 
-Ink paths use bounded Catmull–Rom-derived cubic Bézier segments. Every segment passes through its sampled endpoints, and control points are clamped to the endpoint rectangle to prevent overshoot and oscillation. Live segments draw incrementally; finalization replaces the preview once with the complete curve. Finalized curve geometry is cached with the immutable stroke and reused by redraw, move, rotation, scale, clipboard, and History-driven document replacement.
+Ink paths use the adaptive multi-point cubic Bézier fitter documented by `@folio/ink`. Live segments draw incrementally; finalization replaces the preview once with the complete cached curve. Finalized geometry is reused by redraw, move, rotation, scale, clipboard, and History-driven document replacement.
+
+## Professional tool foundation
+
+Phase 14 adds an interface-oriented `EditorToolRegistry`. A tool owns activation, deactivation, pointer events, keyboard events, cursor state, temporary rendering, and cleanup. `CanvasSurface` delegates through one registry while retaining its original interaction-mode API. The optional drawing-style input is sampled only when a new stroke begins, so changing presets never mutates existing ink.
+
+The built-in registry contains Select, legacy Move/Rotate/Scale adapters, Pen, Highlighter, whole-stroke Eraser, and Disabled. Pen and Highlighter activate the same `PointerInputController`, document factory, History coordinator, curve cache, and renderer. Their only difference is immutable stroke style. Eraser hit-tests complete objects and executes existing Delete commands inside one History transaction per pointer gesture. It never edits points or splits paths.
+
+`PenPresetStore` retains independent Pen and Highlighter choices. Presets contain a generic `EditableStyle`, pressure settings, and a future-compatible brush identifier. `EditorColorSystem` provides one validated hex/RGB representation, a shared preset palette, and bounded recent colors. Widths are presets rather than a closed enum, so arbitrary positive values remain valid.
+
+The backend-only `PropertyDescriptorRegistry` maps `PageObject.type` to providers. The current Ink provider describes color, width, and opacity without embedding UI or tool behavior in `PageObject`. Future object types register their own providers; a future panel renders descriptors rather than branching on concrete classes.
 
 ## Keyboard shortcuts
 

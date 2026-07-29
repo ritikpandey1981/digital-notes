@@ -130,6 +130,12 @@ Factories and collection constructors assert validation. Non-throwing validators
 
 `SerializedPageObject` and `ObjectSerializationContract` are interfaces only. No serializer, deserializer, save/load path, schema migration, or persistence adapter is implemented in Phase 8.
 
+## Shared editable style
+
+`EditableColor` and `EditableStyle` are additive, serialization-neutral values for editor configuration and future `PageObject` types. Colors have a canonical lowercase hexadecimal form, immutable RGB channels, and opacity. Styles currently expose stroke color and width while reserving optional fill, font, line, shadow, and blend fields. Factories validate and freeze every nested value.
+
+`PageObject` remains Folio's only common canvas-object abstraction. No visual inheritance hierarchy or tool behavior was added to the document model. Existing `InkObject`, validation, collection semantics, factories, transforms, and serialization contracts are unchanged.
+
 ## Dependency direction
 
 ```mermaid

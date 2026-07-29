@@ -29,6 +29,14 @@ export function ApplicationShell() {
             locationLabel={shellUi.activeSection}
             activeTool={editorWorkspace.activeTool}
             onSelectTool={editorWorkspace.selectTool}
+            drawingStyle={editorWorkspace.drawingStyle}
+            activePreset={editorWorkspace.activePreset}
+            availablePresets={editorWorkspace.availablePresets}
+            colors={editorWorkspace.colors}
+            onSelectPreset={editorWorkspace.selectPreset}
+            onChangeDrawingColor={editorWorkspace.setDrawingColor}
+            onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
+            onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
           />
         </main>
       </div>

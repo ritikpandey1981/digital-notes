@@ -1,4 +1,9 @@
-import type { ObjectLifecycleActions } from "@folio/editor";
+import type {
+  CanvasDrawingStyle,
+  EditorColorSystemSnapshot,
+  ObjectLifecycleActions,
+  PenPreset,
+} from "@folio/editor";
 import { useCallback, useRef } from "react";
 import type { EditorTool } from "./editor-types";
 import { CanvasHost } from "./CanvasHost";
@@ -10,6 +15,14 @@ interface EditorWorkspaceProps {
   locationLabel: string;
   activeTool: EditorTool;
   onSelectTool: (tool: EditorTool) => void;
+  drawingStyle: CanvasDrawingStyle;
+  activePreset: PenPreset;
+  availablePresets: readonly PenPreset[];
+  colors: EditorColorSystemSnapshot;
+  onSelectPreset: (presetId: string) => void;
+  onChangeDrawingColor: (color: string) => void;
+  onChangeDrawingWidth: (width: number) => void;
+  onChangeDrawingOpacity: (opacity: number) => void;
 }
 
 export function EditorWorkspace({
@@ -17,6 +30,14 @@ export function EditorWorkspace({
   locationLabel,
   activeTool,
   onSelectTool,
+  drawingStyle,
+  activePreset,
+  availablePresets,
+  colors,
+  onSelectPreset,
+  onChangeDrawingColor,
+  onChangeDrawingWidth,
+  onChangeDrawingOpacity,
 }: EditorWorkspaceProps) {
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
   const handleObjectLifecycleActionsReady = useCallback(
@@ -39,6 +60,7 @@ export function EditorWorkspace({
     >
       <CanvasHost
         activeTool={activeTool}
+        drawingStyle={drawingStyle}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
       />
       <WorkspaceChrome workspaceName={workspaceName} locationLabel={locationLabel} />
@@ -47,6 +69,13 @@ export function EditorWorkspace({
         onSelectTool={onSelectTool}
         onDeleteSelection={deleteSelection}
         onDuplicateSelection={duplicateSelection}
+        activePreset={activePreset}
+        availablePresets={availablePresets}
+        colors={colors}
+        onSelectPreset={onSelectPreset}
+        onChangeDrawingColor={onChangeDrawingColor}
+        onChangeDrawingWidth={onChangeDrawingWidth}
+        onChangeDrawingOpacity={onChangeDrawingOpacity}
       />
     </section>
   );

@@ -149,6 +149,10 @@ Pointer capture preserves exact first and last samples and performs no destructi
 - Immutable strokes are retained by Phase 8 document objects and reused by Phase 10 permanent/preview render paths; history, persistence, and export adapters remain disconnected.
 - The overlay-layer API in `@folio/rendering` can host future read-only overlays without exposing Canvas 2D details to the shell.
 
+## Phase 14 style consumers
+
+Pen and Highlighter remain the same immutable `Stroke` data and use the same pointer capture, smoothing, adaptive fitting, weak path cache, rendering, document, and History paths. The editor supplies a style when a new stroke begins. Highlighter defaults to a wider, pressure-independent, semi-transparent style; no new stroke or document type exists. A preset change is therefore isolated to future builders and cannot invalidate geometry already cached for finalized strokes.
+
 ## Unit test summary
 
 The package suite covers mouse, pen, touch, coalesced events, CSS/DPR coordinate compensation, exact pointer endpoints, pressure fallback, tilt metadata, velocity and acceleration, bounds, dirty rectangles, adaptive filtering, slow/fast sampling, error-tolerance segmentation, small handwriting identity, explicit corner boundaries, tangent continuity, controls beyond endpoint rectangles, loop guards, dots, short strokes, a 10,000-point fit benchmark, one-path finalized Canvas submission, 800% zoom redraw, cache reuse across redraw/transform/removal, shared duplicate geometry, constant-width scaling, request coalescing, cleanup, immutability, structured errors, and the deliberate public runtime surface.

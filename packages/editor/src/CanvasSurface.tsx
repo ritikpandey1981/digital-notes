@@ -1,6 +1,11 @@
 import { InkObject, type ObjectCollection, type PageObject } from "@folio/document";
 import type { HistoryNotification, IHistoryController, IHistoryState } from "@folio/history";
-import { createStrokeVisual, PointerInputController, StrokeRenderer } from "@folio/ink";
+import {
+  createStrokeVisual,
+  PointerInputController,
+  StrokeRenderer,
+  type StrokeStyle,
+} from "@folio/ink";
 import {
   createDeleteManipulationResult,
   createDuplicateManipulationResult,
@@ -28,7 +33,7 @@ import {
   type SelectionPointerInput,
   type SelectionState,
 } from "@folio/selection";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EditorClipboard } from "./EditorClipboard";
 import {
   EditorContextMenu,
@@ -39,6 +44,7 @@ import { createEditorGroupManipulationPlan, transformGroupBounds } from "./Edito
 import { EditorSelectionGeometry } from "./EditorSelectionGeometry";
 import { EditorSelectionSet } from "./EditorSelectionSet";
 import { createEditorSelectionHitTestEngine } from "./EditorSelectionHitTestEngine";
+import { createEditorToolRegistry, type EditorToolRegistry } from "./tools/editor-tool-registry";
 import {
   createEditorHistoryCoordinator,
   type EditorHistoryCoordinator,
@@ -58,7 +64,16 @@ import {
 } from "./SelectionManipulationTarget";
 
 /** Interaction capabilities currently routed by the editor adapter. */
-export type CanvasInteractionMode = "select" | "move" | "rotate" | "scale" | "ink" | "disabled";
+export type CanvasInteractionMode =
+  "select" | "move" | "rotate" | "scale" | "ink" | "highlighter" | "eraser" | "disabled";
+
+/** Optional appearance for future strokes; an active stroke always retains its creation style. */
+export interface CanvasDrawingStyle {
+  readonly color?: string;
+  readonly width?: number;
+  readonly opacity?: number;
+  readonly pressureEnabled?: boolean;
+}
 
 /** Session-scoped object lifecycle actions exposed to the desktop composition layer. */
 export interface ObjectLifecycleActions {
@@ -72,6 +87,8 @@ export interface CanvasSurfaceProps {
   readonly className?: string;
   /** Active pointer-input mode without remounting the canvas lifecycle. */
   readonly interactionMode?: CanvasInteractionMode;
+  /** Optional style consumed only when a new pen or highlighter stroke begins. */
+  readonly drawingStyle?: CanvasDrawingStyle;
   /** Receives the mounted rendering controller. */
   readonly onControllerReady?: (controller: CanvasController) => void;
   /** Receives the interface-oriented selection controller. */
@@ -80,6 +97,8 @@ export interface CanvasSurfaceProps {
   readonly onManipulationControllerReady?: (
     controller: ManipulationController<ManipulationResult>,
   ) => void;
+  /** Receives the extensible mounted tool registry and null during cleanup. */
+  readonly onToolRegistryReady?: (registry: EditorToolRegistry | null) => void;
   /** Receives the interface-oriented History controller for programmatic operations. */
   readonly onHistoryControllerReady?: (controller: IHistoryController<ObjectCollection>) => void;
   /** Receives session-bound delete/duplicate actions and null during cleanup. */
@@ -123,6 +142,8 @@ function manipulationKindForMode(mode: CanvasInteractionMode): ManipulationKind 
       return "scale";
     case "select":
     case "ink":
+    case "highlighter":
+    case "eraser":
     case "disabled":
       return null;
   }
@@ -134,9 +155,11 @@ const DUPLICATE_OFFSET = Object.freeze({ x: 10, y: 10 });
 export function CanvasSurface({
   className,
   interactionMode = "ink",
+  drawingStyle,
   onControllerReady,
   onSelectionControllerReady,
   onManipulationControllerReady,
+  onToolRegistryReady,
   onHistoryControllerReady,
   onObjectLifecycleActionsReady,
   onSelectionChange,
@@ -148,6 +171,9 @@ export function CanvasSurface({
   const hostRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<EditorContextMenuState | null>(null);
   const interactionModeRef = useRef(interactionMode);
+  const drawingStyleRef = useRef(drawingStyle);
+  const toolRegistryRef = useRef<EditorToolRegistry | null>(null);
+  const updateToolDiagnosticsRef = useRef<(() => void) | null>(null);
   const manipulationControllerRef = useRef<ManipulationController<ManipulationResult> | null>(null);
   const selectionControllerRef = useRef<SelectionController | null>(null);
   const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
@@ -158,7 +184,7 @@ export function CanvasSurface({
   const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
   const editingActionsRef = useRef<EditorEditingShortcutActions | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     interactionModeRef.current = interactionMode;
     const kind = manipulationKindForMode(interactionMode);
     const activeKind = manipulationControllerRef.current?.getManipulationState().kind ?? null;
@@ -166,9 +192,18 @@ export function CanvasSurface({
       manipulationControllerRef.current?.cancelManipulation();
       releaseManipulationPointerCaptureRef.current?.();
     }
-    if (interactionMode === "ink") selectionControllerRef.current?.clearSelection();
+    if (interactionMode === "ink" || interactionMode === "highlighter") {
+      selectionControllerRef.current?.clearSelection();
+    }
     resetManipulationCursorRef.current?.();
+    toolRegistryRef.current?.activate(interactionMode);
+    updateToolDiagnosticsRef.current?.();
   }, [interactionMode]);
+
+  useEffect(() => {
+    drawingStyleRef.current = drawingStyle;
+    updateToolDiagnosticsRef.current?.();
+  }, [drawingStyle]);
 
   useEffect(() => {
     selectionChangeRef.current = onSelectionChange;
@@ -209,8 +244,11 @@ export function CanvasSurface({
     let manipulationController: ManipulationController<ManipulationResult> | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
+    let toolRegistry: EditorToolRegistry | null = null;
     let uninstallHistoryShortcuts: (() => void) | null = null;
     let uninstallEditingShortcuts: (() => void) | null = null;
+    let toolKeyboardDownListener: ((event: KeyboardEvent) => void) | null = null;
+    let toolKeyboardUpListener: ((event: KeyboardEvent) => void) | null = null;
     let contextMenuListener: ((event: MouseEvent) => void) | null = null;
     let manipulationPointerCapture: Readonly<{
       canvas: HTMLCanvasElement;
@@ -305,12 +343,23 @@ export function CanvasSurface({
       };
       const updateDocumentDiagnostics = (): void => {
         const snapshot = documentSession.snapshot();
+        const strokeStyles = documentSession.collection.objects
+          .filter((object): object is InkObject => object instanceof InkObject)
+          .map((object) => ({
+            id: object.id,
+            color: object.style.color,
+            width: object.style.width,
+            opacity: object.style.opacity,
+            pressureEnabled: object.style.pressureEnabled,
+          }));
         if (inkLayer !== null) {
           inkLayer.canvas.dataset.documentObjectCount = String(snapshot.objectCount);
           inkLayer.canvas.dataset.documentInkObjectCount = String(snapshot.inkObjectCount);
           inkLayer.canvas.dataset.documentObjectsImmutable = String(snapshot.allObjectsImmutable);
+          inkLayer.canvas.dataset.documentStrokeStyles = JSON.stringify(strokeStyles);
         }
         host.dataset.documentObjectCount = String(snapshot.objectCount);
+        host.dataset.documentStrokeStyles = JSON.stringify(strokeStyles);
         updateViewportDiagnostics();
       };
       const updateEditorSelectionDiagnostics = (): void => {
@@ -746,8 +795,8 @@ export function CanvasSurface({
       const bridgeEditorPointer = (
         phase: SelectionPointerInput["phase"],
         event: PointerEvent,
+        mode: CanvasInteractionMode = interactionModeRef.current,
       ): void => {
-        const mode = interactionModeRef.current;
         const position: ScreenPoint = Object.freeze({
           x: event.clientX,
           y: event.clientY,
@@ -873,7 +922,7 @@ export function CanvasSurface({
         phase: SelectionPointerInput["phase"],
       ): void => {
         const listener: EventListener = (event) =>
-          bridgeEditorPointer(phase, event as PointerEvent);
+          toolRegistry?.handlePointer(phase, event as PointerEvent);
         inkLayer?.canvas.addEventListener(type, listener, true);
         editorPointerListeners.push([type, listener]);
       };
@@ -919,6 +968,29 @@ export function CanvasSurface({
         );
       };
       inkLayer.canvas.addEventListener("contextmenu", contextMenuListener);
+      const resolveDrawingStyle = (): Required<CanvasDrawingStyle> => {
+        const highlighter = interactionModeRef.current === "highlighter";
+        return {
+          color: drawingStyleRef.current?.color ?? (highlighter ? "#facc15" : "#111111"),
+          width: drawingStyleRef.current?.width ?? (highlighter ? 12 : 2),
+          opacity: drawingStyleRef.current?.opacity ?? (highlighter ? 0.34 : 1),
+          pressureEnabled: drawingStyleRef.current?.pressureEnabled ?? !highlighter,
+        };
+      };
+      const dynamicStrokeStyle: Partial<StrokeStyle> = {
+        get color() {
+          return resolveDrawingStyle().color;
+        },
+        get width() {
+          return resolveDrawingStyle().width;
+        },
+        get opacity() {
+          return resolveDrawingStyle().opacity;
+        },
+        get pressureEnabled() {
+          return resolveDrawingStyle().pressureEnabled;
+        },
+      };
       pointerInput = new PointerInputController({
         coordinateConverter,
         getCanvasBounds: () => {
@@ -928,6 +1000,7 @@ export function CanvasSurface({
           }
           return bounds;
         },
+        style: dynamicStrokeStyle,
         onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),
         onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
         onStrokeFinalized: (stroke) => {
@@ -951,7 +1024,166 @@ export function CanvasSurface({
         onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
         onError: (error) => onError?.(error),
       });
-      pointerInput.attach(inkLayer.canvas);
+      const activePointerInput = pointerInput;
+      const activeInkCanvas = inkLayer.canvas;
+      let eraserPointerId: number | null = null;
+      let eraserDeletedObject = false;
+      let eraserObjectIds = new Set<string>();
+      const releaseEraserCapture = (): void => {
+        if (eraserPointerId === null) return;
+        try {
+          activeInkCanvas.releasePointerCapture(eraserPointerId);
+        } catch {
+          // Capture can already be released after a platform pointer cancellation.
+        }
+      };
+      const finishEraserGesture = (commit: boolean): void => {
+        if (eraserPointerId === null) return;
+        const controllerState = activeHistoryCoordinator.controller.getHistoryState();
+        try {
+          if (controllerState.activeTransaction !== null) {
+            const state =
+              commit && eraserDeletedObject
+                ? activeHistoryCoordinator.controller.commitTransaction()
+                : activeHistoryCoordinator.controller.rollbackTransaction();
+            updateHistoryDiagnostics(state);
+          }
+        } catch (cause) {
+          reportEditingFailure(cause, "Eraser transaction cleanup failed.");
+        } finally {
+          releaseEraserCapture();
+          eraserPointerId = null;
+          eraserDeletedObject = false;
+          eraserObjectIds = new Set<string>();
+          host.dataset.eraserState = "idle";
+        }
+      };
+      const eraseAtPointer = (event: PointerEvent): void => {
+        const hit = activeSelectionController.hitTest(
+          Object.freeze({
+            x: event.clientX,
+            y: event.clientY,
+            coordinateSpace: "screen",
+          }),
+        );
+        if (hit === null || eraserObjectIds.has(hit.objectId)) return;
+        const object = documentSession.collection.lookup(hit.objectId);
+        if (object === undefined || !object.visible || object.locked) return;
+        try {
+          const state = activeHistoryCoordinator.executeManipulation(
+            createDeleteManipulationResult({ objectId: object.id }),
+          );
+          eraserObjectIds.add(object.id);
+          eraserDeletedObject = true;
+          updateHistoryDiagnostics(state);
+          host.dataset.eraserDeletedCount = String(eraserObjectIds.size);
+        } catch (cause) {
+          reportEditingFailure(cause, "Whole-stroke eraser execution failed.");
+          finishEraserGesture(false);
+        }
+      };
+      const createDelegatingTool = (
+        id: CanvasInteractionMode,
+        mode: CanvasInteractionMode,
+        cursor: string,
+      ) => ({
+        id,
+        cursor,
+        pointerDown: (event: PointerEvent) => bridgeEditorPointer("down", event, mode),
+        pointerMove: (event: PointerEvent) => bridgeEditorPointer("move", event, mode),
+        pointerUp: (event: PointerEvent) => bridgeEditorPointer("up", event, mode),
+        pointerCancel: (event: PointerEvent) => bridgeEditorPointer("cancel", event, mode),
+      });
+      toolRegistry = createEditorToolRegistry({
+        setCursor: (cursor) => {
+          activeInkCanvas.style.cursor = cursor;
+          activeInkCanvas.dataset.editorCursor = cursor;
+        },
+        requestTemporaryRender: () => {
+          activeTransformPreviewRenderer.redraw();
+          activeSelectionOverlayRenderer.redraw();
+        },
+      });
+      const activeToolRegistry = toolRegistry;
+      activeToolRegistry.register(createDelegatingTool("select", "select", "default"));
+      activeToolRegistry.register(createDelegatingTool("move", "move", "grab"));
+      activeToolRegistry.register(createDelegatingTool("rotate", "rotate", "crosshair"));
+      activeToolRegistry.register(createDelegatingTool("scale", "scale", "nwse-resize"));
+      for (const id of ["ink", "highlighter"] as const) {
+        activeToolRegistry.register({
+          id,
+          cursor: "crosshair",
+          activate: () => activePointerInput.attach(activeInkCanvas),
+          deactivate: () => activePointerInput.detach(),
+        });
+      }
+      activeToolRegistry.register({
+        id: "eraser",
+        cursor: "cell",
+        activate: () => {
+          host.dataset.eraserState = "idle";
+        },
+        deactivate: () => finishEraserGesture(false),
+        pointerDown: (event) => {
+          if (!event.isPrimary || event.button !== 0 || eraserPointerId !== null) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          eraserPointerId = event.pointerId;
+          eraserDeletedObject = false;
+          eraserObjectIds = new Set<string>();
+          try {
+            activeHistoryCoordinator.controller.beginTransaction({
+              id: "erase-strokes-" + Date.now().toString(36) + "-" + event.pointerId,
+              timestamp: new Date().toISOString(),
+              description: "Erase strokes",
+            });
+            activeInkCanvas.setPointerCapture(event.pointerId);
+            host.dataset.eraserState = "erasing";
+            eraseAtPointer(event);
+          } catch (cause) {
+            reportEditingFailure(cause, "Whole-stroke eraser could not start.");
+            finishEraserGesture(false);
+          }
+        },
+        pointerMove: (event) => {
+          if (event.pointerId !== eraserPointerId) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          eraseAtPointer(event);
+        },
+        pointerUp: (event) => {
+          if (event.pointerId !== eraserPointerId) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          finishEraserGesture(true);
+        },
+        pointerCancel: (event) => {
+          if (event.pointerId !== eraserPointerId) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          finishEraserGesture(false);
+        },
+      });
+      activeToolRegistry.register({ id: "disabled", cursor: "not-allowed" });
+      const updateToolDiagnostics = (): void => {
+        const style = resolveDrawingStyle();
+        const snapshot = activeToolRegistry.snapshot();
+        host.dataset.activeEditorTool = snapshot.activeToolId ?? "";
+        host.dataset.toolRegistrySize = String(snapshot.registeredToolIds.length);
+        host.dataset.drawingColor = style.color;
+        host.dataset.drawingWidth = String(style.width);
+        host.dataset.drawingOpacity = String(style.opacity);
+        host.dataset.drawingPressure = String(style.pressureEnabled);
+      };
+      toolRegistryRef.current = activeToolRegistry;
+      updateToolDiagnosticsRef.current = updateToolDiagnostics;
+      activeToolRegistry.activate(interactionModeRef.current);
+      updateToolDiagnostics();
+      onToolRegistryReady?.(activeToolRegistry);
+      toolKeyboardDownListener = (event) => activeToolRegistry.handleKeyboard("down", event);
+      toolKeyboardUpListener = (event) => activeToolRegistry.handleKeyboard("up", event);
+      window.addEventListener("keydown", toolKeyboardDownListener);
+      window.addEventListener("keyup", toolKeyboardUpListener);
       host.dataset.rendererState = "ready";
       host.dataset.inkState = "ready";
       host.dataset.documentState = "ready";
@@ -998,6 +1230,12 @@ export function CanvasSurface({
       if (contextMenuListener !== null) {
         inkLayer?.canvas.removeEventListener("contextmenu", contextMenuListener);
       }
+      if (toolKeyboardDownListener !== null) {
+        window.removeEventListener("keydown", toolKeyboardDownListener);
+      }
+      if (toolKeyboardUpListener !== null) {
+        window.removeEventListener("keyup", toolKeyboardUpListener);
+      }
       unsubscribeSelection?.();
       unsubscribeManipulation?.();
       manipulationController?.destroy();
@@ -1006,6 +1244,10 @@ export function CanvasSurface({
       selectionControllerRef.current = null;
       releaseManipulationPointerCaptureRef.current = null;
       resetManipulationCursorRef.current = null;
+      toolRegistry?.destroy();
+      toolRegistryRef.current = null;
+      updateToolDiagnosticsRef.current = null;
+      onToolRegistryReady?.(null);
       uninstallHistoryShortcuts?.();
       uninstallEditingShortcuts?.();
       editingActionsRef.current = null;
@@ -1032,6 +1274,7 @@ export function CanvasSurface({
     onHistoryControllerReady,
     onManipulationControllerReady,
     onSelectionControllerReady,
+    onToolRegistryReady,
   ]);
 
   const performContextMenuAction = (action: EditorContextMenuAction): void => {

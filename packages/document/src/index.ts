@@ -1,4 +1,17 @@
 export { DocumentObjectError, ObjectValidationError } from "./errors";
+export {
+  createEditableColor,
+  createEditableStyle,
+  normalizeHexColor,
+  type EditableBlendMode,
+  type EditableColor,
+  type EditableColorInput,
+  type EditableLineStyle,
+  type EditableRgbColor,
+  type EditableShadow,
+  type EditableStyle,
+  type EditableStyleInput,
+} from "./editable-style";
 export { InkObject } from "./ink-object";
 export { ObjectCollection } from "./object-collection";
 export {
