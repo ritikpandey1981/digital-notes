@@ -47,6 +47,15 @@ function createMainWindow(): void {
     return { action: "deny" };
   });
 
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    const primaryModifier = process.platform === "darwin" ? input.meta : input.control;
+    const reloadKey = input.key.toLowerCase() === "r" && primaryModifier;
+    const refreshKey = input.key.toLowerCase() === "f5";
+    if (input.type === "keyDown" && (reloadKey || refreshKey)) {
+      event.preventDefault();
+    }
+  });
+
   const developmentServerUrl = process.env.VITE_DEV_SERVER_URL;
   mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
     const allowedUrl = developmentServerUrl

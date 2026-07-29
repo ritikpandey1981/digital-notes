@@ -18,26 +18,33 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     await expect(window).toHaveTitle("Folio");
-    const toolbar = window.getByRole("toolbar", { name: "Notebook tools" });
-    await expect(toolbar).toBeVisible();
+    const toolDock = window.getByRole("toolbar", { name: "Notebook tool dock" });
+    await expect(toolDock).toBeVisible();
     for (const obsoleteTool of ["Move", "Rotate", "Scale"] as const) {
-      await expect(toolbar.getByRole("button", { name: obsoleteTool, exact: true })).toHaveCount(0);
+      await expect(toolDock.getByRole("button", { name: obsoleteTool, exact: true })).toHaveCount(
+        0,
+      );
     }
     for (const retainedTool of [
       "Select",
       "Pen",
       "Highlighter",
       "Eraser",
+      "Shape",
       "Text",
       "Image",
-      "Shape",
-      "Table",
-      "Sticky Note",
       "Duplicate selected object",
       "Delete selected object",
+      "More tools",
     ] as const) {
-      await expect(toolbar.getByRole("button", { name: retainedTool, exact: true })).toBeVisible();
+      await expect(toolDock.getByRole("button", { name: retainedTool, exact: true })).toBeVisible();
     }
+    const moreTools = toolDock.getByRole("button", { name: "More tools" });
+    await moreTools.click();
+    for (const action of ["Table", "Sticky Note"] as const) {
+      await expect(window.getByRole("menuitem", { name: action, exact: true })).toBeVisible();
+    }
+    await window.keyboard.press("Escape");
     await expect(window.getByRole("complementary", { name: "Sidebar" })).toBeVisible();
     await expect(window.getByLabel("Notebook workspace")).toBeVisible();
     const canvasHost = window.getByTestId("canvas-host");

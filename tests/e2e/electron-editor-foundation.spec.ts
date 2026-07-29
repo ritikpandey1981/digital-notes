@@ -40,8 +40,8 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Use color #2563eb" }).click();
-    await window.getByRole("combobox", { name: "Stroke width" }).selectOption("8");
-    await setRange(window.getByRole("slider", { name: "Stroke opacity" }), 0.8);
+    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "8");
+    await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
     await drawPath(window, pageToScreen, [
       { x: 120, y: 180 },
       { x: 190, y: 190 },
@@ -53,7 +53,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     ]);
 
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
-    await window.getByRole("combobox", { name: "Stroke width" }).selectOption("4");
+    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "4");
     await drawPath(window, pageToScreen, [
       { x: 120, y: 260 },
       { x: 190, y: 270 },
@@ -149,8 +149,9 @@ async function strokeStyles(locator: Locator): Promise<readonly StrokeStyleDiagn
   ) as readonly StrokeStyleDiagnostic[];
 }
 
-async function setRange(locator: Locator, value: number): Promise<void> {
-  await locator.fill(String(value));
+async function setNumericValue(locator: Locator, value: string): Promise<void> {
+  await locator.fill(value);
+  await locator.press("Enter");
 }
 
 async function attributeNumber(locator: Locator, name: string): Promise<number> {

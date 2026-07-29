@@ -30,13 +30,12 @@ export function ApplicationShell() {
             activeTool={editorWorkspace.activeTool}
             onSelectTool={editorWorkspace.selectTool}
             drawingStyle={editorWorkspace.drawingStyle}
-            activePreset={editorWorkspace.activePreset}
-            availablePresets={editorWorkspace.availablePresets}
+            toolOptions={editorWorkspace.toolOptions}
             colors={editorWorkspace.colors}
-            onSelectPreset={editorWorkspace.selectPreset}
             onChangeDrawingColor={editorWorkspace.setDrawingColor}
             onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
             onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
+            onDrawingColorUsed={editorWorkspace.rememberColorUsage}
           />
         </main>
       </div>

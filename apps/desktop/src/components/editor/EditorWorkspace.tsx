@@ -2,12 +2,13 @@ import type {
   CanvasDrawingStyle,
   EditorColorSystemSnapshot,
   ObjectLifecycleActions,
-  PenPreset,
 } from "@folio/editor";
 import { useCallback, useRef } from "react";
 import type { EditorTool } from "./editor-types";
 import { CanvasHost } from "./CanvasHost";
-import { FloatingToolbar } from "./FloatingToolbar";
+import { ToolDock } from "./ToolDock";
+import { ToolOptionsWidget } from "./ToolOptionsWidget";
+import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import { WorkspaceChrome } from "./WorkspaceChrome";
 
 interface EditorWorkspaceProps {
@@ -16,13 +17,12 @@ interface EditorWorkspaceProps {
   activeTool: EditorTool;
   onSelectTool: (tool: EditorTool) => void;
   drawingStyle: CanvasDrawingStyle;
-  activePreset: PenPreset;
-  availablePresets: readonly PenPreset[];
+  toolOptions: ToolOptionsDescriptor | null;
   colors: EditorColorSystemSnapshot;
-  onSelectPreset: (presetId: string) => void;
   onChangeDrawingColor: (color: string) => void;
   onChangeDrawingWidth: (width: number) => void;
   onChangeDrawingOpacity: (opacity: number) => void;
+  onDrawingColorUsed: (color: string) => void;
 }
 
 export function EditorWorkspace({
@@ -31,13 +31,12 @@ export function EditorWorkspace({
   activeTool,
   onSelectTool,
   drawingStyle,
-  activePreset,
-  availablePresets,
+  toolOptions,
   colors,
-  onSelectPreset,
   onChangeDrawingColor,
   onChangeDrawingWidth,
   onChangeDrawingOpacity,
+  onDrawingColorUsed,
 }: EditorWorkspaceProps) {
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
   const handleObjectLifecycleActionsReady = useCallback(
@@ -62,20 +61,21 @@ export function EditorWorkspace({
         activeTool={activeTool}
         drawingStyle={drawingStyle}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
+        onDrawingColorUsed={onDrawingColorUsed}
       />
       <WorkspaceChrome workspaceName={workspaceName} locationLabel={locationLabel} />
-      <FloatingToolbar
+      <ToolDock
         activeTool={activeTool}
         onSelectTool={onSelectTool}
         onDeleteSelection={deleteSelection}
         onDuplicateSelection={duplicateSelection}
-        activePreset={activePreset}
-        availablePresets={availablePresets}
+      />
+      <ToolOptionsWidget
+        descriptor={toolOptions}
         colors={colors}
-        onSelectPreset={onSelectPreset}
-        onChangeDrawingColor={onChangeDrawingColor}
-        onChangeDrawingWidth={onChangeDrawingWidth}
-        onChangeDrawingOpacity={onChangeDrawingOpacity}
+        onChangeColor={onChangeDrawingColor}
+        onChangeWidth={onChangeDrawingWidth}
+        onChangeOpacity={onChangeDrawingOpacity}
       />
     </section>
   );

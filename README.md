@@ -3,7 +3,7 @@
 Folio is a Windows-first, offline-first digital notebook focused on a calm and
 responsive writing experience.
 
-The repository currently contains the implemented foundation through Phase 14:
+The repository currently contains the implemented foundation through Phase 14.1:
 
 - Electron/React desktop shell and reusable UI primitives
 - immutable notebook domain and folder-based persistence
@@ -18,6 +18,7 @@ The repository currently contains the implemented foundation through Phase 14:
 - combined logical-selection bounds, grouped move/scale/rotate transactions, manipulation cursors, and constant-width transformed ink
 - simplified handle-driven tooling, smooth cached cubic ink paths, rotation-specific cursor feedback, grab/grabbing move feedback, and more usable selection handles
 - a lifecycle-owned tool registry, persistent Pen and Highlighter presets, unified hex/RGB colors, configurable width and opacity, transactional whole-stroke erasing, and backend property descriptors
+- a fixed vertical Tool Dock, descriptor-driven Context Tool Palette, continuous width and opacity controls, HiDPI Canvas2D stroke preview, usage-driven recent colors, distinct capped-opacity highlighting, and reload-safe Electron shortcuts
 - ESLint, Prettier, Vitest, and Playwright configuration
 - Package-oriented project structure
 
@@ -60,4 +61,5 @@ extension boundary. Phase 13 clipboard behavior is documented in
 `docs/interaction/PHASE13_1_INTERACTION_POLISH.md` and
 `docs/interaction/PHASE13_2_FINAL_EDITOR_UX_POLISH.md`.
 The additive rich-editing foundation is documented in
-`docs/architecture/PHASE14_EDITOR_FOUNDATION.md`.
+`docs/architecture/PHASE14_EDITOR_FOUNDATION.md`; its interaction refinement is documented in
+`docs/interaction/PHASE14_1_UX_POLISH.md`.

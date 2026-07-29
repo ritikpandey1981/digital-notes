@@ -8,7 +8,7 @@ React supplies the host lifecycle and callbacks. It does not calculate transform
 
 - `CanvasSurface` is the package's only runtime export.
 - `CanvasSurfaceProps` documents interaction mode, lifecycle, diagnostics, selection, manipulation, History, and error callbacks.
-- `CanvasInteractionMode` is the type-only `"select" | "move" | "rotate" | "scale" | "ink" | "disabled"` routing contract.
+- `CanvasInteractionMode` is the type-only `"select" | "move" | "rotate" | "scale" | "ink" | "highlighter" | "eraser" | "disabled"` routing contract.
 - `ObjectLifecycleActions` is a session-scoped type-only action boundary for deleting or duplicating the editor's logical selection; the desktop toolbar receives it through `onObjectLifecycleActionsReady`.
 
 The additive History callbacks are:
@@ -108,6 +108,20 @@ The built-in registry contains Select, legacy Move/Rotate/Scale adapters, Pen, H
 `PenPresetStore` retains independent Pen and Highlighter choices. Presets contain a generic `EditableStyle`, pressure settings, and a future-compatible brush identifier. `EditorColorSystem` provides one validated hex/RGB representation, a shared preset palette, and bounded recent colors. Widths are presets rather than a closed enum, so arbitrary positive values remain valid.
 
 The backend-only `PropertyDescriptorRegistry` maps `PageObject.type` to providers. The current Ink provider describes color, width, and opacity without embedding UI or tool behavior in `PageObject`. Future object types register their own providers; a future panel renders descriptors rather than branching on concrete classes.
+
+## Phase 14.1 desktop UX policy
+
+The desktop uses a permanent 48-by-420-pixel vertical Tool Dock at the left center of the workspace. It contains tools and actions only; it never resizes, collapses, expands, scrolls, or moves. Pen and Highlighter settings appear in a separate 304-pixel Context Tool Palette immediately beside it, so tool switching and setting changes cannot affect the dock.
+
+The desktop options adapter reuses the public `EditablePropertyDescriptor` shape without changing the frozen editor Tool Registry or property-descriptor backend. A registry of option providers describes the active desktop tool, and reusable property renderers consume those descriptors. The same provider factory describes Pen and Highlighter, leaving a clear additive path for future configurable tools without tool-specific branching in the widget.
+
+The Context Tool Palette fades and slides horizontally over 180 milliseconds. It remains mounted when switching directly between Pen and Highlighter; only its descriptor-driven contents update with a 150-millisecond transition. Selecting a tool without configurable properties animates the palette out.
+
+Color selection only updates the active immutable preset. The desktop observes the existing successful add-stroke History notification and then records that stroke color in the shared `EditorColorSystem`. Recent colors therefore describe committed editing use, remain deduplicated and most-recent-first, and are ready for later object adapters without coupling the color system to Ink.
+
+Width is continuously adjustable from 0.5–30 pixels and retains floating-point values. Pen opacity remains adjustable from 10–100%. Highlighter opacity is capped by desktop policy at 45%, preserving its wide, pressure-independent, translucent identity without changing Stroke, rendering, or document semantics. Both premium continuous controls include an enlarged hit target, animated thumb, direct numeric input, keyboard and Shift+Arrow adjustment, hovered-wheel adjustment, double-click reset, and an immediately synchronized HiDPI Canvas2D preview that mirrors finalized-stroke style and cubic-path drawing semantics.
+
+Electron intercepts `Ctrl/Cmd+R` and `F5` before Chromium can reload the renderer. Programmatic reload remains available to tests, while ordinary desktop shortcuts cannot silently discard the session document.
 
 ## Keyboard shortcuts
 

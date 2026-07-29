@@ -1,18 +1,42 @@
-import { CanvasSurface, type CanvasDrawingStyle, type ObjectLifecycleActions } from "@folio/editor";
-import { memo } from "react";
+import {
+  CanvasSurface,
+  type CanvasDrawingStyle,
+  type CanvasSurfaceProps,
+  type ObjectLifecycleActions,
+} from "@folio/editor";
+import { memo, useCallback, useRef } from "react";
 import type { EditorTool } from "./editor-types";
 
 interface CanvasHostProps {
   readonly activeTool: EditorTool;
   readonly drawingStyle: CanvasDrawingStyle;
   readonly onObjectLifecycleActionsReady: (actions: ObjectLifecycleActions | null) => void;
+  readonly onDrawingColorUsed: (color: string) => void;
 }
 
 export const CanvasHost = memo(function CanvasHost({
   activeTool,
   drawingStyle,
   onObjectLifecycleActionsReady,
+  onDrawingColorUsed,
 }: CanvasHostProps) {
+  const drawingColorRef = useRef(drawingStyle.color);
+  const onDrawingColorUsedRef = useRef(onDrawingColorUsed);
+  drawingColorRef.current = drawingStyle.color;
+  onDrawingColorUsedRef.current = onDrawingColorUsed;
+  const handleHistoryChange: NonNullable<CanvasSurfaceProps["onHistoryChange"]> = useCallback(
+    (notification) => {
+      if (
+        notification.outcome === "succeeded" &&
+        notification.operation === "execute" &&
+        notification.command.id.startsWith("stroke-") &&
+        drawingColorRef.current !== undefined
+      ) {
+        onDrawingColorUsedRef.current(drawingColorRef.current);
+      }
+    },
+    [],
+  );
   const interactionMode =
     activeTool === "Select"
       ? "select"
@@ -43,6 +67,7 @@ export const CanvasHost = memo(function CanvasHost({
         className="relative size-full"
         interactionMode={interactionMode}
         drawingStyle={drawingStyle}
+        onHistoryChange={handleHistoryChange}
         onObjectLifecycleActionsReady={onObjectLifecycleActionsReady}
       />
     </div>
