@@ -1,7 +1,7 @@
 import type { EditorColorSystemSnapshot } from "@folio/editor";
 import { cn } from "@folio/ui";
 import { AnimatePresence, motion } from "framer-motion";
-import type { ChangeEvent, FocusEvent, ReactNode } from "react";
+import { useEffect, useRef, type ChangeEvent, type FocusEvent, type ReactNode } from "react";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { StrokePreviewCanvas } from "./StrokePreviewCanvas";
 import type { ToolOptionPropertyDescriptor, ToolOptionsDescriptor } from "./tool-options-registry";
@@ -12,6 +12,7 @@ interface ToolOptionsWidgetProps {
   readonly onChangeColor: (color: string) => void;
   readonly onChangeWidth: (width: number) => void;
   readonly onChangeOpacity: (opacity: number) => void;
+  readonly onDismiss: () => void;
 }
 
 interface PropertyControlContext {
@@ -36,7 +37,10 @@ const propertyControlRenderers: Readonly<Record<string, PropertyControlRenderer>
     <ContinuousSlider descriptor={descriptor} onChange={(value) => context.onChange(value)} />
   ),
   opacity: (descriptor, context) => (
-    <ContinuousSlider descriptor={descriptor} onChange={(value) => context.onChange(value)} />
+    <ContinuousSlider
+      descriptor={descriptor}
+      onChange={(value) => context.onChange(descriptor.toModelValue?.(value) ?? value)}
+    />
   ),
 });
 
@@ -46,7 +50,32 @@ export function ToolOptionsWidget({
   onChangeColor,
   onChangeWidth,
   onChangeOpacity,
+  onDismiss,
 }: ToolOptionsWidgetProps) {
+  const paletteRef = useRef<HTMLElement | null>(null);
+  const paletteVisible = descriptor !== null;
+  useEffect(() => {
+    if (!paletteVisible) return;
+    const handleOutsidePointerDown = (event: PointerEvent): void => {
+      if (!(event.target instanceof Node)) return;
+      if (paletteRef.current?.contains(event.target) === true) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-tool-dock-layout]") !== null
+      ) {
+        return;
+      }
+      const canvasRegion = resolveCanvasPointerRegion(event);
+      if (canvasRegion === "workspace") {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      onDismiss();
+    };
+    document.addEventListener("pointerdown", handleOutsidePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+  }, [onDismiss, paletteVisible]);
+
   const propertyActions: Readonly<Record<string, (value: string | number) => void>> = {
     strokeColor: (value) => onChangeColor(requireString(value, "Stroke color")),
     strokeWidth: (value) => onChangeWidth(requireNumber(value, "Stroke width")),
@@ -58,6 +87,7 @@ export function ToolOptionsWidget({
       <AnimatePresence initial={false}>
         {descriptor === null ? null : (
           <motion.section
+            ref={paletteRef}
             key="context-tool-palette"
             className="pointer-events-auto w-[304px] rounded-[20px] border border-folio-border bg-folio-glass p-3 shadow-lg backdrop-blur-xl"
             role="group"
@@ -208,4 +238,36 @@ function requireNumber(value: string | number, label: string): number {
 function requireString(value: string | number, label: string): string {
   if (typeof value !== "string") throw new TypeError(`${label} must be text.`);
   return value;
+}
+
+type CanvasPointerRegion = "outside" | "page" | "workspace";
+
+function resolveCanvasPointerRegion(event: PointerEvent): CanvasPointerRegion {
+  if (!(event.target instanceof Element)) return "outside";
+  const surface = event.target.closest('[data-testid="canvas-surface"]');
+  if (surface === null) return "outside";
+  const canvas = surface?.querySelector('canvas[data-folio-renderer="true"]');
+  if (!(canvas instanceof HTMLCanvasElement)) return "page";
+  const bounds = canvas.getBoundingClientRect();
+  const logicalWidth = Number(canvas.dataset.logicalWidth);
+  const logicalHeight = Number(canvas.dataset.logicalHeight);
+  const pageX = Number(canvas.dataset.pageX);
+  const pageY = Number(canvas.dataset.pageY);
+  const pageWidth = Number(canvas.dataset.pageWidth);
+  const pageHeight = Number(canvas.dataset.pageHeight);
+  if (
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    ![logicalWidth, logicalHeight, pageX, pageY, pageWidth, pageHeight].every(Number.isFinite)
+  ) {
+    return "page";
+  }
+  const canvasX = (event.clientX - bounds.left) * (logicalWidth / bounds.width);
+  const canvasY = (event.clientY - bounds.top) * (logicalHeight / bounds.height);
+  const isPage =
+    canvasX >= pageX &&
+    canvasX <= pageX + pageWidth &&
+    canvasY >= pageY &&
+    canvasY <= pageY + pageHeight;
+  return isPage ? "page" : "workspace";
 }

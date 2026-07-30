@@ -4,7 +4,8 @@ import {
   type CanvasSurfaceProps,
   type ObjectLifecycleActions,
 } from "@folio/editor";
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
+import { cursorPresentationForTool } from "./editor-cursor-policy";
 import type { EditorTool } from "./editor-types";
 
 interface CanvasHostProps {
@@ -20,6 +21,7 @@ export const CanvasHost = memo(function CanvasHost({
   onObjectLifecycleActionsReady,
   onDrawingColorUsed,
 }: CanvasHostProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const drawingColorRef = useRef(drawingStyle.color);
   const onDrawingColorUsedRef = useRef(onDrawingColorUsed);
   drawingColorRef.current = drawingStyle.color;
@@ -53,8 +55,18 @@ export const CanvasHost = memo(function CanvasHost({
                 : activeTool === "Eraser"
                   ? "eraser"
                   : "disabled";
+  useEffect(() => {
+    const inkCanvas = hostRef.current?.querySelector<HTMLCanvasElement>(
+      'canvas[data-folio-layer="ink"]',
+    );
+    if (inkCanvas === undefined || inkCanvas === null) return;
+    const presentation = cursorPresentationForTool(activeTool);
+    inkCanvas.dataset.desktopToolCursor = presentation.id;
+    inkCanvas.style.cursor = presentation.css ?? inkCanvas.dataset.editorCursor ?? "default";
+  }, [activeTool]);
   return (
     <div
+      ref={hostRef}
       className="absolute inset-0 overflow-hidden"
       data-testid="canvas-host"
       data-canvas-state="ready"

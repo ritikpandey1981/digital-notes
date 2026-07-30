@@ -3,7 +3,7 @@ import type {
   EditorColorSystemSnapshot,
   ObjectLifecycleActions,
 } from "@folio/editor";
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { EditorTool } from "./editor-types";
 import { CanvasHost } from "./CanvasHost";
 import { ToolDock } from "./ToolDock";
@@ -23,6 +23,7 @@ interface EditorWorkspaceProps {
   onChangeDrawingWidth: (width: number) => void;
   onChangeDrawingOpacity: (opacity: number) => void;
   onDrawingColorUsed: (color: string) => void;
+  onDismissToolOptions: () => void;
 }
 
 export function EditorWorkspace({
@@ -37,8 +38,10 @@ export function EditorWorkspace({
   onChangeDrawingWidth,
   onChangeDrawingOpacity,
   onDrawingColorUsed,
+  onDismissToolOptions,
 }: EditorWorkspaceProps) {
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
+  const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const handleObjectLifecycleActionsReady = useCallback(
     (actions: ObjectLifecycleActions | null) => {
       objectLifecycleActionsRef.current = actions;
@@ -51,6 +54,10 @@ export function EditorWorkspace({
   const duplicateSelection = useCallback(() => {
     objectLifecycleActionsRef.current?.duplicateSelection();
   }, []);
+  const dismissTransientToolUi = useCallback(() => {
+    setMoreToolsOpen(false);
+    onDismissToolOptions();
+  }, [onDismissToolOptions]);
 
   return (
     <section
@@ -69,6 +76,8 @@ export function EditorWorkspace({
         onSelectTool={onSelectTool}
         onDeleteSelection={deleteSelection}
         onDuplicateSelection={duplicateSelection}
+        moreToolsOpen={moreToolsOpen}
+        onMoreToolsOpenChange={setMoreToolsOpen}
       />
       <ToolOptionsWidget
         descriptor={toolOptions}
@@ -76,6 +85,7 @@ export function EditorWorkspace({
         onChangeColor={onChangeDrawingColor}
         onChangeWidth={onChangeDrawingWidth}
         onChangeOpacity={onChangeDrawingOpacity}
+        onDismiss={dismissTransientToolUi}
       />
     </section>
   );

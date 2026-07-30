@@ -28,6 +28,8 @@ interface ToolDockProps {
   readonly onSelectTool: (tool: EditorTool) => void;
   readonly onDeleteSelection: () => void;
   readonly onDuplicateSelection: () => void;
+  readonly moreToolsOpen: boolean;
+  readonly onMoreToolsOpenChange: (open: boolean) => void;
 }
 
 interface ToolDefinition {
@@ -61,6 +63,8 @@ export function ToolDock({
   onSelectTool,
   onDeleteSelection,
   onDuplicateSelection,
+  moreToolsOpen,
+  onMoreToolsOpenChange,
 }: ToolDockProps) {
   return (
     <div className="pointer-events-none absolute left-4 top-1/2 z-20 -translate-y-1/2">
@@ -94,7 +98,12 @@ export function ToolDock({
           >
             <Trash2 className="size-[17px]" aria-hidden="true" />
           </button>
-          <FutureActionsMenu activeTool={activeTool} onSelectTool={onSelectTool} />
+          <FutureActionsMenu
+            activeTool={activeTool}
+            onSelectTool={onSelectTool}
+            open={moreToolsOpen}
+            onOpenChange={onMoreToolsOpenChange}
+          />
         </div>
       </div>
     </div>
@@ -154,12 +163,16 @@ function ToolButton({
 function FutureActionsMenu({
   activeTool,
   onSelectTool,
+  open,
+  onOpenChange,
 }: {
   readonly activeTool: EditorTool;
   readonly onSelectTool: (tool: EditorTool) => void;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"

@@ -52,6 +52,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       { color: "#2563eb", width: 8, opacity: 0.8, pressureEnabled: true },
     ]);
 
+    await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "4");
     await drawPath(window, pageToScreen, [
@@ -59,6 +60,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       { x: 190, y: 270 },
       { x: 260, y: 255 },
     ]);
+    await expect(surface).toHaveAttribute("data-document-object-count", "2");
     const penStyles = await strokeStyles(surface);
     expect(penStyles[0]).toMatchObject({ color: "#2563eb", width: 8, opacity: 0.8 });
     expect(penStyles[1]).toMatchObject({ color: "#dc2626", width: 4, opacity: 0.8 });

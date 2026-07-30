@@ -11,7 +11,6 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
     throw new TypeError("Continuous sliders require numeric descriptors.");
   }
   const value = descriptor.value;
-  const defaultValue = descriptor.defaultValue;
   const minimum = descriptor.constraints.minimum ?? 0;
   const maximum = descriptor.constraints.maximum ?? 1;
   const step = descriptor.constraints.step ?? 0.01;
@@ -32,9 +31,11 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
     if (Number.isFinite(candidate)) update(candidate);
     setDraftValue(null);
   };
-  const reset = (): void => {
-    setDraftValue(null);
-    update(defaultValue);
+  const updateDraft = (inputValue: string): void => {
+    setDraftValue(inputValue);
+    if (inputValue.trim().length === 0) return;
+    const candidate = Number(inputValue) / displayScale;
+    if (Number.isFinite(candidate)) update(candidate);
   };
   const adjust = (direction: -1 | 1, increment: number): number => {
     const next = value + direction * increment;
@@ -68,9 +69,7 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
     <div
       className="group/slider min-w-[166px] rounded-xl px-2 py-1.5 transition-colors hover:bg-folio-hover"
       data-tool-option={descriptor.key}
-      onDoubleClick={reset}
       onWheel={handleWheel}
-      title={`${descriptor.displayName} — double-click to reset`}
     >
       <div className="mb-0.5 flex items-center justify-between gap-2">
         <label
@@ -89,7 +88,7 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
             value={draftValue ?? displayedValue}
             aria-label={`${descriptor.displayName} value`}
             onFocus={() => setDraftValue(displayedValue)}
-            onChange={(event) => setDraftValue(event.currentTarget.value)}
+            onChange={(event) => updateDraft(event.currentTarget.value)}
             onBlur={(event) => commitDraft(event.currentTarget.value)}
             onKeyDown={handleNumberKeyDown}
           />

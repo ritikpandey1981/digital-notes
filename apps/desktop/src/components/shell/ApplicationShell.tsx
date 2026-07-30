@@ -36,6 +36,7 @@ export function ApplicationShell() {
             onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
             onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
             onDrawingColorUsed={editorWorkspace.rememberColorUsage}
+            onDismissToolOptions={editorWorkspace.dismissToolOptions}
           />
         </main>
       </div>

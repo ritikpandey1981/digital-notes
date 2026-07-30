@@ -1,6 +1,10 @@
 import type { EditablePropertyDescriptor, PenPreset } from "@folio/editor";
 import type { EditorTool } from "./editor-types";
-import { MAX_HIGHLIGHTER_OPACITY, MIN_DRAWING_OPACITY } from "./drawing-style-policy";
+import {
+  displayOpacityForTool,
+  MIN_DRAWING_OPACITY,
+  modelOpacityForTool,
+} from "./drawing-style-policy";
 
 export type ToolOptionControl = "color" | "continuous-number";
 
@@ -12,6 +16,7 @@ export interface ToolOptionPropertyDescriptor extends EditablePropertyDescriptor
   readonly displayScale?: number;
   readonly precision?: number;
   readonly unit?: string;
+  readonly toModelValue?: (value: number) => number;
 }
 
 export interface ToolOptionsDescriptor {
@@ -41,7 +46,6 @@ interface DrawingToolOptionsConfiguration {
   readonly tool: "Pen" | "Highlighter";
   readonly defaultWidth: number;
   readonly defaultOpacity: number;
-  readonly maximumOpacity: number;
 }
 
 class ToolOptionsDescriptorRegistryImplementation implements ToolOptionsDescriptorRegistry {
@@ -69,13 +73,11 @@ export function createDefaultToolOptionsDescriptorRegistry(): ToolOptionsDescrip
       tool: "Pen",
       defaultWidth: 2,
       defaultOpacity: 1,
-      maximumOpacity: 1,
     }),
     createDrawingToolOptionsProvider({
       tool: "Highlighter",
       defaultWidth: 12,
       defaultOpacity: 0.34,
-      maximumOpacity: MAX_HIGHLIGHTER_OPACITY,
     }),
   ]);
 }
@@ -113,15 +115,16 @@ function createDrawingToolOptionsProvider(
           numberProperty({
             key: "opacity",
             displayName: "Opacity",
-            value: opacity,
+            value: displayOpacityForTool(configuration.tool, opacity),
             minimum: MIN_DRAWING_OPACITY,
-            maximum: configuration.maximumOpacity,
+            maximum: 1,
             step: 0.01,
             largeStep: 0.05,
-            defaultValue: configuration.defaultOpacity,
+            defaultValue: displayOpacityForTool(configuration.tool, configuration.defaultOpacity),
             displayScale: 100,
             precision: 0,
             unit: "%",
+            toModelValue: (value) => modelOpacityForTool(configuration.tool, value),
           }),
         ]),
         preview: Object.freeze({
@@ -161,6 +164,7 @@ function numberProperty(input: {
   readonly displayScale?: number;
   readonly precision: number;
   readonly unit: string;
+  readonly toModelValue?: (value: number) => number;
 }): ToolOptionPropertyDescriptor {
   return Object.freeze({
     key: input.key,
@@ -178,6 +182,7 @@ function numberProperty(input: {
     ...(input.displayScale === undefined ? {} : { displayScale: input.displayScale }),
     precision: input.precision,
     unit: input.unit,
+    ...(input.toModelValue === undefined ? {} : { toModelValue: input.toModelValue }),
     validate: (candidate: unknown): boolean =>
       typeof candidate === "number" &&
       Number.isFinite(candidate) &&

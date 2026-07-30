@@ -12,6 +12,7 @@ import { createDefaultToolOptionsDescriptorRegistry } from "./tool-options-regis
 
 export function useEditorWorkspaceState() {
   const [activeTool, setActiveTool] = React.useState<EditorTool>("Select");
+  const [toolOptionsVisible, setToolOptionsVisible] = React.useState(true);
   const [, setFoundationVersion] = React.useState(0);
   const [colorSystem] = React.useState(() => createEditorColorSystem());
   const [presetStore] = React.useState(() => createPenPresetStore());
@@ -30,9 +31,14 @@ export function useEditorWorkspaceState() {
     [activePreset],
   );
   const toolOptions = React.useMemo(
-    () => toolOptionsRegistry.describe(activeTool, activePreset),
-    [activePreset, activeTool, toolOptionsRegistry],
+    () => (toolOptionsVisible ? toolOptionsRegistry.describe(activeTool, activePreset) : null),
+    [activePreset, activeTool, toolOptionsRegistry, toolOptionsVisible],
   );
+  const selectTool = React.useCallback((tool: EditorTool): void => {
+    setActiveTool(tool);
+    setToolOptionsVisible(true);
+  }, []);
+  const dismissToolOptions = React.useCallback((): void => setToolOptionsVisible(false), []);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
   const updatePreset = React.useCallback(
     (patch: PenPresetPatch): void => {
@@ -64,7 +70,7 @@ export function useEditorWorkspaceState() {
 
   return {
     activeTool,
-    selectTool: setActiveTool,
+    selectTool,
     drawingStyle,
     toolOptions,
     colors: colorSystem.snapshot(),
@@ -72,5 +78,6 @@ export function useEditorWorkspaceState() {
     setDrawingWidth,
     setDrawingOpacity,
     rememberColorUsage,
+    dismissToolOptions,
   };
 }

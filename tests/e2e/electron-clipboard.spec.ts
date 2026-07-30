@@ -27,7 +27,9 @@ test("supports session clipboard workflows, multi-object History, shortcuts, and
 
     const points = await pagePoints(baseCanvas, inkCanvas);
     await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(surface).toHaveAttribute("data-active-editor-tool", "ink");
     await drawStroke(window, points.first, { x: 70, y: 15 });
+    await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await drawStroke(window, points.second, { x: 55, y: 25 });
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
 
@@ -106,6 +108,7 @@ async function pagePoints(
   baseCanvas: ReturnType<Page["locator"]>,
   inkCanvas: ReturnType<Page["locator"]>,
 ): Promise<Readonly<{ first: Point; second: Point }>> {
+  await expect(baseCanvas).toBeVisible();
   const metrics = await baseCanvas.evaluate((element) => {
     const canvas = element as HTMLCanvasElement;
     return {

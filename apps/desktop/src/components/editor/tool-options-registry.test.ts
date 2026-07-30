@@ -39,16 +39,20 @@ describe("tool options descriptor registry", () => {
     expect(Object.isFrozen(descriptor?.properties)).toBe(true);
   });
 
-  it("gives highlighter the same controls with its distinct opacity ceiling", () => {
+  it("shows the complete opacity scale while preserving the highlighter model ceiling", () => {
     const registry = createDefaultToolOptionsDescriptorRegistry();
     const presets = createPenPresetStore();
     const descriptor = registry.describe("Highlighter", presets.activePreset("highlighter"));
     const opacity = descriptor?.properties.find(({ key }) => key === "opacity");
 
     expect(opacity).toMatchObject({
-      defaultValue: 0.34,
-      constraints: { minimum: 0.1, maximum: 0.45, step: 0.01 },
+      constraints: { minimum: 0.1, maximum: 1, step: 0.01 },
     });
+    expect(opacity?.value).toBeCloseTo(0.717_142_857);
+    expect(opacity?.defaultValue).toBeCloseTo(0.717_142_857);
+    expect(opacity?.toModelValue?.(1)).toBeCloseTo(0.45);
+    expect(opacity?.toModelValue?.(0.717_142_857)).toBeCloseTo(0.34);
+    expect(descriptor?.preview.opacity).toBe(0.34);
     expect(descriptor?.preview.pressureEnabled).toBe(false);
   });
 });

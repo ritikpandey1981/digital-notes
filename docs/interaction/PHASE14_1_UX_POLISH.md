@@ -27,7 +27,7 @@ flowchart LR
     Controls --> Preset
 ```
 
-The 304-pixel Context Tool Palette floats immediately beside the dock. Activating Pen or Highlighter fades and slides it horizontally into view over 180 milliseconds. Selecting a tool without options animates it out. Direct Pen-to-Highlighter switches retain the same mounted palette container and animate only its descriptor-driven contents over 150 milliseconds.
+The 304-pixel Context Tool Palette floats immediately beside the dock. Activating Pen or Highlighter fades and slides it horizontally into view over 180 milliseconds. Selecting a tool without options or pressing anywhere outside the palette—including the rendered page and surrounding workspace—animates it out. Direct Pen-to-Highlighter switches retain the same mounted palette container and animate only its descriptor-driven contents over 150 milliseconds. Page presses continue to the active tool; gray-workspace presses are consumed to prevent an accidental Pen dot while dismissing.
 
 This provider boundary is ready for future Shapes, Text, and Images to contribute descriptors without changing the palette renderer. Those object types and tools are not implemented in this phase.
 
@@ -35,19 +35,24 @@ This provider boundary is ready for future Shapes, Text, and Images to contribut
 
 Pen and Highlighter expose current color, recent colors, the shared palette, a native custom-color picker, hexadecimal input, continuous width, continuous opacity, and a live preview.
 
-Width accepts floating-point values from 0.5 to 30 pixels in 0.1-pixel increments. Opacity uses one-percentage-point increments. Pen accepts 10–100%; Highlighter accepts 10–45%, so its wide, pressure-independent translucent identity cannot become visually identical to Pen.
+Width accepts floating-point values from 0.5 to 30 pixels in 0.1-pixel increments. Opacity uses one-percentage-point increments, and both Pen and Highlighter present a complete 10–100% range. Highlighter display values are normalized onto its unchanged 0.10–0.45 model range; displayed 100% therefore remains an actual 0.45 opacity and cannot become visually identical to Pen.
 
 Each continuous control supports:
 
 - smooth range dragging with an enlarged hit target and animated thumb;
 - immediate preview and canvas-style updates;
 - direct numeric entry;
+- immediate slider synchronization for native numeric spinner changes;
 - arrow-key adjustment;
 - a larger Shift+Arrow increment;
 - wheel adjustment while hovered; and
-- double-click reset to the active tool's default.
+- no special double-click behavior.
 
 Pen and Highlighter retain independent color, width, opacity, pressure, and preset state while switching among tools.
+
+The ink canvas provides purpose-specific cursor feedback. Pen, Highlighter, and Eraser have distinct custom cursors; future Shape, Text, Image, Table, and Sticky Note entries use semantic system cursors. The editor engine continues to own the dynamic Select, Move, Rotate, and Scale cursor states.
+
+An outside pointer press—including one on the rendered page or surrounding workspace—dismisses the Context Tool Palette while preserving the active tool and all of its settings. Selecting that tool again reopens its palette. The existing More menu follows the same workspace-dismiss behavior.
 
 ## Live stroke preview
 
@@ -76,4 +81,4 @@ Electron intercepts `Ctrl/Cmd+R`, including the shifted variant, and `F5` at the
 
 The Tool Dock and palette are overlay presentation components and do not participate in document rendering. The descriptor registry is created once per workspace, active styles are memoized, direct configurable-tool switches retain the palette container, and the existing canvas remains mounted. Controls update only preset/UI state until normal editor interaction consumes the style.
 
-Unit coverage locks descriptor immutability, configurable-tool registration, continuous ranges, Highlighter defaults and opacity limits, and drawing-style validation. Electron coverage verifies fixed dock dimensions, absence of scrolling, palette entry/exit and mounted-container continuity, rapid switching, Canvas2D preview use, mounted-canvas continuity, arbitrary width and opacity input, keyboard/wheel/reset behavior, independent tool state, actual-use recent colors, capped Highlighter strokes, reload-key safety, drawing, undo/redo, and minimum-window resizing.
+Unit coverage locks descriptor immutability, configurable-tool registration, continuous ranges, normalized Highlighter display/model mapping, cursor coverage, Highlighter defaults and opacity limits, and drawing-style validation. Electron coverage verifies fixed dock dimensions, absence of scrolling, palette entry/exit and mounted-container continuity, page/workspace dismissal, More-menu dismissal, distinct drawing cursors, rapid switching, Canvas2D preview use, mounted-canvas continuity, arbitrary width and opacity input, immediate numeric-spinner synchronization, keyboard/wheel behavior, absence of double-click reset, independent tool state, actual-use recent colors, capped Highlighter strokes, reload-key safety, drawing, undo/redo, and minimum-window resizing.
