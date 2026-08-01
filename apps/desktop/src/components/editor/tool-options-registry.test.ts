@@ -12,6 +12,13 @@ describe("tool options descriptor registry", () => {
     expect(registry.describe("Eraser", presets.activePreset("pen"))).toBeNull();
   });
 
+  it("does not expose creation properties for the unified Shapes tool", () => {
+    const registry = createDefaultToolOptionsDescriptorRegistry();
+    const pen = createPenPresetStore().activePreset("pen");
+
+    expect(registry.describe("Shapes", pen)).toBeNull();
+  });
+
   it("describes continuous pen width and opacity through immutable property descriptors", () => {
     const registry = createDefaultToolOptionsDescriptorRegistry();
     const presets = createPenPresetStore();
@@ -27,7 +34,7 @@ describe("tool options descriptor registry", () => {
     expect(descriptor?.properties[1]).toMatchObject({
       value: 5.8,
       defaultValue: 2,
-      constraints: { minimum: 0.5, maximum: 30, step: 0.1 },
+      constraints: { minimum: 0.5, maximum: 40, step: 0.1 },
     });
     expect(descriptor?.properties[2]).toMatchObject({
       value: 0.63,

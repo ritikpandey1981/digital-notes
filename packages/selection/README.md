@@ -49,13 +49,13 @@ flowchart TD
 flowchart LR
     Point["Page point"] --> Visible["Visible object filter"]
     Visible --> Bounds["Expanded cached-bounds rejection"]
-    Bounds --> Geometry["Vector distance to rendered ink geometry"]
+    Bounds --> Geometry["Distance to ink or vector outline geometry"]
     Geometry --> Tolerance["Configurable page-unit tolerance"]
     Tolerance --> ZOrder["Highest zIndex wins"]
     ZOrder --> Hit["Frozen result"]
 ```
 
-Ink testing measures distance to line segments and single-point stroke circles. It inverse-transforms the page point into the immutable object's local coordinate frame, while broad-phase rejection uses the transformed axis-aligned cached bounds. Segment width calls the immutable stroke's canonical pressure-width method and the resulting distance is scaled back to page units, so hit testing remains aligned with translated, rotated, and uniformly scaled rendering. No pixels, canvas readback, rasterization, or rendered geometry are queried.
+Ink testing measures distance to line segments and single-point stroke circles. Line, Rectangle, and Ellipse testing measures distance to their actual visible outline, including stroke width and a forgiving configurable tolerance; an optional future fill is treated as hittable interior geometry. Every path inverse-transforms the page point into the immutable object's local coordinate frame, while broad-phase rejection uses transformed cached bounds. No pixels, canvas readback, rasterization, or rendering package dependency is required.
 
 ## Coordinate ownership
 
@@ -75,7 +75,7 @@ Ink testing measures distance to line segments and single-point stroke circles. 
 
 - Bounding-box rejection precedes object-specific geometry work.
 - `hitTest()` tracks only the current top-most result and does not copy collections.
-- Cached object bounds and immutable stroke data are reused directly.
+- Cached object bounds and immutable ink/vector geometry are reused directly.
 - The current linear broad-phase strategy is private behind `HitTestEngine`; a quadtree, R-tree, or spatial hash can replace it without changing callers.
 - `selectedObjectIds` and interface-oriented APIs reserve a direct path to multi-selection, lasso, grouping, and transforms without implementing them in Phase 9.
 

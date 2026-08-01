@@ -66,10 +66,10 @@ test("renders handwriting, long curves, small writing, and rapid ink from cached
 
     for (const sample of samples) {
       expect(
-        await hasInkNear(inkCanvas, coordinates.pageToScreen(sample[0]!.x, sample[0]!.y)),
+        await hasInkNear(baseCanvas, coordinates.pageToScreen(sample[0]!.x, sample[0]!.y)),
       ).toBe(true);
       expect(
-        await hasInkNear(inkCanvas, coordinates.pageToScreen(sample.at(-1)!.x, sample.at(-1)!.y)),
+        await hasInkNear(baseCanvas, coordinates.pageToScreen(sample.at(-1)!.x, sample.at(-1)!.y)),
       ).toBe(true);
     }
 
@@ -158,8 +158,8 @@ async function drawPagePath(
   await window.mouse.up();
 }
 
-async function hasInkNear(inkCanvas: Locator, point: Point): Promise<boolean> {
-  return inkCanvas.evaluate((element, screenPoint) => {
+async function hasInkNear(canvasLocator: Locator, point: Point): Promise<boolean> {
+  return canvasLocator.evaluate((element, screenPoint) => {
     const canvas = element as HTMLCanvasElement;
     const context = canvas.getContext("2d");
     if (context === null) return false;
@@ -174,8 +174,12 @@ async function hasInkNear(inkCanvas: Locator, point: Point): Promise<boolean> {
     const width = Math.min(canvas.width - startX, radius * 2 + 1);
     const height = Math.min(canvas.height - startY, radius * 2 + 1);
     const pixels = context.getImageData(startX, startY, width, height).data;
-    for (let index = 3; index < pixels.length; index += 4) {
-      if ((pixels[index] ?? 0) > 24) return true;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const red = pixels[index] ?? 255;
+      const green = pixels[index + 1] ?? 255;
+      const blue = pixels[index + 2] ?? 255;
+      const alpha = pixels[index + 3] ?? 0;
+      if (alpha > 24 && (red < 200 || green < 200 || blue < 200)) return true;
     }
     return false;
   }, point);

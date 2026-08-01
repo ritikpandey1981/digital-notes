@@ -1,4 +1,4 @@
-import { InkObject, ObjectCollection, ObjectFactory, Transform } from "@folio/document";
+import { InkObject, ObjectCollection, ObjectFactory, isVectorObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 
 interface TranslationVector {
@@ -121,10 +121,10 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
         operation,
       });
     }
-    if (!(object instanceof InkObject)) {
+    if (!(object instanceof InkObject) && !isVectorObject(object)) {
       throw moveError(
         "MOVE_OBJECT_UNSUPPORTED",
-        `Object '${this.#objectId}' is not a supported InkObject.`,
+        `Object '${this.#objectId}' is not a supported PageObject implementation.`,
         { objectId: this.#objectId, operation, type: object.type },
       );
     }
@@ -166,22 +166,13 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
     }
 
     try {
-      const replacement = new ObjectFactory().createInkObject({
-        id: object.id,
-        stroke: object.stroke,
-        createdAt: object.createdAt,
-        modifiedAt: targetModifiedAt,
-        visible: object.visible,
-        locked: object.locked,
-        metadata: object.metadata,
-        zIndex: object.zIndex,
-        transform: new Transform({
-          translation: targetTranslation,
-          rotation: object.transform.rotation,
-          scale: object.transform.scale,
-        }),
-        renderingHints: object.renderingHints,
-      });
+      const replacement = new ObjectFactory({ now: () => targetModifiedAt }).translateObject(
+        object,
+        {
+          x: targetTranslation.x - expectedTranslation.x,
+          y: targetTranslation.y - expectedTranslation.y,
+        },
+      );
       return document.replace(replacement);
     } catch (cause) {
       throw moveError(

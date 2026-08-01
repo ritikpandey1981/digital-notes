@@ -41,7 +41,7 @@ function MenuTrigger({ label }: { label: string }) {
   return (
     <button
       type="button"
-      className="inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[13px] font-medium text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+      className="inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[13px] font-medium text-folio-muted transition-[background-color,color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-[0.98] data-[state=open]:bg-folio-hover data-[state=open]:text-folio-ink"
     >
       {label}
       <ChevronDown className="size-3" aria-hidden="true" />
@@ -133,8 +133,8 @@ export function AppMenuBar({ sidebarExpanded, onToggleSidebar, onSelectTool }: A
               <DropdownMenuItem onSelect={() => onSelectTool("Image")}>
                 <Image className="size-4" aria-hidden="true" /> Image
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onSelectTool("Shape")}>
-                <Shapes className="size-4" aria-hidden="true" /> Shape
+              <DropdownMenuItem onSelect={() => onSelectTool("Shapes")}>
+                <Shapes className="size-4" aria-hidden="true" /> Shapes
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onSelectTool("Table")}>
                 <Table2 className="size-4" aria-hidden="true" /> Table

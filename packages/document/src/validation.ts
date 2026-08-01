@@ -8,7 +8,7 @@ import type {
   PageObject,
 } from "./types";
 
-const SUPPORTED_TYPES = new Set(["ink"]);
+const SUPPORTED_TYPES = new Set(["ink", "line", "rectangle", "ellipse"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -110,6 +110,83 @@ function collectStroke(value: unknown, path: string, issues: ObjectValidationIss
   }
 }
 
+function collectStyle(value: unknown, path: string, issues: ObjectValidationIssue[]): void {
+  if (!isRecord(value) || !isRecord(value.strokeColor) || !isRecord(value.strokeColor.rgb)) {
+    addIssue(issues, path, "invalid_style", "Vector objects require an immutable stroke style.");
+    return;
+  }
+  const color = value.strokeColor;
+  const rgb = color.rgb as Record<string, unknown>;
+  const valid =
+    typeof color.hex === "string" &&
+    /^#[0-9a-f]{6}$/iu.test(color.hex) &&
+    typeof color.opacity === "number" &&
+    Number.isFinite(color.opacity) &&
+    color.opacity >= 0 &&
+    color.opacity <= 1 &&
+    [rgb.red, rgb.green, rgb.blue].every(
+      (channel) =>
+        Number.isInteger(channel) && (channel as number) >= 0 && (channel as number) <= 255,
+    ) &&
+    typeof value.strokeWidth === "number" &&
+    Number.isFinite(value.strokeWidth) &&
+    value.strokeWidth > 0 &&
+    Object.isFrozen(value) &&
+    Object.isFrozen(color) &&
+    Object.isFrozen(rgb);
+  if (!valid) {
+    addIssue(issues, path, "invalid_style", "Vector stroke style must be valid and immutable.");
+  }
+}
+
+function finitePosition(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.x === "number" &&
+    Number.isFinite(value.x) &&
+    typeof value.y === "number" &&
+    Number.isFinite(value.y)
+  );
+}
+
+function collectVectorGeometry(
+  type: "line" | "rectangle" | "ellipse",
+  value: unknown,
+  path: string,
+  issues: ObjectValidationIssue[],
+): void {
+  if (!isRecord(value) || !Object.isFrozen(value)) {
+    addIssue(issues, path, "invalid_geometry", "Vector geometry must be an immutable object.");
+    return;
+  }
+  const valid =
+    type === "line"
+      ? finitePosition(value.start) &&
+        finitePosition(value.end) &&
+        Object.isFrozen(value.start) &&
+        Object.isFrozen(value.end) &&
+        ((value.start as { x: number; y: number }).x !==
+          (value.end as { x: number; y: number }).x ||
+          (value.start as { x: number; y: number }).y !== (value.end as { x: number; y: number }).y)
+      : type === "rectangle"
+        ? [value.x, value.y, value.width, value.height].every(
+            (item) => typeof item === "number" && Number.isFinite(item),
+          ) &&
+          (value.width as number) > 0 &&
+          (value.height as number) > 0
+        : finitePosition(value.center) &&
+          Object.isFrozen(value.center) &&
+          typeof value.radiusX === "number" &&
+          Number.isFinite(value.radiusX) &&
+          value.radiusX > 0 &&
+          typeof value.radiusY === "number" &&
+          Number.isFinite(value.radiusY) &&
+          value.radiusY > 0;
+  if (!valid) {
+    addIssue(issues, path, "invalid_geometry", `Invalid ${type} geometry.`);
+  }
+}
+
 export function validateObject(value: unknown): ObjectValidationResult {
   const issues: ObjectValidationIssue[] = [];
   if (!isRecord(value)) {
@@ -121,7 +198,7 @@ export function validateObject(value: unknown): ObjectValidationResult {
     addIssue(issues, "$.id", "invalid_value", "Object id must not be empty.");
   }
   if (typeof value.type !== "string" || !SUPPORTED_TYPES.has(value.type)) {
-    addIssue(issues, "$.type", "unknown_type", "Only InkObject is supported in Phase 8.");
+    addIssue(issues, "$.type", "unknown_type", "The PageObject type is not supported.");
   }
   if (value.version !== 1) {
     addIssue(issues, "$.version", "invalid_version", "Object version must be 1.");
@@ -154,6 +231,11 @@ export function validateObject(value: unknown): ObjectValidationResult {
   if (value.type === "ink") {
     collectStroke(value.stroke, "$.stroke", issues);
     collectMetadata(value.renderingHints, "$.renderingHints", issues);
+  }
+  if (value.type === "line" || value.type === "rectangle" || value.type === "ellipse") {
+    collectVectorGeometry(value.type, value.geometry, "$.geometry", issues);
+    collectStyle(value.style, "$.style", issues);
+    collectBounds(value.localBounds, "$.localBounds", issues);
   }
   return Object.freeze({ valid: issues.length === 0, issues: Object.freeze(issues) });
 }

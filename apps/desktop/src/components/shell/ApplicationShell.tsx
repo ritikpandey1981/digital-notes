@@ -1,11 +1,23 @@
 import { EditorWorkspace } from "../editor/EditorWorkspace";
+import { TooltipLayerProvider } from "../editor/ToolTooltip";
 import { useEditorWorkspaceState } from "../editor/useEditorWorkspaceState";
 import { AppMenuBar } from "./AppMenuBar";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
+import { ContextHintProvider } from "./ContextHintProvider";
 import { useShellUiState } from "./useShellUiState";
 
 export function ApplicationShell() {
+  return (
+    <TooltipLayerProvider>
+      <ContextHintProvider>
+        <ApplicationShellContent />
+      </ContextHintProvider>
+    </TooltipLayerProvider>
+  );
+}
+
+function ApplicationShellContent() {
   const shellUi = useShellUiState();
   const editorWorkspace = useEditorWorkspaceState();
 
@@ -28,6 +40,7 @@ export function ApplicationShell() {
             workspaceName="Studio Notes"
             locationLabel={shellUi.activeSection}
             activeTool={editorWorkspace.activeTool}
+            activeFloatingWidget={editorWorkspace.activeFloatingWidget}
             onSelectTool={editorWorkspace.selectTool}
             drawingStyle={editorWorkspace.drawingStyle}
             toolOptions={editorWorkspace.toolOptions}
@@ -36,7 +49,7 @@ export function ApplicationShell() {
             onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
             onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
             onDrawingColorUsed={editorWorkspace.rememberColorUsage}
-            onDismissToolOptions={editorWorkspace.dismissToolOptions}
+            onDismissFloatingWidget={editorWorkspace.dismissFloatingWidget}
           />
         </main>
       </div>

@@ -30,18 +30,27 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       "Pen",
       "Highlighter",
       "Eraser",
-      "Shape",
-      "Text",
-      "Image",
+      "Shapes",
       "Duplicate selected object",
       "Delete selected object",
       "More tools",
     ] as const) {
       await expect(toolDock.getByRole("button", { name: retainedTool, exact: true })).toBeVisible();
     }
+    for (const individualShape of ["Line", "Rectangle", "Ellipse"] as const) {
+      await expect(
+        toolDock.getByRole("button", { name: individualShape, exact: true }),
+      ).toHaveCount(0);
+    }
+    await toolDock.getByRole("button", { name: "Shapes", exact: true }).click();
+    const shapesWidget = window.getByTestId("shapes-widget");
+    await expect(shapesWidget).toBeVisible();
+    for (const shape of ["Line", "Rectangle", "Ellipse"] as const) {
+      await expect(shapesWidget.getByRole("button", { name: shape, exact: true })).toBeVisible();
+    }
     const moreTools = toolDock.getByRole("button", { name: "More tools" });
     await moreTools.click();
-    for (const action of ["Table", "Sticky Note"] as const) {
+    for (const action of ["Text", "Image", "Table", "Sticky Note"] as const) {
       await expect(window.getByRole("menuitem", { name: action, exact: true })).toBeVisible();
     }
     await window.keyboard.press("Escape");
@@ -133,7 +142,9 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "1");
     await expect(canvasSurface).toHaveAttribute("data-document-object-count", "1");
     await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
-    expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeInk);
+    await expect
+      .poll(async () => Number(await canvas.getAttribute("data-render-count")))
+      .toBeGreaterThan(baseRenderBeforeInk);
     expect(Number(await inkCanvas.getAttribute("data-ink-render-count"))).toBeGreaterThan(
       inkRenderBefore,
     );
@@ -300,7 +311,9 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     expect(Number(await inkCanvas.getAttribute("data-ink-render-count"))).toBeGreaterThan(
       inkRenderBeforeMove,
     );
-    expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
+    await expect
+      .poll(async () => Number(await canvas.getAttribute("data-render-count")))
+      .toBeGreaterThan(baseRenderBeforeMove);
     await expect
       .poll(async () => {
         const before = Number(
@@ -325,6 +338,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     const inkRenderBeforeShortcutUndo = Number(
       await inkCanvas.getAttribute("data-ink-render-count"),
     );
+    const baseRenderBeforeShortcutUndo = Number(await canvas.getAttribute("data-render-count"));
 
     await window.keyboard.press("Control+Z");
     await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "2");
@@ -344,7 +358,9 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await expect
       .poll(async () => Number(await inkCanvas.getAttribute("data-ink-render-count")))
       .toBeGreaterThan(inkRenderBeforeShortcutUndo);
-    expect(Number(await canvas.getAttribute("data-render-count"))).toBe(baseRenderBeforeMove);
+    await expect
+      .poll(async () => Number(await canvas.getAttribute("data-render-count")))
+      .toBeGreaterThan(baseRenderBeforeShortcutUndo);
 
     await window.keyboard.press("Control+Shift+Z");
     await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "3");

@@ -8,8 +8,9 @@ React supplies the host lifecycle and callbacks. It does not calculate transform
 
 - `CanvasSurface` is the package's only runtime export.
 - `CanvasSurfaceProps` documents interaction mode, lifecycle, diagnostics, selection, manipulation, History, and error callbacks.
-- `CanvasInteractionMode` is the type-only `"select" | "move" | "rotate" | "scale" | "ink" | "highlighter" | "eraser" | "disabled"` routing contract.
+- `CanvasInteractionMode` additively includes `"line"`, `"rectangle"`, and `"ellipse"` beside the existing select, transform, ink, highlighter, eraser, and disabled modes.
 - `ObjectLifecycleActions` is a session-scoped type-only action boundary for deleting or duplicating the editor's logical selection; the desktop toolbar receives it through `onObjectLifecycleActionsReady`.
+- `ShapeEditingActions`, `ShapeEditingSnapshot`, and `ShapeStylePatch` are additive type-only boundaries that let desktop composition present selected-vector properties without exposing editor implementation classes.
 
 The additive History callbacks are:
 
@@ -41,11 +42,11 @@ flowchart TD
     Adapter --> Commands["Private Move, Rotate, Scale, Delete, or Duplicate command"]
     Commands --> History["@folio/history public factories and interfaces"]
     History --> Document
-    Document --> Refresh["Permanent ink and selection refresh"]
+    Document --> Refresh["Permanent ink/vector and selection refresh"]
     Rendering --> Refresh
 ```
 
-`CanvasSurface` mounts one `CanvasController`, ink overlay, selection overlay, manipulation-preview overlay, document session, selection subsystem, editor logical-selection set, session clipboard, manipulation subsystem, History manager/controller pair, shortcut listeners, and context-menu bridge. Teardown removes listeners, clears editor-local state, unsubscribes observers, destroys the controller/coordinator, clears the session, and disposes rendering resources. Tool changes do not remount the canvas or recreate History.
+`CanvasSurface` mounts one base `CanvasController`, ink overlay, vector-interaction overlay, selection overlay, manipulation-preview overlay, shape-creation preview overlay, document session, selection subsystem, editor logical-selection set, session clipboard, manipulation subsystem, History manager/controller pair, shortcut listeners, and context-menu bridge. Teardown removes listeners, temporary measurements, previews, pointer capture, editor-local state, subscriptions, and rendering resources. Tool changes do not remount the canvas or recreate History.
 
 ## Manipulation and History
 
@@ -63,7 +64,7 @@ flowchart LR
     Session --> Sync["Render and selection synchronization"]
 ```
 
-All six private commands implement `EditorCommand<ObjectCollection>` for exactly one `InkObject`. Transform and lifecycle commands require a visible, unlocked target and store only their operation-specific state. `AddStrokeCommand` retains one newly finalized immutable ink object; one pointer-down/draw/pointer-up lifecycle therefore creates exactly one History entry. `DeleteCommand` retains the exact immutable deleted object and its original index; `DuplicateCommand` creates one immutable clone through `ObjectFactory.cloneObject()` and retains its identity and insertion index. Commands contain no rendering, selection, manipulation-session, or History-stack behavior.
+The private commands implement `EditorCommand<ObjectCollection>` over supported immutable PageObjects. Transform and lifecycle commands require a visible, unlocked target and store only their operation-specific state. `AddStrokeCommand` remains ink-specific; the existing insert command adds one completed vector object as one History entry. Delete, Duplicate, Move, Rotate, Scale, clipboard, and paste use the same commands for ink and vectors. Commands contain no rendering, selection, manipulation-session, or History-stack behavior.
 
 `DuplicateCommand` validates the clone's complete logical immutable state rather than requiring heap-reference equality. This allows a later transform to execute and undo before the duplication itself is undone, while still rejecting stale or mismatched clone state.
 
@@ -81,7 +82,7 @@ Cut copies first and executes one transaction containing existing delete command
 
 ## Select tool interaction
 
-Select is the universal object-manipulation tool. A click uses a forgiving, top-most-first bounds hit policy with a two-page-unit tolerance. Once selected, the overlay displays four scale handles and one rotation handle. Pointer targeting is editor-owned: dragging inside the selected bounds starts translation, dragging a corner starts uniform scale, and dragging the upper handle starts rotation. Each route delegates to the existing manipulation controller and unchanged command adapter. The legacy Move, Rotate, and Scale modes remain compatible, but they are not required for normal manipulation.
+Select is the universal object-manipulation tool. Ink retains its forgiving bounds-oriented editor policy; lines use their actual path with a larger thin-line tolerance, while rectangles and ellipses are selectable anywhere inside their transformed geometry. Results remain top-most-first. Rectangles and ellipses retain four scale handles and one rotation handle. A selected line instead displays its highlighted path with endpoint and midpoint handles and no rectangular selection box. Pointer targeting is editor-owned: dragging inside the selected bounds starts translation, dragging a supported corner starts uniform scale, and dragging the upper handle starts rotation. Each route delegates to the existing manipulation controller and unchanged command adapter. The legacy Move, Rotate, and Scale modes remain compatible, but they are not required for normal manipulation.
 
 Switching to Pen clears selection immediately without remounting the canvas, recreating History, or affecting the document. Ink rendering remains live during pointer movement; only the completed immutable stroke is submitted to History.
 
@@ -103,17 +104,17 @@ Ink paths use the adaptive multi-point cubic Bézier fitter documented by `@foli
 
 Phase 14 adds an interface-oriented `EditorToolRegistry`. A tool owns activation, deactivation, pointer events, keyboard events, cursor state, temporary rendering, and cleanup. `CanvasSurface` delegates through one registry while retaining its original interaction-mode API. The optional drawing-style input is sampled only when a new stroke begins, so changing presets never mutates existing ink.
 
-The built-in registry contains Select, legacy Move/Rotate/Scale adapters, Pen, Highlighter, whole-stroke Eraser, and Disabled. Pen and Highlighter activate the same `PointerInputController`, document factory, History coordinator, curve cache, and renderer. Their only difference is immutable stroke style. Eraser hit-tests complete objects and executes existing Delete commands inside one History transaction per pointer gesture. It never edits points or splits paths.
+The built-in registry contains Select, legacy Move/Rotate/Scale adapters, Pen, Highlighter, whole-object Eraser, Line, Rectangle, Ellipse, and Disabled. Pen and Highlighter activate the same `PointerInputController`, document factory, History coordinator, curve cache, and renderer. Their only difference is immutable stroke style. Eraser hit-tests complete objects and executes existing Delete commands inside one History transaction per pointer gesture. It never edits points or splits paths.
 
 `PenPresetStore` retains independent Pen and Highlighter choices. Presets contain a generic `EditableStyle`, pressure settings, and a future-compatible brush identifier. `EditorColorSystem` provides one validated hex/RGB representation, a shared preset palette, and bounded recent colors. Widths are presets rather than a closed enum, so arbitrary positive values remain valid.
 
-The backend-only `PropertyDescriptorRegistry` maps `PageObject.type` to providers. The current Ink provider describes color, width, and opacity without embedding UI or tool behavior in `PageObject`. Future object types register their own providers; a future panel renders descriptors rather than branching on concrete classes.
+The backend-only `PropertyDescriptorRegistry` maps `PageObject.type` to providers. Ink, Line, Rectangle, and Ellipse providers describe color, width, and opacity without embedding UI or tool behavior in `PageObject`. Future object types register their own providers; a future panel renders descriptors rather than branching on concrete classes.
 
 ## Phase 14.1 desktop UX policy
 
-The desktop uses a permanent 48-by-420-pixel vertical Tool Dock at the left center of the workspace. It contains tools and actions only; it never resizes, collapses, expands, scrolls, or moves. Pen and Highlighter settings appear in a separate 304-pixel Context Tool Palette immediately beside it, so tool switching and setting changes cannot affect the dock.
+The desktop uses a permanent 48-pixel-wide, content-sized vertical Tool Dock at the left center of the workspace. Equal top and bottom padding frame the controls without a reserved footer, and the dock never expands, scrolls, or moves in response to tool state. Pen and Highlighter settings appear in a separate 304-pixel Context Tool Palette immediately beside it, so tool switching and setting changes cannot affect the dock.
 
-The desktop options adapter reuses the public `EditablePropertyDescriptor` shape without changing the frozen editor Tool Registry or property-descriptor backend. A registry of option providers describes the active desktop tool, and reusable property renderers consume those descriptors. The same provider factory describes Pen and Highlighter, leaving a clear additive path for future configurable tools without tool-specific branching in the widget.
+The desktop options adapter reuses the public `EditablePropertyDescriptor` shape without changing the editor Tool Registry or property-descriptor backend. A registry of option providers describes Pen and Highlighter, and reusable property renderers consume those descriptors. Vector creation has no Context Tool Palette; vector properties are edited after selection.
 
 The Context Tool Palette fades and slides horizontally over 180 milliseconds. It remains mounted when switching directly between Pen and Highlighter; only its descriptor-driven contents update with a 150-millisecond transition. Selecting a tool without configurable properties or pressing anywhere outside the palette, including the rendered page and surrounding workspace, animates it out. Page input still reaches the active editor tool; empty gray workspace presses are consumed so dismissing Pen options cannot create an accidental dot.
 
@@ -121,7 +122,21 @@ Color selection only updates the active immutable preset. The desktop observes t
 
 Width is continuously adjustable from 0.5–30 pixels and retains floating-point values. Pen and Highlighter both present a complete 10–100% opacity control. The Highlighter control normalizes that display range onto the unchanged 0.10–0.45 model range, so 100% in the widget still renders at the existing 0.45 opacity ceiling and preserves its wide, pressure-independent, translucent identity without changing Stroke, rendering, or document semantics. Both premium continuous controls include an enlarged hit target, animated thumb, immediately synchronized numeric input, keyboard and Shift+Arrow adjustment, hovered-wheel adjustment, and a HiDPI Canvas2D preview that mirrors finalized-stroke style and cubic-path drawing semantics. Double-click has no special behavior.
 
-The desktop adapter applies purpose-specific pointer feedback without changing editor interaction contracts: Pen, Highlighter, and Eraser use distinct custom cursors, future object tools use semantic system cursors, and Select/Move/Rotate/Scale retain the editor engine's dynamic cursors.
+The desktop adapter applies purpose-specific pointer feedback without changing editor interaction contracts: Pen, Highlighter, and Eraser use distinct custom cursors, the unified Shapes tool uses one crosshair for every shape kind, and Select/Move/Rotate/Scale retain the editor engine's dynamic cursors.
+
+## Phase 15R shape workflow
+
+The desktop Tool Dock exposes one Shapes entry. Its small floating Shapes widget contains only Line, Rectangle, and Ellipse and preserves the selected shape kind between creations. The underlying additive `CanvasInteractionMode` values remain unchanged, so this is a desktop-composition refinement rather than a tool-registry redesign. Shape creation continues to use pointer-down, live preview, pointer-up commit, and one existing insert command. Shift constraints are evaluated throughout the gesture, not only on its first event.
+
+The mounted shape-editing toolbar is visible only for one selected vector and remains mounted while selection changes between supported vector types. Its content-sized horizontal surface is clamped to the viewport and chooses an above- or below-object placement to minimize obstruction. Stroke color, width, and opacity route through a private immutable style-update command and the existing `EditorHistoryCoordinator`; Duplicate and Delete reuse existing session lifecycle actions. The toolbar therefore owns no document mutations, History stacks, rendering behavior, or selection state. Its More control is intentionally a disabled placeholder.
+
+Width and Opacity use the same `ContinuousSlider` as Pen and Highlighter. A reusable controlled expansion component supplies each trigger, animated panel, focus semantics, Escape/outside dismissal, and stable absolute layout. Numeric trigger summaries reserve one fixed tabular-width field capable of displaying values through `1000.0 px`, so value changes cannot resize or horizontally reposition the toolbar. Future controls can use that same mechanism without adding new expansion behavior. The panel is outside normal layout flow, so opening it does not resize or shift the toolbar.
+
+Desktop composition preserves the toolbar's viewport anchor during style-only object replacement. Document bounds and selection geometry still update normally; only the floating toolbar presentation retains its position until the object itself moves, transforms, changes selection, or the viewport changes. The Shapes widget uses a 56-by-126-pixel surface with 36-pixel actions, reducing visual weight while keeping comfortable desktop targets.
+
+Selection presentation is configured through existing renderer style inputs and the editor-owned vector interaction overlay. The final palette uses a less saturated accent, thinner outline, and lower highlight opacity while preserving handle size and hit targets. During active shape creation, Shift key events prevent Chromium's default behavior and update constraints without repeated renders; Windows' operating-system Sticky Keys accessibility shortcut remains under system control.
+
+The editor-owned vector interaction overlay is invalidation-driven. It draws temporary hover emphasis and the selected-line path/endpoint/midpoint presentation, then becomes idle until pointer, selection, viewport, or document state changes. No continuous render loop, serialized presentation state, or new package dependency is introduced.
 
 An outside pointer press—including one on the rendered page or surrounding workspace—dismisses the Context Tool Palette without changing the active tool or its retained settings. Selecting that tool again reopens the palette. The existing Radix More menu retains the same workspace-dismiss behavior.
 

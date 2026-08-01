@@ -126,6 +126,8 @@ export interface StrokeRendererOptions {
   readonly canvas?: HTMLCanvasElement;
   readonly animationFrameAdapter?: import("@folio/rendering").AnimationFrameAdapter;
   readonly onInvalidate?: (dirtyRect: Rect) => void;
+  /** Keeps finalized geometry cached while allowing an external compositor to own presentation. */
+  readonly finalizedPresentation?: "retained" | "external";
 }
 
 /** Absolute page transform applied to one finalized immutable stroke. */

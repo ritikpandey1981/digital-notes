@@ -1,5 +1,18 @@
-import { InkObject, ObjectCollection, ObjectFactory } from "@folio/document";
+import {
+  EllipseObject,
+  InkObject,
+  LineObject,
+  ObjectCollection,
+  ObjectFactory,
+  RectangleObject,
+} from "@folio/document";
 import type { ObjectFactoryOptions } from "@folio/document";
+import type {
+  EditableStyleInput,
+  EllipseGeometry,
+  LineGeometry,
+  RectangleGeometry,
+} from "@folio/document";
 import type { HistoryDocumentSession } from "@folio/history";
 import type { Stroke } from "@folio/ink";
 
@@ -40,6 +53,22 @@ export class InkDocumentSession implements HistoryDocumentSession<ObjectCollecti
       stroke,
       zIndex: this.collectionValue.size,
     });
+  }
+
+  createLineObject(geometry: LineGeometry, style: EditableStyleInput): LineObject {
+    return this.factory.createLineObject({ geometry, style, zIndex: this.collectionValue.size });
+  }
+
+  createRectangleObject(geometry: RectangleGeometry, style: EditableStyleInput): RectangleObject {
+    return this.factory.createRectangleObject({
+      geometry,
+      style,
+      zIndex: this.collectionValue.size,
+    });
+  }
+
+  createEllipseObject(geometry: EllipseGeometry, style: EditableStyleInput): EllipseObject {
+    return this.factory.createEllipseObject({ geometry, style, zIndex: this.collectionValue.size });
   }
 
   completeStroke(stroke: Stroke): InkObject {

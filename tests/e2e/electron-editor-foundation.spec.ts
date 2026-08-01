@@ -23,7 +23,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     const surface = window.getByTestId("canvas-surface");
     const baseCanvas = host.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
-    await expect(surface).toHaveAttribute("data-tool-registry-size", "8");
+    await expect(surface).toHaveAttribute("data-tool-registry-size", "11");
     await inkCanvas.evaluate((canvas) => {
       canvas.dataset.phase14LifecycleToken = "mounted-once";
     });

@@ -105,6 +105,7 @@ export class StrokeRenderer {
   private readonly viewport: Viewport;
   private readonly canvas: HTMLCanvasElement | undefined;
   private readonly onInvalidate: ((dirtyRect: Rect) => void) | undefined;
+  private readonly finalizedPresentation: "retained" | "external";
   private readonly scheduler: RenderScheduler;
   private readonly pathCache = new WeakMap<Stroke, ProfessionalInkPath>();
   private readonly finalizedStrokes: FinalizedStrokeState[] = [];
@@ -125,6 +126,7 @@ export class StrokeRenderer {
     this.viewport = options.viewport;
     this.canvas = options.canvas;
     this.onInvalidate = options.onInvalidate;
+    this.finalizedPresentation = options.finalizedPresentation ?? "retained";
     this.scheduler = new RenderScheduler(
       () => this.renderIncrementalFrame(),
       options.animationFrameAdapter,
@@ -308,7 +310,9 @@ export class StrokeRenderer {
     context.restore();
 
     this.withPageTransform(null, () => {
-      for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
+      if (this.finalizedPresentation === "retained") {
+        for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
+      }
       if (this.liveStroke !== null) {
         this.drawPoints(this.liveStroke.points, this.liveStroke.style, 0);
         this.renderedLivePointCount = this.liveStroke.points.length;
@@ -388,7 +392,9 @@ export class StrokeRenderer {
     context.clearRect(viewportRect.x, viewportRect.y, viewportRect.width, viewportRect.height);
     context.restore();
     this.withPageTransform(dirtyRect, () => {
-      for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
+      if (this.finalizedPresentation === "retained") {
+        for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
+      }
     });
     this.renderCountValue += 1;
     this.updateCanvasDiagnostics();
@@ -466,6 +472,7 @@ export class StrokeRenderer {
   private updateCanvasDiagnostics(): void {
     if (this.canvas === undefined) return;
     this.canvas.dataset.inkStrokeCount = String(this.finalizedStrokes.length);
+    this.canvas.dataset.inkFinalizedPresentation = this.finalizedPresentation;
     this.canvas.dataset.inkPathMode = "adaptive-error-fit-bezier";
     this.canvas.dataset.inkSourcePointCount = String(this.finalizedSourcePointCountValue);
     this.canvas.dataset.inkFilteredPointCount = String(this.finalizedFilteredPointCountValue);

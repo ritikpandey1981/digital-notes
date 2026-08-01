@@ -1,4 +1,9 @@
-import type { InkObjectView, ObjectBounds } from "@folio/document";
+import type {
+  InkObjectView,
+  LineObjectView,
+  ObjectBounds,
+  VectorPageObject,
+} from "@folio/document";
 import type { PagePoint } from "../model/coordinates";
 
 type InkStrokePoint = InkObjectView["stroke"]["points"][number];
@@ -84,4 +89,81 @@ export function distanceToInkGeometry(point: PagePoint, object: InkObjectView): 
     );
   }
   return shortestDistance * object.transform.scale;
+}
+
+/** Returns distance to the visible vector outline, with optional future fill support. */
+export function distanceToVectorGeometry(point: PagePoint, object: VectorPageObject): number {
+  const pivot = {
+    x: object.localBounds.x + object.localBounds.width / 2,
+    y: object.localBounds.y + object.localBounds.height / 2,
+  };
+  const local = object.transform.invertPoint(point, pivot);
+  let centerlineDistance: number;
+  switch (object.type) {
+    case "line":
+      centerlineDistance = distanceToLine(local, object);
+      break;
+    case "rectangle": {
+      const { x, y, width, height } = object.geometry;
+      if (object.style.fillColor !== undefined && insideRect(local, x, y, width, height)) return 0;
+      centerlineDistance = distanceToRectangleOutline(local, x, y, width, height);
+      break;
+    }
+    case "ellipse": {
+      const { center, radiusX, radiusY } = object.geometry;
+      const normalized = Math.hypot((local.x - center.x) / radiusX, (local.y - center.y) / radiusY);
+      if (object.style.fillColor !== undefined && normalized <= 1) return 0;
+      centerlineDistance = distanceToEllipseOutline(local, center, radiusX, radiusY);
+      break;
+    }
+  }
+  return Math.max(0, centerlineDistance * object.transform.scale - object.style.strokeWidth / 2);
+}
+
+function distanceToLine(point: Readonly<{ x: number; y: number }>, object: LineObjectView): number {
+  return distanceToSegment(
+    { ...point, coordinateSpace: "page" },
+    object.geometry.start as InkStrokePoint,
+    object.geometry.end as InkStrokePoint,
+  );
+}
+
+function insideRect(
+  point: Readonly<{ x: number; y: number }>,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): boolean {
+  return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height;
+}
+
+function distanceToRectangleOutline(
+  point: Readonly<{ x: number; y: number }>,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): number {
+  if (insideRect(point, x, y, width, height)) {
+    return Math.min(point.x - x, x + width - point.x, point.y - y, y + height - point.y);
+  }
+  const deltaX = Math.max(x - point.x, 0, point.x - (x + width));
+  const deltaY = Math.max(y - point.y, 0, point.y - (y + height));
+  return Math.hypot(deltaX, deltaY);
+}
+
+function distanceToEllipseOutline(
+  point: Readonly<{ x: number; y: number }>,
+  center: Readonly<{ x: number; y: number }>,
+  radiusX: number,
+  radiusY: number,
+): number {
+  const deltaX = point.x - center.x;
+  const deltaY = point.y - center.y;
+  const normalized = Math.hypot(deltaX / radiusX, deltaY / radiusY);
+  if (normalized === 0) return Math.min(radiusX, radiusY);
+  const boundaryX = center.x + deltaX / normalized;
+  const boundaryY = center.y + deltaY / normalized;
+  return Math.hypot(point.x - boundaryX, point.y - boundaryY);
 }

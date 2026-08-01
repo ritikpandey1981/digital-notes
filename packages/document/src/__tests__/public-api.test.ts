@@ -6,30 +6,40 @@ describe("@folio/document public API", () => {
   it("exposes only document models, factories, collections, validation, and errors", () => {
     expect(Object.keys(document).sort()).toEqual([
       "DocumentObjectError",
+      "EllipseObject",
       "InkObject",
+      "LineObject",
       "ObjectCollection",
       "ObjectFactory",
       "ObjectValidationError",
+      "RectangleObject",
       "Transform",
       "assertValidObject",
       "assertValidObjectCollection",
       "cloneObject",
       "createEditableColor",
       "createEditableStyle",
+      "createEllipseObject",
       "createInkObject",
+      "createLineObject",
+      "createRectangleObject",
+      "deserializeVectorObject",
       "isObjectBounds",
       "isObjectMetadata",
       "isPageObject",
+      "isVectorObject",
       "normalizeHexColor",
       "rotateObject",
       "scaleObject",
+      "serializeVectorObject",
       "translateObject",
       "validateObject",
       "validateObjectCollection",
+      "vectorGeometryBounds",
     ]);
   });
 
-  it("keeps serialization as a compile-time contract without an implementation", () => {
+  it("preserves the generic serialization contract alongside vector serialization", () => {
     const contract: ObjectSerializationContract = {
       serialize: (): SerializedPageObject => {
         throw new Error("Contract-only test");

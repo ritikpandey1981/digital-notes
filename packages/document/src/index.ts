@@ -13,11 +13,26 @@ export {
   type EditableStyleInput,
 } from "./editable-style";
 export { InkObject } from "./ink-object";
+export {
+  EllipseObject,
+  LineObject,
+  RectangleObject,
+  isVectorObject,
+  vectorGeometryBounds,
+} from "./vector-object";
+export {
+  deserializeVectorObject,
+  serializeVectorObject,
+  type SerializedVectorObject,
+} from "./vector-serialization";
 export { ObjectCollection } from "./object-collection";
 export {
   ObjectFactory,
   cloneObject,
+  createEllipseObject,
   createInkObject,
+  createLineObject,
+  createRectangleObject,
   rotateObject,
   scaleObject,
   translateObject,
@@ -25,9 +40,16 @@ export {
 export { Transform, type TransformInput } from "./transform";
 export type {
   CloneObjectOptions,
+  CreateEllipseObjectInput,
   CreateInkObjectInput,
+  CreateLineObjectInput,
+  CreateRectangleObjectInput,
+  EllipseGeometry,
+  EllipseObjectView,
   InkObjectData,
   InkObjectView,
+  LineGeometry,
+  LineObjectView,
   ObjectBounds,
   ObjectCollectionStatistics,
   ObjectFactoryOptions,
@@ -38,8 +60,14 @@ export type {
   ObjectVersion,
   PageObject,
   PageObjectType,
+  RectangleGeometry,
+  RectangleObjectView,
   RenderingHints,
   SerializedPageObject,
+  VectorGeometry,
+  VectorObjectData,
+  VectorObjectType,
+  VectorPageObject,
 } from "./types";
 export {
   assertValidObject,

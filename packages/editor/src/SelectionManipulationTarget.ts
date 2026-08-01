@@ -15,7 +15,7 @@ export interface SelectionManipulationTargetInput {
 }
 
 export type SelectionManipulationCursor =
-  "default" | "grab" | "grabbing" | "nwse-resize" | "nesw-resize" | "rotation";
+  "default" | "crosshair" | "grab" | "grabbing" | "nwse-resize" | "nesw-resize" | "rotation";
 
 export interface SelectionManipulationHit {
   readonly kind: ManipulationKind;

@@ -1,4 +1,10 @@
-import { InkObject, type ObjectCollection, type PageObject } from "@folio/document";
+import {
+  InkObject,
+  type EditableStyleInput,
+  type ObjectCollection,
+  type PageObject,
+  type VectorPageObject,
+} from "@folio/document";
 import {
   createEditorHistoryManager,
   createHistoryController,
@@ -17,6 +23,7 @@ import type { InkDocumentSession } from "../InkDocumentSession";
 import { createAddStrokeCommand } from "./add-stroke-command";
 import { createInsertObjectCommand } from "./insert-object-command";
 import { createCommandForManipulation } from "./manipulation-command-adapter";
+import { createUpdateVectorStyleCommand } from "./update-vector-style-command";
 
 interface EditorHistoryCoordinatorOptions {
   readonly documentSession: InkDocumentSession;
@@ -34,6 +41,11 @@ interface EditorHistoryCoordinatorOptions {
 export interface EditorHistoryCoordinator {
   readonly controller: IHistoryController<ObjectCollection>;
   readonly executeStroke: (object: InkObject) => IHistoryState;
+  readonly executeObjectCreation: (object: PageObject) => IHistoryState;
+  readonly executeVectorStyleUpdate: (
+    object: VectorPageObject,
+    style: EditableStyleInput,
+  ) => IHistoryState;
   readonly executeManipulation: (result: ManipulationResult) => IHistoryState;
   readonly executeManipulations: (
     results: readonly ManipulationResult[],
@@ -122,6 +134,32 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     );
   }
 
+  executeObjectCreation(object: PageObject): IHistoryState {
+    return this.controller.executeCommand(
+      createInsertObjectCommand({
+        object,
+        insertionIndex: object.zIndex,
+        id: `create-${object.type}-${object.id}`,
+        timestamp: object.modifiedAt,
+        description: `Create ${object.type} object`,
+      }),
+    );
+  }
+
+  executeVectorStyleUpdate(object: VectorPageObject, style: EditableStyleInput): IHistoryState {
+    const timestamp = this.#now();
+    return this.controller.executeCommand(
+      createUpdateVectorStyleCommand({
+        objectId: object.id,
+        expectedObjectModifiedAt: object.modifiedAt,
+        initialStyle: object.style,
+        finalStyle: style,
+        timestamp,
+        description: `Update ${object.type} appearance`,
+      }),
+    );
+  }
+
   executeDeletions(results: readonly DeleteManipulationResult[]): IHistoryState {
     requireResults(results, "delete");
     return this.#runTransaction(
@@ -189,7 +227,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
           const duplicate = this.#documentSession.collection.objects.find(
             ({ id }) => !originalIds.has(id),
           );
-          if (!(duplicate instanceof InkObject)) {
+          if (duplicate === undefined) {
             throw new Error("Duplicate command did not create a successor object.");
           }
           this.executeManipulation(createDuplicateOffsetResult(result, duplicate, offset));
@@ -242,7 +280,7 @@ function normalizeError(cause: unknown, message: string): Error {
 
 function createDuplicateOffsetResult(
   source: DuplicateManipulationResult,
-  duplicate: InkObject,
+  duplicate: PageObject,
   offset: Readonly<{ x: number; y: number }>,
 ): TranslationManipulationResult {
   const initialObjectTranslation = Object.freeze({

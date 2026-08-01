@@ -1,4 +1,4 @@
-import { type InkObject, ObjectCollection } from "@folio/document";
+import { ObjectCollection, type PageObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 import {
   assertLifecycleCommandInput,
@@ -13,7 +13,7 @@ import {
 } from "./object-lifecycle-command";
 
 export interface DeleteCommandInput {
-  readonly deletedObject: InkObject;
+  readonly deletedObject: PageObject;
   readonly originalInsertionIndex: number;
   readonly id?: string;
   readonly timestamp?: string;
@@ -24,7 +24,7 @@ class DeleteCommand implements EditorCommand<ObjectCollection> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
-  readonly #deletedObject: InkObject;
+  readonly #deletedObject: PageObject;
   readonly #originalInsertionIndex: number;
   readonly #metadata: ResolvedLifecycleMetadata;
 

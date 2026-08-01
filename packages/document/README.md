@@ -1,6 +1,6 @@
 # @folio/document
 
-`@folio/document` is Folio's framework-independent immutable page-object architecture. It implements the generic `PageObject` contract, lifecycle metadata, validation, factories, immutable collections, serialization interfaces, and exactly one concrete visual object: `InkObject`. The object transform supports finite page-space translation, clockwise rotation in radians, and positive uniform scale.
+`@folio/document` is Folio's framework-independent immutable page-object architecture. It implements the generic `PageObject` contract, lifecycle metadata, validation, factories, immutable collections, serialization interfaces, and four concrete visual objects: `InkObject`, `LineObject`, `RectangleObject`, and `EllipseObject`. The object transform supports finite page-space translation, clockwise rotation in radians, and positive uniform scale.
 
 The package does not implement editing, selection, rendering, persistence, history, Electron, React, or notebook mutation. `InkObject` imports `Stroke` only as a TypeScript type and retains the finalized immutable stroke by reference, so stroke points, metrics, statistics, and style are never duplicated.
 
@@ -30,6 +30,8 @@ packages/document/
     |-- object-factory.ts
     |-- transform.ts
     |-- types.ts
+    |-- vector-object.ts
+    |-- vector-serialization.ts
     `-- validation.ts
 ```
 
@@ -59,6 +61,24 @@ classDiagram
         +RenderingHints renderingHints
     }
 
+    class LineObject {
+        +LineGeometry geometry
+        +EditableStyle style
+        +ObjectBounds localBounds
+    }
+
+    class RectangleObject {
+        +RectangleGeometry geometry
+        +EditableStyle style
+        +ObjectBounds localBounds
+    }
+
+    class EllipseObject {
+        +EllipseGeometry geometry
+        +EditableStyle style
+        +ObjectBounds localBounds
+    }
+
     class Transform {
         +Position translation
         +number rotation
@@ -78,12 +98,15 @@ classDiagram
     }
 
     PageObject <|.. InkObject
+    PageObject <|.. LineObject
+    PageObject <|.. RectangleObject
+    PageObject <|.. EllipseObject
     PageObject *-- Transform
     InkObject o-- Stroke
     ObjectCollection o-- PageObject
 ```
 
-`InkObject` uses composition, not a visual-object inheritance hierarchy. Its bounds, metrics, statistics, and style are views over its single immutable `Stroke` reference.
+All concrete objects use composition, not a visual-object inheritance hierarchy. `InkObject` retains one immutable `Stroke`; vector objects retain only immutable geometry and the shared `EditableStyle`. Every object exposes transformed axis-aligned page bounds through the existing `PageObject` contract.
 
 ## Lifecycle
 
@@ -109,7 +132,7 @@ rotation = finite radians
 scale = positive finite factor
 ```
 
-Translation is applied in page space. Rotation and uniform scale use the center of the stroke's local inflated bounds as a stable pivot. `Transform.translatedBy()`, `Transform.withRotation()`, `Transform.withScale()`, and the corresponding `ObjectFactory` operations create new immutable values while preserving the other transform axes. A transformed `InkObject` keeps its identity and `Stroke` reference, updates its lifecycle timestamp and axis-aligned page bounds, and replaces the prior object through `ObjectCollection.replace()`. Non-finite translations or rotations and non-positive or non-finite scales produce structured validation failures.
+Translation is applied in page space. Rotation and uniform scale use the center of each object's local inflated bounds as a stable pivot. `Transform.translatedBy()`, `Transform.withRotation()`, `Transform.withScale()`, and the corresponding `ObjectFactory` operations create new immutable values while preserving the other transform axes. A transformed object keeps its identity and payload references where practical, updates its lifecycle timestamp and axis-aligned page bounds, and replaces the prior object through `ObjectCollection.replace()`. Non-finite translations or rotations and non-positive or non-finite scales produce structured validation failures.
 
 ## Validation
 
@@ -122,19 +145,20 @@ Validation reports immutable issues with stable paths and codes. It covers:
 - Non-JSON, cyclic, non-plain, or non-finite metadata
 - Non-finite or unsupported transforms
 - Missing or mutable stroke references
+- Degenerate or mutable vector geometry and invalid vector styles
 - Duplicate identifiers in collections
 
 Factories and collection constructors assert validation. Non-throwing validators and type guards remain available for boundary checks.
 
 ## Serialization boundary
 
-`SerializedPageObject` and `ObjectSerializationContract` are interfaces only. No serializer, deserializer, save/load path, schema migration, or persistence adapter is implemented in Phase 8.
+`SerializedPageObject` and `ObjectSerializationContract` remain the generic envelope and adapter contracts. `serializeVectorObject()` and `deserializeVectorObject()` provide a deterministic, versioned, JSON-safe round trip for Line, Rectangle, and Ellipse objects. They serialize no creation preview, selection, tool, measurement, or other editor state. Notebook save/load integration, schema migration, and persistence adapters remain outside this package.
 
 ## Shared editable style
 
 `EditableColor` and `EditableStyle` are additive, serialization-neutral values for editor configuration and future `PageObject` types. Colors have a canonical lowercase hexadecimal form, immutable RGB channels, and opacity. Styles currently expose stroke color and width while reserving optional fill, font, line, shadow, and blend fields. Factories validate and freeze every nested value.
 
-`PageObject` remains Folio's only common canvas-object abstraction. No visual inheritance hierarchy or tool behavior was added to the document model. Existing `InkObject`, validation, collection semantics, factories, transforms, and serialization contracts are unchanged.
+`PageObject` remains Folio's only common canvas-object abstraction. No visual inheritance hierarchy or tool behavior was added to the document model. Existing `InkObject` behavior, collection semantics, transforms, and serialization contracts remain compatible.
 
 ## Dependency direction
 
@@ -160,11 +184,11 @@ There is no dependency from document objects to React, Electron, rendering, hist
 
 ## Future extension points
 
-- Additional `PageObjectType` variants and factory branches
+- Additional `PageObjectType` variants and factory branches beyond the current ink and vector types
 - Additional transform operations beyond translation, rotation, and uniform scale
 - Object-specific rendering hints
 - Persistence serialization adapters and migrations
 - History commands around immutable collection successors
 - Selection, hit testing, spatial indexing, and editor state
 
-All of these remain outside the frozen Phase 12 scope.
+All of these remain additive extension points; Phase 15 implements only Line, Rectangle, and Ellipse.

@@ -2,7 +2,10 @@ import { ObjectCollection, ObjectFactory, Transform } from "@folio/document";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
 import type { PagePoint } from "@folio/selection";
 import { describe, expect, it } from "vitest";
-import { createEditorSelectionHitTestEngine } from "../EditorSelectionHitTestEngine";
+import {
+  createEditorSelectionHitTestEngine,
+  queryEditorSelectionCandidates,
+} from "../EditorSelectionHitTestEngine";
 import {
   resolveSelectionManipulationHit,
   resolveSelectionManipulationTarget,
@@ -40,6 +43,47 @@ describe("editor selection hit policy", () => {
       bottom.id,
     ]);
     expect(engine.queryNearby(pagePoint(110, 50), 2)).toEqual([]);
+  });
+
+  it("returns every selectable overlap in deterministic order and excludes locked objects", () => {
+    const bottom = createObject("bottom", 0);
+    const top = createObject("top", 1);
+    const locked = new ObjectFactory({ now: () => "2026-07-28T08:00:00.000Z" }).createInkObject({
+      id: "locked",
+      zIndex: 2,
+      locked: true,
+      stroke: createStroke("locked"),
+    });
+    const collection = new ObjectCollection([bottom, top, locked]);
+    const engine = createEditorSelectionHitTestEngine({
+      getObjects: () => collection.objects,
+      getObject: (objectId) => collection.lookup(objectId),
+    });
+
+    expect(
+      queryEditorSelectionCandidates(engine, pagePoint(50, 20)).map(({ objectId }) => objectId),
+    ).toEqual([top.id, bottom.id]);
+    expect(engine.hitTest(pagePoint(50, 20))?.objectId).toBe(top.id);
+  });
+
+  it("selects unfilled rectangle and ellipse interiors through the editor policy", () => {
+    const factory = new ObjectFactory({ now: () => "2026-07-31T08:00:00.000Z" });
+    const rectangle = factory.createRectangleObject({
+      id: "rectangle-interior",
+      geometry: { x: 20, y: 30, width: 120, height: 80 },
+    });
+    const ellipse = factory.createEllipseObject({
+      id: "ellipse-interior",
+      geometry: { center: { x: 250, y: 100 }, radiusX: 60, radiusY: 40 },
+    });
+    const collection = new ObjectCollection([rectangle, ellipse]);
+    const engine = createEditorSelectionHitTestEngine({
+      getObjects: () => collection.objects,
+      getObject: (objectId) => collection.lookup(objectId),
+    });
+
+    expect(engine.hitTest(pagePoint(80, 70))?.objectId).toBe(rectangle.id);
+    expect(engine.hitTest(pagePoint(250, 100))?.objectId).toBe(ellipse.id);
   });
 });
 

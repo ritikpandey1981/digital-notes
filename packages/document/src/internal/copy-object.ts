@@ -1,6 +1,7 @@
 import { DocumentObjectError } from "../errors";
 import { InkObject } from "../ink-object";
-import type { PageObject } from "../types";
+import type { PageObject, VectorPageObject } from "../types";
+import { EllipseObject, LineObject, RectangleObject } from "../vector-object";
 
 export function copyObjectWithZIndex(object: PageObject, zIndex: number): PageObject {
   if (object.zIndex === zIndex) return object;
@@ -18,6 +19,25 @@ export function copyObjectWithZIndex(object: PageObject, zIndex: number): PageOb
       stroke: source.stroke,
       renderingHints: source.renderingHints,
     });
+  }
+  const common = {
+    id: object.id,
+    createdAt: object.createdAt,
+    modifiedAt: object.modifiedAt,
+    visible: object.visible,
+    locked: object.locked,
+    metadata: object.metadata,
+    zIndex,
+    transform: object.transform,
+  };
+  const vector = object as VectorPageObject;
+  switch (vector.type) {
+    case "line":
+      return new LineObject({ ...common, geometry: vector.geometry, style: vector.style });
+    case "rectangle":
+      return new RectangleObject({ ...common, geometry: vector.geometry, style: vector.style });
+    case "ellipse":
+      return new EllipseObject({ ...common, geometry: vector.geometry, style: vector.style });
   }
   throw new DocumentObjectError(
     "UNSUPPORTED_OBJECT_TYPE",

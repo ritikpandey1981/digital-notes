@@ -1,10 +1,16 @@
 import type { EditorColorSystemSnapshot } from "@folio/editor";
 import { cn } from "@folio/ui";
-import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef, type ChangeEvent, type FocusEvent, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import type { ChangeEvent, FocusEvent, ReactNode } from "react";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { StrokePreviewCanvas } from "./StrokePreviewCanvas";
 import type { ToolOptionPropertyDescriptor, ToolOptionsDescriptor } from "./tool-options-registry";
+import {
+  INTERACTION_MOTION,
+  motionSeconds,
+  PROFESSIONAL_EASE,
+} from "../../motion/interaction-motion";
+import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
 
 interface ToolOptionsWidgetProps {
   readonly descriptor: ToolOptionsDescriptor | null;
@@ -13,6 +19,7 @@ interface ToolOptionsWidgetProps {
   readonly onChangeWidth: (width: number) => void;
   readonly onChangeOpacity: (opacity: number) => void;
   readonly onDismiss: () => void;
+  readonly previewScale: number;
 }
 
 interface PropertyControlContext {
@@ -51,30 +58,11 @@ export function ToolOptionsWidget({
   onChangeWidth,
   onChangeOpacity,
   onDismiss,
+  previewScale,
 }: ToolOptionsWidgetProps) {
-  const paletteRef = useRef<HTMLElement | null>(null);
+  const reducedMotion = useReducedMotion() === true;
   const paletteVisible = descriptor !== null;
-  useEffect(() => {
-    if (!paletteVisible) return;
-    const handleOutsidePointerDown = (event: PointerEvent): void => {
-      if (!(event.target instanceof Node)) return;
-      if (paletteRef.current?.contains(event.target) === true) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest("[data-tool-dock-layout]") !== null
-      ) {
-        return;
-      }
-      const canvasRegion = resolveCanvasPointerRegion(event);
-      if (canvasRegion === "workspace") {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      onDismiss();
-    };
-    document.addEventListener("pointerdown", handleOutsidePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
-  }, [onDismiss, paletteVisible]);
+  const paletteRef = useFloatingWidgetDismissal(paletteVisible, onDismiss);
 
   const propertyActions: Readonly<Record<string, (value: string | number) => void>> = {
     strokeColor: (value) => onChangeColor(requireString(value, "Stroke color")),
@@ -89,22 +77,41 @@ export function ToolOptionsWidget({
           <motion.section
             ref={paletteRef}
             key="context-tool-palette"
-            className="pointer-events-auto w-[304px] rounded-[20px] border border-folio-border bg-folio-glass p-3 shadow-lg backdrop-blur-xl"
+            className="folio-floating-surface pointer-events-auto w-[304px] p-3"
             role="group"
             aria-label={`${descriptor.displayName} tool options`}
             data-testid="context-tool-palette"
             data-tool-options-tool={descriptor.tool}
+            data-elevation="temporary"
+            data-motion-profile="professional"
+            data-floating-surface="folio"
             initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -8 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
+            animate={{
+              opacity: 1,
+              x: 0,
+              transition: {
+                duration: motionSeconds(INTERACTION_MOTION.paletteOpenMilliseconds, reducedMotion),
+                ease: PROFESSIONAL_EASE,
+              },
+            }}
+            exit={{
+              opacity: 0,
+              x: -6,
+              transition: {
+                duration: motionSeconds(INTERACTION_MOTION.paletteCloseMilliseconds, reducedMotion),
+                ease: PROFESSIONAL_EASE,
+              },
+            }}
           >
             <motion.div
               key={descriptor.id}
               className="flex flex-col gap-1"
-              initial={{ opacity: 0.78, x: -2 }}
+              initial={{ opacity: 0.84, x: -3 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
+              transition={{
+                duration: motionSeconds(INTERACTION_MOTION.contentMilliseconds, reducedMotion),
+                ease: PROFESSIONAL_EASE,
+              }}
             >
               <div className="mb-1 flex items-center justify-between px-1">
                 <div>
@@ -115,7 +122,7 @@ export function ToolOptionsWidget({
                   Live
                 </span>
               </div>
-              <StrokePreviewCanvas descriptor={descriptor} />
+              <StrokePreviewCanvas descriptor={descriptor} renderScale={previewScale} />
               <span className="my-1 h-px w-full bg-folio-border" aria-hidden="true" />
               {descriptor.properties.map((property) => {
                 const render = propertyControlRenderers[property.key];
@@ -142,6 +149,7 @@ function ColorOptions({
   readonly colors: EditorColorSystemSnapshot;
   readonly onChange: (color: string) => void;
 }) {
+  const reducedMotion = useReducedMotion() === true;
   const activeColor = requireString(descriptor.value, "Stroke color");
   const commitHex = (event: FocusEvent<HTMLInputElement>): void => {
     try {
@@ -153,7 +161,7 @@ function ColorOptions({
 
   return (
     <div
-      className="rounded-xl px-2 py-1.5 transition-colors hover:bg-folio-hover"
+      className="rounded-xl px-2 py-1.5 transition-colors duration-100 ease-out hover:bg-folio-hover"
       data-tool-option="strokeColor"
     >
       <div className="mb-2 flex items-center justify-between">
@@ -175,18 +183,27 @@ function ColorOptions({
           {colors.recentColors.length === 0 ? (
             <span className="text-[9px] text-folio-muted">No recent colors</span>
           ) : (
-            colors.recentColors
-              .slice(0, 5)
-              .map((color) => (
-                <button
+            <AnimatePresence initial={false}>
+              {colors.recentColors.slice(0, 5).map((color) => (
+                <motion.button
                   key={color.hex}
+                  layout="position"
                   type="button"
-                  className="size-4 rounded-full border border-black/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                  className="size-4 rounded-full border border-black/15 transition-[transform,box-shadow] duration-100 ease-out hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
                   style={{ backgroundColor: color.hex }}
                   aria-label={`Use recent color ${color.hex}`}
+                  aria-pressed={color.hex === activeColor}
+                  initial={{ opacity: 0, scale: 0.86 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{
+                    duration: motionSeconds(INTERACTION_MOTION.hoverMilliseconds, reducedMotion),
+                    ease: PROFESSIONAL_EASE,
+                  }}
                   onClick={() => onChange(color.hex)}
                 />
-              ))
+              ))}
+            </AnimatePresence>
           )}
         </div>
       </div>
@@ -196,11 +213,12 @@ function ColorOptions({
             key={color.hex}
             type="button"
             className={cn(
-              "size-[18px] rounded-full border border-black/15 shadow-sm transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+              "size-[18px] rounded-full border border-black/15 shadow-sm transition-[transform,box-shadow] duration-100 ease-out hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95",
               color.hex === activeColor && "ring-2 ring-folio-accent ring-offset-1",
             )}
             style={{ backgroundColor: color.hex }}
             aria-label={`Use color ${color.hex}`}
+            aria-pressed={color.hex === activeColor}
             onClick={() => onChange(color.hex)}
           />
         ))}
@@ -208,7 +226,7 @@ function ColorOptions({
       <div className="mt-2 flex items-center gap-1.5">
         <input
           type="color"
-          className="size-7 shrink-0 cursor-pointer rounded-lg border border-folio-border bg-transparent p-0.5"
+          className="size-7 shrink-0 cursor-pointer rounded-lg border border-folio-border bg-transparent p-0.5 transition-[transform,box-shadow] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
           value={activeColor}
           aria-label="Custom stroke color"
           onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.currentTarget.value)}
@@ -216,7 +234,7 @@ function ColorOptions({
         <input
           key={activeColor}
           type="text"
-          className="h-7 min-w-0 flex-1 rounded-lg border border-folio-border bg-folio-surface px-2 font-mono text-[10px] uppercase text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+          className="h-7 min-w-0 flex-1 rounded-lg border border-folio-border bg-folio-surface px-2 font-mono text-[10px] uppercase text-folio-ink transition-[border-color,box-shadow] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
           defaultValue={activeColor}
           aria-label="Stroke color hex value"
           maxLength={7}
@@ -238,36 +256,4 @@ function requireNumber(value: string | number, label: string): number {
 function requireString(value: string | number, label: string): string {
   if (typeof value !== "string") throw new TypeError(`${label} must be text.`);
   return value;
-}
-
-type CanvasPointerRegion = "outside" | "page" | "workspace";
-
-function resolveCanvasPointerRegion(event: PointerEvent): CanvasPointerRegion {
-  if (!(event.target instanceof Element)) return "outside";
-  const surface = event.target.closest('[data-testid="canvas-surface"]');
-  if (surface === null) return "outside";
-  const canvas = surface?.querySelector('canvas[data-folio-renderer="true"]');
-  if (!(canvas instanceof HTMLCanvasElement)) return "page";
-  const bounds = canvas.getBoundingClientRect();
-  const logicalWidth = Number(canvas.dataset.logicalWidth);
-  const logicalHeight = Number(canvas.dataset.logicalHeight);
-  const pageX = Number(canvas.dataset.pageX);
-  const pageY = Number(canvas.dataset.pageY);
-  const pageWidth = Number(canvas.dataset.pageWidth);
-  const pageHeight = Number(canvas.dataset.pageHeight);
-  if (
-    bounds.width <= 0 ||
-    bounds.height <= 0 ||
-    ![logicalWidth, logicalHeight, pageX, pageY, pageWidth, pageHeight].every(Number.isFinite)
-  ) {
-    return "page";
-  }
-  const canvasX = (event.clientX - bounds.left) * (logicalWidth / bounds.width);
-  const canvasY = (event.clientY - bounds.top) * (logicalHeight / bounds.height);
-  const isPage =
-    canvasX >= pageX &&
-    canvasX <= pageX + pageWidth &&
-    canvasY >= pageY &&
-    canvasY <= pageY + pageHeight;
-  return isPage ? "page" : "workspace";
 }

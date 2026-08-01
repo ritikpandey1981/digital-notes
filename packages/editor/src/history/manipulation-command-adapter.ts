@@ -1,4 +1,4 @@
-import { InkObject, type ObjectCollection } from "@folio/document";
+import type { ObjectCollection, PageObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 import type {
   DeleteManipulationResult,
@@ -120,13 +120,13 @@ function createTranslationCommand(
 
 function currentRevision(objectId: string, document: ObjectCollection): string {
   const object = document.lookup(objectId);
-  return object instanceof InkObject ? object.modifiedAt : new Date(0).toISOString();
+  return object?.modifiedAt ?? new Date(0).toISOString();
 }
 
-function currentObject(objectId: string, document: ObjectCollection): InkObject {
+function currentObject(objectId: string, document: ObjectCollection): PageObject {
   const object = document.lookup(objectId);
-  if (!(object instanceof InkObject)) {
-    throw new TypeError(`Object '${objectId}' is not an InkObject in the current document.`);
+  if (object === undefined) {
+    throw new TypeError(`Object '${objectId}' is not in the current document.`);
   }
   return object;
 }

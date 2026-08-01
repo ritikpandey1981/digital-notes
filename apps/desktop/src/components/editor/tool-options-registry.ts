@@ -44,9 +44,23 @@ export interface ToolOptionsDescriptorRegistry {
 
 interface DrawingToolOptionsConfiguration {
   readonly tool: "Pen" | "Highlighter";
+  readonly presetKind: "pen" | "highlighter";
   readonly defaultWidth: number;
   readonly defaultOpacity: number;
+  readonly widthConstraints: Readonly<{
+    minimum: number;
+    maximum: number;
+    step: number;
+    largeStep: number;
+  }>;
 }
+
+const DRAWING_WIDTH_CONSTRAINTS = Object.freeze({
+  minimum: 0.5,
+  maximum: 40,
+  step: 0.1,
+  largeStep: 1,
+});
 
 class ToolOptionsDescriptorRegistryImplementation implements ToolOptionsDescriptorRegistry {
   readonly #providers: ReadonlyMap<EditorTool, ToolOptionsProvider>;
@@ -71,13 +85,17 @@ export function createDefaultToolOptionsDescriptorRegistry(): ToolOptionsDescrip
   return new ToolOptionsDescriptorRegistryImplementation([
     createDrawingToolOptionsProvider({
       tool: "Pen",
+      presetKind: "pen",
       defaultWidth: 2,
       defaultOpacity: 1,
+      widthConstraints: DRAWING_WIDTH_CONSTRAINTS,
     }),
     createDrawingToolOptionsProvider({
       tool: "Highlighter",
+      presetKind: "highlighter",
       defaultWidth: 12,
       defaultOpacity: 0.34,
+      widthConstraints: DRAWING_WIDTH_CONSTRAINTS,
     }),
   ]);
 }
@@ -88,7 +106,7 @@ function createDrawingToolOptionsProvider(
   return Object.freeze({
     tool: configuration.tool,
     describe: (preset: PenPreset): ToolOptionsDescriptor => {
-      if (preset.kind !== configuration.tool.toLowerCase()) {
+      if (preset.kind !== configuration.presetKind) {
         throw new TypeError(`${configuration.tool} options require a matching drawing preset.`);
       }
       const color = preset.style.strokeColor.hex;
@@ -104,10 +122,7 @@ function createDrawingToolOptionsProvider(
             key: "strokeWidth",
             displayName: "Width",
             value: width,
-            minimum: 0.5,
-            maximum: 30,
-            step: 0.1,
-            largeStep: 1,
+            ...configuration.widthConstraints,
             defaultValue: configuration.defaultWidth,
             precision: 1,
             unit: "px",

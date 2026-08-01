@@ -1,4 +1,4 @@
-import { InkObject, ObjectCollection, type PageObject } from "@folio/document";
+import { InkObject, ObjectCollection, isVectorObject, type PageObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 
 interface InsertObjectCommandInput {
@@ -109,7 +109,11 @@ function matchesStoredObject(
   return candidate instanceof InkObject && stored instanceof InkObject
     ? candidate.stroke === stored.stroke &&
         JSON.stringify(candidate.renderingHints) === JSON.stringify(stored.renderingHints)
-    : true;
+    : isVectorObject(candidate) && isVectorObject(stored)
+      ? candidate.type === stored.type &&
+        JSON.stringify(candidate.geometry) === JSON.stringify(stored.geometry) &&
+        JSON.stringify(candidate.style) === JSON.stringify(stored.style)
+      : false;
 }
 
 function isIsoTimestamp(value: string): boolean {

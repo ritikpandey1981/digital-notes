@@ -67,7 +67,7 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
 
   return (
     <div
-      className="group/slider min-w-[166px] rounded-xl px-2 py-1.5 transition-colors hover:bg-folio-hover"
+      className="group/slider min-w-[166px] rounded-xl px-2 py-1.5 transition-colors duration-100 ease-out hover:bg-folio-hover"
       data-tool-option={descriptor.key}
       onWheel={handleWheel}
     >
@@ -78,7 +78,7 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
         >
           {descriptor.displayName}
         </label>
-        <div className="flex h-7 items-center rounded-lg border border-folio-border bg-folio-surface px-1 focus-within:ring-2 focus-within:ring-folio-accent">
+        <div className="flex h-7 items-center rounded-lg border border-folio-border bg-folio-surface px-1 transition-[border-color,box-shadow] duration-100 ease-out focus-within:ring-2 focus-within:ring-folio-accent">
           <input
             type="number"
             className="w-10 bg-transparent text-right text-[11px] font-semibold text-folio-ink outline-none"

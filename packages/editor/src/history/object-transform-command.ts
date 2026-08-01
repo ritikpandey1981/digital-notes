@@ -1,4 +1,10 @@
-import { InkObject, ObjectCollection, ObjectFactory, type Transform } from "@folio/document";
+import {
+  InkObject,
+  ObjectCollection,
+  ObjectFactory,
+  isVectorObject,
+  type Transform,
+} from "@folio/document";
 
 export type ScalarTransformKind = "rotation" | "scale";
 export type TransformCommandOperation = "execute" | "undo" | "redo";
@@ -125,10 +131,10 @@ export function transitionScalarTransform(
       operation,
     });
   }
-  if (!(object instanceof InkObject)) {
+  if (!(object instanceof InkObject) && !isVectorObject(object)) {
     throw commandError(
       `${prefix}_OBJECT_UNSUPPORTED`,
-      `Object '${input.objectId}' is not a supported InkObject.`,
+      `Object '${input.objectId}' is not a supported PageObject implementation.`,
       { objectId: input.objectId, operation, type: object.type },
     );
   }
@@ -166,22 +172,11 @@ export function transitionScalarTransform(
   }
 
   try {
-    const transform =
+    const factory = new ObjectFactory({ now: () => targetModifiedAt });
+    const replacement =
       kind === "rotation"
-        ? object.transform.withRotation(targetValue)
-        : object.transform.withScale(targetValue);
-    const replacement = new ObjectFactory().createInkObject({
-      id: object.id,
-      stroke: object.stroke,
-      createdAt: object.createdAt,
-      modifiedAt: targetModifiedAt,
-      visible: object.visible,
-      locked: object.locked,
-      metadata: object.metadata,
-      zIndex: object.zIndex,
-      transform,
-      renderingHints: object.renderingHints,
-    });
+        ? factory.rotateObject(object, targetValue)
+        : factory.scaleObject(object, targetValue);
     return document.replace(replacement);
   } catch (cause) {
     throw commandError(

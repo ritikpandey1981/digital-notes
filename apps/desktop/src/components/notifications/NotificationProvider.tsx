@@ -1,7 +1,12 @@
 import * as React from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
 import { cn } from "@folio/ui";
+import {
+  INTERACTION_MOTION,
+  motionSeconds,
+  PROFESSIONAL_EASE,
+} from "../../motion/interaction-motion";
 
 export type NotificationTone = "success" | "info" | "error";
 
@@ -29,6 +34,7 @@ const toneIcons = {
 } satisfies Record<NotificationTone, React.ComponentType<{ className?: string }>>;
 
 export function NotificationProvider({ children }: React.PropsWithChildren) {
+  const reducedMotion = useReducedMotion() === true;
   const [notifications, setNotifications] = React.useState<NotificationItem[]>([]);
   const nextId = React.useRef(1);
   const timers = React.useRef(new Map<number, number>());
@@ -76,10 +82,32 @@ export function NotificationProvider({ children }: React.PropsWithChildren) {
             return (
               <motion.div
                 key={notification.id}
-                initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 8, scale: 0.98 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
+                layout="position"
+                initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                  scale: 1,
+                  transition: {
+                    duration: motionSeconds(
+                      INTERACTION_MOTION.notificationOpenMilliseconds,
+                      reducedMotion,
+                    ),
+                    ease: PROFESSIONAL_EASE,
+                  },
+                }}
+                exit={{
+                  opacity: 0,
+                  y: 6,
+                  scale: 0.99,
+                  transition: {
+                    duration: motionSeconds(
+                      INTERACTION_MOTION.notificationCloseMilliseconds,
+                      reducedMotion,
+                    ),
+                    ease: PROFESSIONAL_EASE,
+                  },
+                }}
                 className="pointer-events-auto flex gap-3 rounded-[16px] border border-folio-border bg-folio-glass p-3.5 text-folio-ink shadow-xl backdrop-blur-xl"
                 role="status"
               >
@@ -99,7 +127,7 @@ export function NotificationProvider({ children }: React.PropsWithChildren) {
                 </div>
                 <button
                   type="button"
-                  className="rounded-lg p-1 text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                  className="rounded-lg p-1 text-folio-muted transition-[background-color,color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
                   aria-label={`Dismiss ${notification.title}`}
                   onClick={() => dismiss(notification.id)}
                 >

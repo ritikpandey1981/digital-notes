@@ -6,8 +6,10 @@ export type EditorTool =
   | "Pen"
   | "Highlighter"
   | "Eraser"
+  | "Shapes"
   | "Text"
   | "Image"
-  | "Shape"
   | "Table"
   | "Sticky Note";
+
+export type ShapeToolKind = "line" | "rectangle" | "ellipse";

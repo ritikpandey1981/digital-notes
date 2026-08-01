@@ -105,7 +105,7 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
       {children}
       <Dialog open={activeDialog !== null} onOpenChange={(open) => !open && setActiveDialog(null)}>
         {copy && DialogIcon ? (
-          <DialogContent className="overflow-hidden p-0 sm:max-w-[520px]">
+          <DialogContent className="folio-dialog-motion overflow-hidden p-0 sm:max-w-[520px]">
             <div className="p-6">
               <DialogHeader>
                 <div
@@ -134,7 +134,7 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
                       key={option}
                       type="button"
                       className={cn(
-                        "rounded-[14px] border border-folio-border bg-folio-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+                        "rounded-[14px] border border-folio-border bg-folio-surface p-3 text-left transition-[border-color,transform,box-shadow] duration-100 ease-out hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:translate-y-0 active:scale-[0.99]",
                         theme === option && "border-folio-accent ring-1 ring-folio-accent",
                       )}
                       aria-pressed={theme === option}
@@ -153,11 +153,16 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
             </div>
 
             <DialogFooter className="border-t border-folio-border bg-folio-surface-muted px-6 py-4">
-              <Button variant="ghost" onClick={() => setActiveDialog(null)}>
+              <Button
+                variant="ghost"
+                className="transition-[background-color,transform,box-shadow] duration-100 ease-out active:scale-[0.98]"
+                onClick={() => setActiveDialog(null)}
+              >
                 Cancel
               </Button>
               <Button
                 variant={activeDialog === "delete" ? "destructive" : "default"}
+                className="transition-[background-color,transform,box-shadow] duration-100 ease-out active:scale-[0.98]"
                 onClick={completeAction}
               >
                 {copy.primaryLabel}

@@ -2,12 +2,17 @@ import type { IsoTimestamp, Position } from "@folio/domain";
 import { DocumentObjectError } from "./errors";
 import { InkObject } from "./ink-object";
 import { Transform } from "./transform";
+import { EllipseObject, LineObject, RectangleObject, isVectorObject } from "./vector-object";
 import type {
   CloneObjectOptions,
+  CreateEllipseObjectInput,
   CreateInkObjectInput,
+  CreateLineObjectInput,
+  CreateRectangleObjectInput,
   ObjectFactoryOptions,
   ObjectValidationResult,
   PageObject,
+  VectorPageObject,
 } from "./types";
 import { assertValidObject, validateObject } from "./validation";
 
@@ -48,6 +53,25 @@ export class ObjectFactory {
     });
   }
 
+  createLineObject(input: CreateLineObjectInput): LineObject {
+    const lifecycle = this.resolveLifecycle(input);
+    return new LineObject({ ...lifecycle, geometry: input.geometry, style: input.style ?? {} });
+  }
+
+  createRectangleObject(input: CreateRectangleObjectInput): RectangleObject {
+    const lifecycle = this.resolveLifecycle(input);
+    return new RectangleObject({
+      ...lifecycle,
+      geometry: input.geometry,
+      style: input.style ?? {},
+    });
+  }
+
+  createEllipseObject(input: CreateEllipseObjectInput): EllipseObject {
+    const lifecycle = this.resolveLifecycle(input);
+    return new EllipseObject({ ...lifecycle, geometry: input.geometry, style: input.style ?? {} });
+  }
+
   cloneObject<TObject extends PageObject>(
     object: TObject,
     options: CloneObjectOptions = {},
@@ -69,11 +93,22 @@ export class ObjectFactory {
         renderingHints: options.renderingHints ?? source.renderingHints,
       }) as unknown as TObject;
     }
-    throw new DocumentObjectError(
-      "UNSUPPORTED_OBJECT_TYPE",
-      "Only InkObject can be cloned in Phase 8.",
-      { type: object.type },
-    );
+    if (isVectorObject(object)) {
+      return this.createVectorReplacement(object, {
+        id: options.id ?? this.createIdValue(),
+        createdAt: timestamp,
+        modifiedAt: timestamp,
+        visible: options.visible ?? object.visible,
+        locked: options.locked ?? object.locked,
+        metadata: options.metadata ?? object.metadata,
+        zIndex: options.zIndex ?? object.zIndex,
+        transform: options.transform ?? object.transform,
+        style: options.style ?? object.style,
+      }) as unknown as TObject;
+    }
+    throw new DocumentObjectError("UNSUPPORTED_OBJECT_TYPE", "Object type cannot be cloned.", {
+      type: object.type,
+    });
   }
 
   /** Creates a same-identity immutable replacement translated in page space. */
@@ -101,11 +136,22 @@ export class ObjectFactory {
         renderingHints: source.renderingHints,
       }) as unknown as TObject;
     }
-    throw new DocumentObjectError(
-      "UNSUPPORTED_OBJECT_TYPE",
-      "Only InkObject can be translated in Phase 10.",
-      { type: object.type },
-    );
+    if (isVectorObject(object)) {
+      return this.createVectorReplacement(object, {
+        id: object.id,
+        createdAt: object.createdAt,
+        modifiedAt: this.nowValue(),
+        visible: object.visible,
+        locked: object.locked,
+        metadata: object.metadata,
+        zIndex: object.zIndex,
+        transform: object.transform.translatedBy(delta),
+        style: object.style,
+      }) as unknown as TObject;
+    }
+    throw new DocumentObjectError("UNSUPPORTED_OBJECT_TYPE", "Object type cannot be translated.", {
+      type: object.type,
+    });
   }
 
   /** Creates a same-identity immutable replacement at an absolute rotation. */
@@ -145,11 +191,59 @@ export class ObjectFactory {
         renderingHints: source.renderingHints,
       }) as unknown as TObject;
     }
+    if (isVectorObject(object)) {
+      return this.createVectorReplacement(object, {
+        id: object.id,
+        createdAt: object.createdAt,
+        modifiedAt: this.nowValue(),
+        visible: object.visible,
+        locked: object.locked,
+        metadata: object.metadata,
+        zIndex: object.zIndex,
+        transform,
+        style: object.style,
+      }) as unknown as TObject;
+    }
     throw new DocumentObjectError(
       "UNSUPPORTED_OBJECT_TYPE",
       `Only InkObject can be ${operation}.`,
       { type: object.type },
     );
+  }
+
+  private resolveLifecycle(
+    input: Pick<
+      CreateLineObjectInput,
+      "id" | "createdAt" | "modifiedAt" | "visible" | "locked" | "metadata" | "zIndex" | "transform"
+    >,
+  ) {
+    const createdAt = input.createdAt ?? this.nowValue();
+    return {
+      id: input.id ?? this.createIdValue(),
+      createdAt,
+      modifiedAt: input.modifiedAt ?? createdAt,
+      visible: input.visible ?? true,
+      locked: input.locked ?? false,
+      metadata: input.metadata ?? {},
+      zIndex: input.zIndex ?? 0,
+      transform: input.transform ?? Transform.identity(),
+    } as const;
+  }
+
+  private createVectorReplacement(
+    source: VectorPageObject,
+    common: ReturnType<ObjectFactory["resolveLifecycle"]> & {
+      readonly style: NonNullable<CloneObjectOptions["style"]>;
+    },
+  ): VectorPageObject {
+    switch (source.type) {
+      case "line":
+        return new LineObject({ ...common, geometry: source.geometry });
+      case "rectangle":
+        return new RectangleObject({ ...common, geometry: source.geometry });
+      case "ellipse":
+        return new EllipseObject({ ...common, geometry: source.geometry });
+    }
   }
 }
 
@@ -158,6 +252,27 @@ export function createInkObject(
   options: ObjectFactoryOptions = {},
 ): InkObject {
   return new ObjectFactory(options).createInkObject(input);
+}
+
+export function createLineObject(
+  input: CreateLineObjectInput,
+  options: ObjectFactoryOptions = {},
+): LineObject {
+  return new ObjectFactory(options).createLineObject(input);
+}
+
+export function createRectangleObject(
+  input: CreateRectangleObjectInput,
+  options: ObjectFactoryOptions = {},
+): RectangleObject {
+  return new ObjectFactory(options).createRectangleObject(input);
+}
+
+export function createEllipseObject(
+  input: CreateEllipseObjectInput,
+  options: ObjectFactoryOptions = {},
+): EllipseObject {
+  return new ObjectFactory(options).createEllipseObject(input);
 }
 
 export function cloneObject<TObject extends PageObject>(

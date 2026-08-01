@@ -1,6 +1,7 @@
 import {
   InkObject,
   createEditableColor,
+  isVectorObject,
   type EditableColor,
   type PageObject,
   type PageObjectType,
@@ -86,9 +87,30 @@ export function createInkPropertyProvider(): EditablePropertyProvider {
   });
 }
 
+export function createVectorPropertyProvider(
+  objectType: Exclude<PageObjectType, "ink">,
+): EditablePropertyProvider {
+  return Object.freeze({
+    objectType,
+    describe: (object: PageObject) => {
+      if (!isVectorObject(object) || object.type !== objectType) {
+        throw new TypeError(`The ${objectType} property provider requires a matching object.`);
+      }
+      return Object.freeze([
+        colorDescriptor("strokeColor", "Stroke color", object.style.strokeColor),
+        numberDescriptor("strokeWidth", "Stroke width", object.style.strokeWidth, 0.25, 64, 0.25),
+        numberDescriptor("opacity", "Opacity", object.style.strokeColor.opacity, 0, 1, 0.05),
+      ]);
+    },
+  });
+}
+
 export function createDefaultPropertyDescriptorRegistry(): PropertyDescriptorRegistry {
   const registry = createPropertyDescriptorRegistry();
   registry.register(createInkPropertyProvider());
+  registry.register(createVectorPropertyProvider("line"));
+  registry.register(createVectorPropertyProvider("rectangle"));
+  registry.register(createVectorPropertyProvider("ellipse"));
   return registry;
 }
 

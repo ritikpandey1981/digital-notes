@@ -1,4 +1,10 @@
-import { InkObject, ObjectCollection, type PageObject } from "@folio/document";
+import {
+  InkObject,
+  ObjectCollection,
+  assertValidObject,
+  isVectorObject,
+  type PageObject,
+} from "@folio/document";
 
 export type ObjectLifecycleCommandKind = "delete" | "duplicate";
 export type ObjectLifecycleCommandOperation = "execute" | "undo" | "redo";
@@ -112,7 +118,7 @@ export function requireLifecycleObject(
   objectId: string,
   expectedModifiedAt: string,
   operation: ObjectLifecycleCommandOperation,
-): InkObject {
+): PageObject {
   const object = document.lookup(objectId);
   if (object === undefined) {
     throw lifecycleError(kind, "OBJECT_NOT_FOUND", `Object '${objectId}' was not found.`, {
@@ -120,11 +126,11 @@ export function requireLifecycleObject(
       operation,
     });
   }
-  if (!(object instanceof InkObject)) {
+  if (!(object instanceof InkObject) && !isVectorObject(object)) {
     throw lifecycleError(
       kind,
       "OBJECT_UNSUPPORTED",
-      `Object '${objectId}' is not a supported InkObject.`,
+      `Object '${objectId}' is not a supported PageObject implementation.`,
       { objectId, operation, type: object.type },
     );
   }
@@ -154,9 +160,14 @@ export function requireLifecycleObject(
 export function assertStoredLifecycleObject(
   kind: ObjectLifecycleCommandKind,
   object: PageObject,
-): asserts object is InkObject {
-  if (!(object instanceof InkObject) || !Object.isFrozen(object)) {
-    throw invalidLifecycleCommand(kind, `${label(kind)}Command requires an immutable InkObject.`);
+): void {
+  try {
+    assertValidObject(object);
+  } catch {
+    throw invalidLifecycleCommand(kind, `${label(kind)}Command requires a valid PageObject.`);
+  }
+  if ((!isVectorObject(object) && !(object instanceof InkObject)) || !Object.isFrozen(object)) {
+    throw invalidLifecycleCommand(kind, `${label(kind)}Command requires an immutable PageObject.`);
   }
 }
 

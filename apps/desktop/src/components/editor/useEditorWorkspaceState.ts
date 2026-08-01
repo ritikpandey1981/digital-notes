@@ -8,15 +8,21 @@ import {
 import * as React from "react";
 import { constrainOpacityForTool } from "./drawing-style-policy";
 import type { EditorTool } from "./editor-types";
+import {
+  createFloatingToolWidgetRegistry,
+  type FloatingToolWidgetId,
+} from "./floating-tool-widget-registry";
 import { createDefaultToolOptionsDescriptorRegistry } from "./tool-options-registry";
 
 export function useEditorWorkspaceState() {
   const [activeTool, setActiveTool] = React.useState<EditorTool>("Select");
-  const [toolOptionsVisible, setToolOptionsVisible] = React.useState(true);
+  const [activeFloatingWidget, setActiveFloatingWidget] =
+    React.useState<FloatingToolWidgetId | null>(null);
   const [, setFoundationVersion] = React.useState(0);
   const [colorSystem] = React.useState(() => createEditorColorSystem());
   const [presetStore] = React.useState(() => createPenPresetStore());
   const [toolOptionsRegistry] = React.useState(() => createDefaultToolOptionsDescriptorRegistry());
+  const [floatingWidgetRegistry] = React.useState(() => createFloatingToolWidgetRegistry());
 
   const drawingKind: DrawingToolKind = activeTool === "Highlighter" ? "highlighter" : "pen";
   const activePreset = presetStore.activePreset(drawingKind);
@@ -31,14 +37,20 @@ export function useEditorWorkspaceState() {
     [activePreset],
   );
   const toolOptions = React.useMemo(
-    () => (toolOptionsVisible ? toolOptionsRegistry.describe(activeTool, activePreset) : null),
-    [activePreset, activeTool, toolOptionsRegistry, toolOptionsVisible],
+    () =>
+      activeFloatingWidget === "drawing-options"
+        ? toolOptionsRegistry.describe(activeTool, activePreset)
+        : null,
+    [activeFloatingWidget, activePreset, activeTool, toolOptionsRegistry],
   );
-  const selectTool = React.useCallback((tool: EditorTool): void => {
-    setActiveTool(tool);
-    setToolOptionsVisible(true);
-  }, []);
-  const dismissToolOptions = React.useCallback((): void => setToolOptionsVisible(false), []);
+  const selectTool = React.useCallback(
+    (tool: EditorTool): void => {
+      setActiveTool(tool);
+      setActiveFloatingWidget(floatingWidgetRegistry.widgetFor(tool));
+    },
+    [floatingWidgetRegistry],
+  );
+  const dismissFloatingWidget = React.useCallback((): void => setActiveFloatingWidget(null), []);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
   const updatePreset = React.useCallback(
     (patch: PenPresetPatch): void => {
@@ -70,6 +82,7 @@ export function useEditorWorkspaceState() {
 
   return {
     activeTool,
+    activeFloatingWidget,
     selectTool,
     drawingStyle,
     toolOptions,
@@ -78,6 +91,6 @@ export function useEditorWorkspaceState() {
     setDrawingWidth,
     setDrawingOpacity,
     rememberColorUsage,
-    dismissToolOptions,
+    dismissFloatingWidget,
   };
 }

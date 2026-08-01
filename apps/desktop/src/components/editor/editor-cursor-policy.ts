@@ -34,9 +34,9 @@ const cursorByTool: Readonly<Record<EditorTool, EditorCursorPresentation>> = Obj
   Pen: Object.freeze({ id: "pen", css: penCursor }),
   Highlighter: Object.freeze({ id: "highlighter", css: highlighterCursor }),
   Eraser: Object.freeze({ id: "eraser", css: eraserCursor }),
+  Shapes: Object.freeze({ id: "shapes", css: "crosshair" }),
   Text: Object.freeze({ id: "text", css: "text" }),
   Image: Object.freeze({ id: "image", css: "copy" }),
-  Shape: Object.freeze({ id: "shape", css: "crosshair" }),
   Table: Object.freeze({ id: "table", css: "cell" }),
   "Sticky Note": Object.freeze({ id: "sticky-note", css: "alias" }),
 });

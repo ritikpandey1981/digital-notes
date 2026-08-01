@@ -3,12 +3,13 @@ import type { ToolOptionsDescriptor } from "./tool-options-registry";
 
 interface StrokePreviewCanvasProps {
   readonly descriptor: ToolOptionsDescriptor;
+  readonly renderScale: number;
 }
 
 const LOGICAL_WIDTH = 278;
 const LOGICAL_HEIGHT = 64;
 
-export function StrokePreviewCanvas({ descriptor }: StrokePreviewCanvasProps) {
+export function StrokePreviewCanvas({ descriptor, renderScale }: StrokePreviewCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { color, width, opacity } = descriptor.preview;
 
@@ -18,8 +19,10 @@ export function StrokePreviewCanvas({ descriptor }: StrokePreviewCanvasProps) {
     if (canvas === null || context === null || context === undefined) return;
 
     const devicePixelRatio = window.devicePixelRatio || 1;
-    canvas.width = Math.round(LOGICAL_WIDTH * devicePixelRatio);
-    canvas.height = Math.round(LOGICAL_HEIGHT * devicePixelRatio);
+    const physicalWidth = Math.round(LOGICAL_WIDTH * devicePixelRatio);
+    const physicalHeight = Math.round(LOGICAL_HEIGHT * devicePixelRatio);
+    if (canvas.width !== physicalWidth) canvas.width = physicalWidth;
+    if (canvas.height !== physicalHeight) canvas.height = physicalHeight;
     context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
     context.clearRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
     context.save();
@@ -27,13 +30,13 @@ export function StrokePreviewCanvas({ descriptor }: StrokePreviewCanvasProps) {
     context.strokeStyle = color;
     context.lineCap = "round";
     context.lineJoin = "round";
-    context.lineWidth = width;
+    context.lineWidth = width * renderScale;
     context.beginPath();
     context.moveTo(12, 43);
     context.bezierCurveTo(70, 10, 178, 55, 256, 20);
     context.stroke();
     context.restore();
-  }, [color, opacity, width]);
+  }, [color, opacity, renderScale, width]);
 
   return (
     <canvas
@@ -43,6 +46,8 @@ export function StrokePreviewCanvas({ descriptor }: StrokePreviewCanvasProps) {
       aria-label={`${descriptor.displayName} stroke preview`}
       data-preview-renderer="canvas2d-bezier"
       data-preview-width={width}
+      data-preview-render-scale={renderScale}
+      data-preview-rendered-width={width * renderScale}
       data-preview-opacity={opacity}
     />
   );

@@ -27,6 +27,18 @@
 }
 
 @layer base {
+  :root {
+    --folio-motion-hover: 100ms;
+    --folio-motion-press: 75ms;
+    --folio-motion-selection: 140ms;
+    --folio-motion-floating: 140ms;
+    --folio-motion-tooltip: 120ms;
+    --folio-motion-content: 150ms;
+    --folio-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --folio-floating-radius: 20px;
+    --folio-tooltip-arrow-size: 0.5rem;
+  }
+
   :root,
   [data-theme="light"] {
     --folio-workspace: #f1f1ef;
@@ -44,6 +56,7 @@
     --folio-hover: rgb(37 37 34 / 0.065);
     --folio-border: rgb(37 37 34 / 0.11);
     --folio-glass: rgb(255 255 255 / 0.82);
+    --folio-icon-neutral: color-mix(in srgb, var(--folio-ink) 72%, var(--folio-muted));
     --folio-page: #fffdf8;
     --folio-page-ink: #282721;
     --folio-page-muted: #8c897e;
@@ -67,6 +80,7 @@
     --folio-hover: rgb(255 255 255 / 0.075);
     --folio-border: rgb(255 255 255 / 0.105);
     --folio-glass: rgb(39 39 39 / 0.86);
+    --folio-icon-neutral: color-mix(in srgb, var(--folio-ink) 72%, var(--folio-muted));
     --folio-page: #252525;
     --folio-page-ink: #f4f2ea;
     --folio-page-muted: #aaa79c;
@@ -102,6 +116,10 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  button:disabled {
+    cursor: not-allowed;
+  }
+
   ::selection {
     background: color-mix(in srgb, var(--folio-accent) 24%, transparent);
   }
@@ -120,12 +138,47 @@
 }
 
 @layer components {
+  .folio-floating-surface {
+    @apply border border-folio-border bg-folio-glass shadow-xl backdrop-blur-xl;
+    border-radius: var(--folio-floating-radius);
+  }
+
+  .folio-tool-tooltip {
+    transition:
+      opacity var(--folio-motion-tooltip) var(--folio-motion-ease),
+      visibility var(--folio-motion-tooltip) var(--folio-motion-ease);
+  }
+
+  .folio-tool-tooltip::before {
+    position: absolute;
+    width: var(--folio-tooltip-arrow-size);
+    height: var(--folio-tooltip-arrow-size);
+    border-color: var(--folio-border);
+    background: var(--folio-glass);
+    content: "";
+    transform: rotate(45deg);
+  }
+
+  .folio-tool-tooltip[data-side="right"]::before {
+    top: calc(50% - var(--folio-tooltip-arrow-size) / 2);
+    left: calc(var(--folio-tooltip-arrow-size) / -2);
+    border-bottom-width: 1px;
+    border-left-width: 1px;
+  }
+
+  .folio-tool-tooltip[data-side="bottom"]::before {
+    top: calc(var(--folio-tooltip-arrow-size) / -2);
+    left: calc(50% - var(--folio-tooltip-arrow-size) / 2);
+    border-top-width: 1px;
+    border-left-width: 1px;
+  }
+
   .shell-icon-button {
-    @apply flex size-8 items-center justify-center rounded-lg text-folio-muted transition-colors duration-150 hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent;
+    @apply flex size-8 items-center justify-center rounded-lg text-folio-muted transition-[background-color,color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-[0.96];
   }
 
   .sidebar-nav-item {
-    @apply flex h-10 w-full items-center gap-3 rounded-xl px-[17px] text-left text-[13px] font-medium text-folio-muted transition-colors duration-150 hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent;
+    @apply flex h-10 w-full items-center gap-3 rounded-xl px-[17px] text-left text-[13px] font-medium text-folio-muted transition-[background-color,color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-[0.99];
   }
 
   .sidebar-nav-item-active {
@@ -188,6 +241,11 @@
         color-mix(in srgb, var(--folio-muted) 32%, transparent) var(--folio-slider-progress) 100%
       )
       center / 100% 4px no-repeat;
+    transition: filter var(--folio-motion-hover) var(--folio-motion-ease);
+  }
+
+  .folio-continuous-slider:hover {
+    filter: brightness(1.035);
   }
 
   .folio-continuous-slider::-webkit-slider-thumb {
@@ -201,16 +259,20 @@
       0 0 0 1px color-mix(in srgb, var(--folio-accent) 68%, transparent),
       0 2px 6px color-mix(in srgb, #000 22%, transparent);
     transition:
-      transform 150ms ease,
-      box-shadow 150ms ease;
+      transform var(--folio-motion-hover) var(--folio-motion-ease),
+      box-shadow var(--folio-motion-hover) var(--folio-motion-ease);
+    will-change: transform;
   }
 
-  .folio-continuous-slider:hover::-webkit-slider-thumb,
-  .folio-continuous-slider:active::-webkit-slider-thumb {
-    transform: scale(1.18);
+  .folio-continuous-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.14);
     box-shadow:
       0 0 0 4px color-mix(in srgb, var(--folio-accent) 15%, transparent),
       0 2px 8px color-mix(in srgb, #000 24%, transparent);
+  }
+
+  .folio-continuous-slider:active::-webkit-slider-thumb {
+    transform: scale(1.1);
   }
 
   .folio-continuous-slider:focus-visible::-webkit-slider-thumb {
@@ -226,6 +288,65 @@
     border-radius: 999px;
     background: var(--folio-accent);
     box-shadow: 0 2px 6px color-mix(in srgb, #000 22%, transparent);
+    transition:
+      transform var(--folio-motion-hover) var(--folio-motion-ease),
+      box-shadow var(--folio-motion-hover) var(--folio-motion-ease);
+  }
+
+  .folio-continuous-slider:hover::-moz-range-thumb {
+    transform: scale(1.14);
+    box-shadow:
+      0 0 0 4px color-mix(in srgb, var(--folio-accent) 15%, transparent),
+      0 2px 8px color-mix(in srgb, #000 24%, transparent);
+  }
+
+  .folio-continuous-slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px var(--folio-surface),
+      0 0 0 5px var(--folio-accent);
+  }
+
+  [role="menuitem"] {
+    transition:
+      background-color var(--folio-motion-hover) var(--folio-motion-ease),
+      color var(--folio-motion-hover) var(--folio-motion-ease),
+      transform var(--folio-motion-press) var(--folio-motion-ease);
+  }
+
+  [role="menuitem"]:active:not([data-disabled]) {
+    transform: scale(0.985);
+  }
+
+  .folio-dialog-motion[data-state="open"] {
+    animation: folio-dialog-enter 180ms var(--folio-motion-ease);
+  }
+
+  .folio-dialog-motion[data-state="closed"] {
+    animation: folio-dialog-exit 150ms var(--folio-motion-ease);
+  }
+}
+
+@keyframes folio-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -49%) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes folio-dialog-exit {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate(-50%, -49.5%) scale(0.99);
   }
 }
 

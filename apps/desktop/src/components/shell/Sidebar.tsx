@@ -103,7 +103,7 @@ export function Sidebar({ expanded, activeSection, onToggle, onSelectSection }: 
             </p>
             <button
               type="button"
-              className="rounded-md p-1 text-folio-muted hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+              className="rounded-md p-1 text-folio-muted transition-[background-color,color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
               aria-label="New notebook placeholder"
               title="New notebook placeholder"
               onClick={() => openDialog("confirm")}
@@ -117,7 +117,7 @@ export function Sidebar({ expanded, activeSection, onToggle, onSelectSection }: 
                 key={notebook.title}
                 type="button"
                 className={cn(
-                  "group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-folio-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+                  "group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-[background-color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-[0.99]",
                   index === 0 && "bg-folio-hover",
                 )}
                 onClick={() => previewNotebook(notebook.title)}
@@ -145,7 +145,7 @@ export function Sidebar({ expanded, activeSection, onToggle, onSelectSection }: 
               <button
                 key={file.title}
                 type="button"
-                className="w-full rounded-xl px-2 py-2 text-left transition-colors hover:bg-folio-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                className="w-full rounded-xl px-2 py-2 text-left transition-[background-color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-[0.99]"
                 onClick={() => previewNotebook(file.title)}
               >
                 <span className="block truncate text-xs font-medium">{file.title}</span>

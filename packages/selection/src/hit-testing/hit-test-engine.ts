@@ -1,4 +1,4 @@
-import type { InkObjectView, PageObject } from "@folio/document";
+import { isVectorObject, type InkObjectView, type PageObject } from "@folio/document";
 import type { HitTestEngine, HitTestEngineOptions } from "../interfaces/hit-test-engine";
 import type { PagePoint } from "../model/coordinates";
 import { DEFAULT_HIT_TEST_CONFIGURATION, type HitTestResult } from "../model/hit-test";
@@ -6,7 +6,7 @@ import {
   createLinearHitTestCandidateStrategy,
   type HitTestCandidateStrategy,
 } from "./candidate-strategy";
-import { distanceToInkGeometry, isValidPagePoint } from "./geometry";
+import { distanceToInkGeometry, distanceToVectorGeometry, isValidPagePoint } from "./geometry";
 
 function resolveConfiguration(options: HitTestEngineOptions): number {
   const tolerance = options.configuration?.tolerance ?? DEFAULT_HIT_TEST_CONFIGURATION.tolerance;
@@ -95,8 +95,8 @@ class HitTestEngineImplementation implements HitTestEngine {
   }
 
   private distanceToObject(position: PagePoint, object: PageObject): number | null {
-    if (object.type !== "ink") return null;
-    return distanceToInkGeometry(position, object as InkObjectView);
+    if (object.type === "ink") return distanceToInkGeometry(position, object as InkObjectView);
+    return isVectorObject(object) ? distanceToVectorGeometry(position, object) : null;
   }
 }
 

@@ -24,9 +24,9 @@ describe("desktop editor cursor policy", () => {
       "Pen",
       "Highlighter",
       "Eraser",
+      "Shapes",
       "Text",
       "Image",
-      "Shape",
       "Table",
       "Sticky Note",
     ];
@@ -39,12 +39,16 @@ describe("desktop editor cursor policy", () => {
       "pen",
       "highlighter",
       "eraser",
+      "shapes",
       "text",
       "image",
-      "shape",
       "table",
       "sticky-note",
     ]);
+  });
+
+  it("uses one crosshair cursor for the unified Shapes tool", () => {
+    expect(cursorPresentationForTool("Shapes")).toEqual({ id: "shapes", css: "crosshair" });
   });
 
   it("leaves interactive selection cursors under the editor engine's control", () => {

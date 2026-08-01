@@ -47,7 +47,10 @@ function point(x: number, y: number, timestamp: number, pressure = 0.5): StrokeP
   };
 }
 
-function createHarness(style: Partial<StrokeStyle> = {}) {
+function createHarness(
+  style: Partial<StrokeStyle> = {},
+  finalizedPresentation: "retained" | "external" = "retained",
+) {
   const context = createContext();
   const canvas = { dataset: {} as DOMStringMap } as HTMLCanvasElement;
   const viewport = new Viewport({
@@ -74,6 +77,7 @@ function createHarness(style: Partial<StrokeStyle> = {}) {
     viewport,
     canvas,
     animationFrameAdapter,
+    finalizedPresentation,
     onInvalidate: (dirtyRect) => invalidations.push(dirtyRect),
   });
   const builder = new StrokeBuilder({
@@ -175,6 +179,21 @@ describe("StrokeRenderer", () => {
     expect(harness.context.stroke).toHaveBeenCalledOnce();
     expect(harness.context.bezierCurveTo).toHaveBeenCalledOnce();
     expect(harness.canvas.dataset.inkStrokeCount).toBe("1");
+  });
+
+  it("retains finalized geometry without presenting it when an external compositor owns order", () => {
+    const harness = createHarness({}, "external");
+    harness.renderer.beginStroke(harness.add(point(10, 10, 0)));
+    harness.renderer.updateStroke(harness.add(point(20, 20, 10)));
+    harness.renderer.finalizeStroke(harness.builder.finalize());
+
+    expect(harness.renderer.snapshot()).toMatchObject({
+      finalizedStrokeCount: 1,
+      finalizedPointCount: 2,
+      livePointCount: 0,
+    });
+    expect(harness.context.stroke).not.toHaveBeenCalled();
+    expect(harness.canvas.dataset.inkCurveSegmentCount).toBe("1");
   });
 
   it("cancels temporary ink by clearing only its dirty region", () => {

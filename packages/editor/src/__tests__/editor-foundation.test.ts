@@ -65,4 +65,33 @@ describe("Phase 14 editor foundation", () => {
     expect(descriptors[2]?.validate(2)).toBe(false);
     expect(Object.isFrozen(descriptors)).toBe(true);
   });
+
+  it("exposes only stroke color, width, and opacity for every vector type", () => {
+    const factory = new ObjectFactory({
+      createId: (() => {
+        let index = 0;
+        return () => `vector-${++index}`;
+      })(),
+      now: () => "2026-07-30T12:00:00.000Z",
+    });
+    const objects = [
+      factory.createLineObject({
+        geometry: { start: { x: 0, y: 0 }, end: { x: 100, y: 40 } },
+      }),
+      factory.createRectangleObject({ geometry: { x: 0, y: 0, width: 100, height: 40 } }),
+      factory.createEllipseObject({
+        geometry: { center: { x: 50, y: 40 }, radiusX: 50, radiusY: 40 },
+      }),
+    ];
+    const registry = createDefaultPropertyDescriptorRegistry();
+
+    expect(registry.registeredTypes()).toEqual(["ink", "line", "rectangle", "ellipse"]);
+    for (const object of objects) {
+      expect(registry.describe(object).map(({ key }) => key)).toEqual([
+        "strokeColor",
+        "strokeWidth",
+        "opacity",
+      ]);
+    }
+  });
 });

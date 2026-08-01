@@ -22,6 +22,7 @@ export {
   createDefaultPropertyDescriptorRegistry,
   createInkPropertyProvider,
   createPropertyDescriptorRegistry,
+  createVectorPropertyProvider,
   type EditablePropertyConstraints,
   type EditablePropertyDescriptor,
   type EditablePropertyProvider,
@@ -43,4 +44,7 @@ export {
   type CanvasInteractionMode,
   type CanvasSurfaceProps,
   type ObjectLifecycleActions,
+  type ShapeEditingActions,
+  type ShapeEditingSnapshot,
+  type ShapeStylePatch,
 } from "./CanvasSurface";

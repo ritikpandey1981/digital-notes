@@ -46,7 +46,7 @@ test("provides manipulation cursors and grouped move, scale, and rotate interact
     const initialGroup = await selectedGroupBounds(surface);
     const initialTransforms = await selectedTransforms(surface);
     const initialThickness = await renderedThickness(
-      inkCanvas,
+      baseCanvas,
       coordinates.pageToScreen(...centerTuple(initialTransforms[0]!.bounds)),
     );
     const hoverTargets = [
@@ -172,7 +172,7 @@ test("provides manipulation cursors and grouped move, scale, and rotate interact
       3,
     );
     const scaledThickness = await renderedThickness(
-      inkCanvas,
+      baseCanvas,
       coordinates.pageToScreen(...centerTuple(scaledTransforms[0]!.bounds)),
     );
     expect(scaledThickness).toBeGreaterThan(0);

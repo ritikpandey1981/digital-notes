@@ -1,4 +1,10 @@
-import { InkObject, ObjectCollection, ObjectFactory } from "@folio/document";
+import {
+  InkObject,
+  ObjectCollection,
+  ObjectFactory,
+  isVectorObject,
+  type PageObject,
+} from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 import {
   assertLifecycleCommandInput,
@@ -13,7 +19,7 @@ import {
 } from "./object-lifecycle-command";
 
 export interface DuplicateCommandInput {
-  readonly sourceObject: InkObject;
+  readonly sourceObject: PageObject;
   readonly insertionIndex: number;
   readonly duplicateObjectId?: string;
   readonly id?: string;
@@ -26,7 +32,7 @@ class DuplicateCommand implements EditorCommand<ObjectCollection> {
   readonly timestamp: string;
   readonly description: string;
   readonly duplicateObjectId: string;
-  readonly #duplicateObject: InkObject;
+  readonly #duplicateObject: PageObject;
   readonly #insertionIndex: number;
   readonly #metadata: ResolvedLifecycleMetadata;
 
@@ -141,11 +147,11 @@ export function createDuplicateCommand(input: DuplicateCommandInput): DuplicateE
 
 function matchesStoredDuplicate(
   candidate: ReturnType<ObjectCollection["lookup"]>,
-  stored: InkObject,
+  stored: PageObject,
   insertionIndex: number,
-): candidate is InkObject {
+): candidate is PageObject {
   return (
-    candidate instanceof InkObject &&
+    candidate !== undefined &&
     Object.isFrozen(candidate) &&
     candidate.id === stored.id &&
     candidate.createdAt === stored.createdAt &&
@@ -154,12 +160,18 @@ function matchesStoredDuplicate(
     candidate.locked === stored.locked &&
     sameJsonObject(candidate.metadata, stored.metadata) &&
     candidate.zIndex === insertionIndex &&
-    candidate.stroke === stored.stroke &&
-    sameJsonObject(candidate.renderingHints, stored.renderingHints) &&
     candidate.transform.translation.x === stored.transform.translation.x &&
     candidate.transform.translation.y === stored.transform.translation.y &&
     candidate.transform.rotation === stored.transform.rotation &&
-    candidate.transform.scale === stored.transform.scale
+    candidate.transform.scale === stored.transform.scale &&
+    (candidate instanceof InkObject && stored instanceof InkObject
+      ? candidate.stroke === stored.stroke &&
+        sameJsonObject(candidate.renderingHints, stored.renderingHints)
+      : isVectorObject(candidate) &&
+        isVectorObject(stored) &&
+        candidate.type === stored.type &&
+        JSON.stringify(candidate.geometry) === JSON.stringify(stored.geometry) &&
+        JSON.stringify(candidate.style) === JSON.stringify(stored.style))
   );
 }
 

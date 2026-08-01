@@ -22,6 +22,10 @@ function createStatistics(objects: readonly PageObject[]): ObjectCollectionStati
   return Object.freeze({
     objectCount: objects.length,
     inkObjectCount: objects.reduce((count, object) => count + (object.type === "ink" ? 1 : 0), 0),
+    vectorObjectCount: objects.reduce(
+      (count, object) => count + (object.type === "ink" ? 0 : 1),
+      0,
+    ),
     visibleObjectCount: objects.reduce((count, object) => count + (object.visible ? 1 : 0), 0),
     lockedObjectCount: objects.reduce((count, object) => count + (object.locked ? 1 : 0), 0),
     highestZIndex: objects.length === 0 ? null : objects.length - 1,

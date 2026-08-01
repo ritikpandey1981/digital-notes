@@ -1,4 +1,15 @@
-import { InkObject, type ObjectCollection, type PageObject } from "@folio/document";
+import {
+  InkObject,
+  isVectorObject,
+  type EllipseGeometry,
+  type LineGeometry,
+  type ObjectBounds,
+  type ObjectCollection,
+  type PageObject,
+  type RectangleGeometry,
+  type Transform,
+  type VectorPageObject,
+} from "@folio/document";
 import type { HistoryNotification, IHistoryController, IHistoryState } from "@folio/history";
 import {
   createStrokeVisual,
@@ -24,11 +35,13 @@ import {
   type CanvasBounds,
   type CanvasControllerSnapshot,
   type RenderTheme,
+  type Viewport,
 } from "@folio/rendering";
 import {
   createSelectionController,
   createSelectionManager,
   type ScreenPoint,
+  type PagePoint,
   type SelectionController,
   type SelectionPointerInput,
   type SelectionState,
@@ -43,7 +56,10 @@ import {
 import { createEditorGroupManipulationPlan, transformGroupBounds } from "./EditorGroupManipulation";
 import { EditorSelectionGeometry } from "./EditorSelectionGeometry";
 import { EditorSelectionSet } from "./EditorSelectionSet";
-import { createEditorSelectionHitTestEngine } from "./EditorSelectionHitTestEngine";
+import {
+  createEditorSelectionHitTestEngine,
+  queryEditorSelectionCandidates,
+} from "./EditorSelectionHitTestEngine";
 import { createEditorToolRegistry, type EditorToolRegistry } from "./tools/editor-tool-registry";
 import {
   createEditorHistoryCoordinator,
@@ -55,6 +71,14 @@ import {
 } from "./history/editor-editing-shortcuts";
 import { installEditorHistoryShortcuts } from "./history/editor-history-shortcuts";
 import { InkDocumentSession } from "./InkDocumentSession";
+import {
+  createLineEndpointManipulationResults,
+  lineWorldGeometry,
+  resolveLineHandleHit,
+  transformLineEndpoint,
+  type LineEndpoint,
+} from "./LineEndpointInteraction";
+import { OverlapSelectionCycle } from "./OverlapSelectionCycle";
 import { PageManipulationCoordinateMapper } from "./PageManipulationCoordinateMapper";
 import { PageSelectionCoordinateMapper } from "./PageSelectionCoordinateMapper";
 import {
@@ -62,10 +86,32 @@ import {
   selectionManipulationCursorCss,
   type SelectionManipulationCursor,
 } from "./SelectionManipulationTarget";
+import {
+  createVectorShapeDraft,
+  type ShapeCreationKind,
+  type VectorShapeDraft,
+} from "./VectorShapeCreation";
+import {
+  createPageObjectRenderHook,
+  createVectorShapeVisual,
+  type VectorShapeVisual,
+} from "./VectorShapeRendering";
+import { VectorInteractionOverlayRenderer } from "./VectorInteractionOverlayRenderer";
+import { formatVectorShapeMeasurement } from "./VectorShapeMeasurement";
 
 /** Interaction capabilities currently routed by the editor adapter. */
 export type CanvasInteractionMode =
-  "select" | "move" | "rotate" | "scale" | "ink" | "highlighter" | "eraser" | "disabled";
+  | "select"
+  | "move"
+  | "rotate"
+  | "scale"
+  | "ink"
+  | "highlighter"
+  | "eraser"
+  | "line"
+  | "rectangle"
+  | "ellipse"
+  | "disabled";
 
 /** Optional appearance for future strokes; an active stroke always retains its creation style. */
 export interface CanvasDrawingStyle {
@@ -79,6 +125,31 @@ export interface CanvasDrawingStyle {
 export interface ObjectLifecycleActions {
   readonly deleteSelection: () => boolean;
   readonly duplicateSelection: () => boolean;
+}
+
+export interface ShapeStylePatch {
+  readonly strokeColor?: string;
+  readonly strokeWidth?: number;
+  readonly opacity?: number;
+}
+
+export interface ShapeEditingActions {
+  readonly updateStyle: (patch: ShapeStylePatch) => boolean;
+}
+
+export interface ShapeEditingSnapshot {
+  readonly objectId: string;
+  readonly objectType: "line" | "rectangle" | "ellipse";
+  readonly strokeColor: string;
+  readonly strokeWidth: number;
+  readonly opacity: number;
+  readonly viewportBounds: Readonly<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+  readonly viewportSize: Readonly<{ width: number; height: number }>;
 }
 
 /** Public composition and lifecycle callbacks accepted by {@link CanvasSurface}. */
@@ -103,6 +174,10 @@ export interface CanvasSurfaceProps {
   readonly onHistoryControllerReady?: (controller: IHistoryController<ObjectCollection>) => void;
   /** Receives session-bound delete/duplicate actions and null during cleanup. */
   readonly onObjectLifecycleActionsReady?: (actions: ObjectLifecycleActions | null) => void;
+  /** Receives session-bound vector appearance actions and null during cleanup. */
+  readonly onShapeEditingActionsReady?: (actions: ShapeEditingActions | null) => void;
+  /** Receives presentation data for one selected vector object, or null. */
+  readonly onShapeEditingChange?: (snapshot: ShapeEditingSnapshot | null) => void;
   /** Receives immutable selection state only after logical changes. */
   readonly onSelectionChange?: (state: SelectionState) => void;
   /** Receives immutable manipulation state only after logical transitions. */
@@ -144,12 +219,60 @@ function manipulationKindForMode(mode: CanvasInteractionMode): ManipulationKind 
     case "ink":
     case "highlighter":
     case "eraser":
+    case "line":
+    case "rectangle":
+    case "ellipse":
     case "disabled":
       return null;
   }
 }
 
 const DUPLICATE_OFFSET = Object.freeze({ x: 10, y: 10 });
+
+function isLineObject(
+  object: PageObject | undefined,
+): object is Extract<VectorPageObject, { readonly type: "line" }> {
+  return object !== undefined && isVectorObject(object) && object.type === "line";
+}
+
+type SelectPointerRoute = "selection" | ManipulationKind | "overlap-selection" | "line-endpoint";
+
+interface ActiveLineEndpointInteraction {
+  readonly pointerId: number;
+  readonly object: Extract<VectorPageObject, { readonly type: "line" }>;
+  readonly endpoint: LineEndpoint;
+  readonly sessionId: string;
+  readonly sessionTimestamp: number;
+  readonly origin: ScreenPoint;
+  readonly initialTransform: Transform;
+  finalTransform: Transform;
+  moved: boolean;
+}
+
+function createShapeEditingSnapshot(
+  object: VectorPageObject,
+  bounds: ObjectBounds,
+  viewport: Viewport,
+): ShapeEditingSnapshot {
+  const topLeft = viewport.worldToViewport({
+    x: viewport.pageRect.x + bounds.x,
+    y: viewport.pageRect.y + bounds.y,
+  });
+  return Object.freeze({
+    objectId: object.id,
+    objectType: object.type,
+    strokeColor: object.style.strokeColor.hex,
+    strokeWidth: object.style.strokeWidth,
+    opacity: object.style.strokeColor.opacity,
+    viewportBounds: Object.freeze({
+      x: topLeft.x,
+      y: topLeft.y,
+      width: bounds.width * viewport.camera.zoom,
+      height: bounds.height * viewport.camera.zoom,
+    }),
+    viewportSize: Object.freeze({ ...viewport.size }),
+  });
+}
 
 /** Mounts and owns one editor canvas stack for the lifetime of the React host. */
 export function CanvasSurface({
@@ -162,6 +285,8 @@ export function CanvasSurface({
   onToolRegistryReady,
   onHistoryControllerReady,
   onObjectLifecycleActionsReady,
+  onShapeEditingActionsReady,
+  onShapeEditingChange,
   onSelectionChange,
   onManipulationChange,
   onHistoryChange,
@@ -178,10 +303,13 @@ export function CanvasSurface({
   const selectionControllerRef = useRef<SelectionController | null>(null);
   const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
   const resetManipulationCursorRef = useRef<(() => void) | null>(null);
+  const resetVectorHoverRef = useRef<(() => void) | null>(null);
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
   const historyChangeRef = useRef(onHistoryChange);
   const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
+  const shapeEditingActionsReadyRef = useRef(onShapeEditingActionsReady);
+  const shapeEditingChangeRef = useRef(onShapeEditingChange);
   const editingActionsRef = useRef<EditorEditingShortcutActions | null>(null);
 
   useLayoutEffect(() => {
@@ -196,6 +324,7 @@ export function CanvasSurface({
       selectionControllerRef.current?.clearSelection();
     }
     resetManipulationCursorRef.current?.();
+    resetVectorHoverRef.current?.();
     toolRegistryRef.current?.activate(interactionMode);
     updateToolDiagnosticsRef.current?.();
   }, [interactionMode]);
@@ -222,13 +351,33 @@ export function CanvasSurface({
   }, [onObjectLifecycleActionsReady]);
 
   useEffect(() => {
+    shapeEditingActionsReadyRef.current = onShapeEditingActionsReady;
+  }, [onShapeEditingActionsReady]);
+
+  useEffect(() => {
+    shapeEditingChangeRef.current = onShapeEditingChange;
+  }, [onShapeEditingChange]);
+
+  useEffect(() => {
     const host = hostRef.current;
     if (host === null) {
       return;
     }
 
+    const documentSession = new InkDocumentSession();
+    const editorClipboard = new EditorClipboard();
+    const editorSelection = new EditorSelectionSet();
+    const selectionGeometry = new EditorSelectionGeometry();
     const controller = new CanvasController({
       theme: readTheme(),
+      overlayHooks: [
+        createPageObjectRenderHook(
+          () => documentSession.collection.objects,
+          (objectIds) => {
+            host.dataset.renderedObjectOrder = JSON.stringify(objectIds);
+          },
+        ),
+      ],
       onError: (error) => onError?.(error),
     });
     let themeObserver: MutationObserver | null = null;
@@ -237,10 +386,15 @@ export function CanvasSurface({
     let inkLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
     let selectionLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
     let selectionOverlayRenderer: SelectionOverlayRenderer | null = null;
+    let vectorInteractionLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
+    let vectorInteractionRenderer: VectorInteractionOverlayRenderer | null = null;
     let selectionController: SelectionController | null = null;
     let unsubscribeSelection: (() => void) | null = null;
     let manipulationLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
     let transformPreviewRenderer: TransformPreviewRenderer | null = null;
+    let shapePreviewLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
+    let shapePreviewRenderer: TransformPreviewRenderer | null = null;
+    let measurementElement: HTMLDivElement | null = null;
     let manipulationController: ManipulationController<ManipulationResult> | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
@@ -254,12 +408,18 @@ export function CanvasSurface({
       canvas: HTMLCanvasElement;
       pointerId: number;
     }> | null = null;
-    const selectPointerRoutes = new Map<number, "selection" | ManipulationKind>();
+    let shapePointerCapture: Readonly<{
+      canvas: HTMLCanvasElement;
+      pointerId: number;
+    }> | null = null;
+    const selectPointerRoutes = new Map<number, SelectPointerRoute>();
+    const overlapSelectionCycle = new OverlapSelectionCycle();
+    let altSelectionActive = false;
+    let lastPointerPosition: ScreenPoint | null = null;
+    let overlapPointerOrigin: ScreenPoint | null = null;
+    let overlapPointerMoved = false;
+    let activeLineEndpointInteraction: ActiveLineEndpointInteraction | null = null;
     const editorPointerListeners: Array<readonly [keyof HTMLElementEventMap, EventListener]> = [];
-    const documentSession = new InkDocumentSession();
-    const editorClipboard = new EditorClipboard();
-    const editorSelection = new EditorSelectionSet();
-    const selectionGeometry = new EditorSelectionGeometry();
     const releaseManipulationPointerCapture = (): void => {
       const capture = manipulationPointerCapture;
       manipulationPointerCapture = null;
@@ -273,6 +433,16 @@ export function CanvasSurface({
       host.dataset.manipulationPointerCapture = "released";
     };
     releaseManipulationPointerCaptureRef.current = releaseManipulationPointerCapture;
+    const releaseShapePointerCapture = (): void => {
+      const capture = shapePointerCapture;
+      shapePointerCapture = null;
+      if (capture === null) return;
+      try {
+        capture.canvas.releasePointerCapture(capture.pointerId);
+      } catch {
+        // Capture may already have been released by the browser.
+      }
+    };
 
     try {
       controller.mount(host);
@@ -305,6 +475,7 @@ export function CanvasSurface({
         context: inkLayer.context,
         canvas: inkLayer.canvas,
         viewport,
+        finalizedPresentation: "external",
       });
       const activeStrokeRenderer = strokeRenderer;
       const objectSource = {
@@ -334,10 +505,27 @@ export function CanvasSurface({
         context: selectionLayer.context,
         canvas: selectionLayer.canvas,
         viewport,
+        style: {
+          outlineColor: "#7183ce",
+          highlightColor: "rgba(113, 131, 206, 0.065)",
+          outlineWidth: 1.5,
+        },
       });
+      selectionLayer.canvas.dataset.selectionPresentation = "soft";
       const activeSelectionOverlayRenderer = selectionOverlayRenderer;
+      vectorInteractionLayer = controller.createOverlayLayer({
+        name: "vector-interaction",
+        ariaLabel: "Vector hover and selection feedback",
+      });
+      vectorInteractionRenderer = new VectorInteractionOverlayRenderer({
+        context: vectorInteractionLayer.context,
+        canvas: vectorInteractionLayer.canvas,
+        viewport,
+      });
+      const activeVectorInteractionRenderer = vectorInteractionRenderer;
       inkLayer.canvas.style.zIndex = "1";
-      selectionLayer.canvas.style.zIndex = "3";
+      vectorInteractionLayer.canvas.style.zIndex = "3";
+      selectionLayer.canvas.style.zIndex = "4";
       const updateViewportDiagnostics = (): void => {
         host.dataset.viewportZoom = String(viewport.camera.zoom);
       };
@@ -352,14 +540,35 @@ export function CanvasSurface({
             opacity: object.style.opacity,
             pressureEnabled: object.style.pressureEnabled,
           }));
+        const vectorStyles = documentSession.collection.objects
+          .filter(isVectorObject)
+          .map((object) => ({
+            id: object.id,
+            type: object.type,
+            color: object.style.strokeColor.hex,
+            width: object.style.strokeWidth,
+            opacity: object.style.strokeColor.opacity,
+          }));
         if (inkLayer !== null) {
           inkLayer.canvas.dataset.documentObjectCount = String(snapshot.objectCount);
           inkLayer.canvas.dataset.documentInkObjectCount = String(snapshot.inkObjectCount);
+          inkLayer.canvas.dataset.inkStrokeCount = String(snapshot.inkObjectCount);
+          inkLayer.canvas.dataset.documentVectorObjectCount = String(
+            documentSession.collection.statistics.vectorObjectCount,
+          );
           inkLayer.canvas.dataset.documentObjectsImmutable = String(snapshot.allObjectsImmutable);
           inkLayer.canvas.dataset.documentStrokeStyles = JSON.stringify(strokeStyles);
+          inkLayer.canvas.dataset.documentVectorStyles = JSON.stringify(vectorStyles);
         }
         host.dataset.documentObjectCount = String(snapshot.objectCount);
+        host.dataset.documentVectorObjectCount = String(
+          documentSession.collection.statistics.vectorObjectCount,
+        );
+        host.dataset.documentVectorObjectTypes = JSON.stringify(
+          documentSession.collection.objects.filter(isVectorObject).map(({ type }) => type),
+        );
         host.dataset.documentStrokeStyles = JSON.stringify(strokeStyles);
+        host.dataset.documentVectorStyles = JSON.stringify(vectorStyles);
         updateViewportDiagnostics();
       };
       const updateEditorSelectionDiagnostics = (): void => {
@@ -396,11 +605,18 @@ export function CanvasSurface({
           editorSelection.ids,
         );
         const selectionBounds = selectedGeometry?.bounds;
+        const selectedVector =
+          selectedGeometry?.objects.length === 1 && isVectorObject(selectedObject)
+            ? selectedObject
+            : null;
         activeSelectionOverlayRenderer.setSelection(
-          selectedObject === undefined || selectionBounds === undefined
+          selectedObject === undefined ||
+            selectionBounds === undefined ||
+            selectedVector?.type === "line"
             ? null
             : { objectId: selectedObject.id, bounds: selectionBounds },
         );
+        activeVectorInteractionRenderer.setSelection(selectedVector);
         const selectionState =
           selectedObject === undefined || selectedGeometry === null ? "empty" : "selected";
         const selectedObjectId = selectedObject?.id ?? "";
@@ -435,6 +651,11 @@ export function CanvasSurface({
           String(state.selectionVersion),
         );
         updateEditorSelectionDiagnostics();
+        shapeEditingChangeRef.current?.(
+          selectedVector === null || selectionBounds === undefined
+            ? null
+            : createShapeEditingSnapshot(selectedVector, selectionBounds, viewport),
+        );
         if (selectionState === "empty") resetManipulationCursor();
         if (notify) selectionChangeRef.current?.(state);
       };
@@ -497,13 +718,59 @@ export function CanvasSurface({
       });
       const activeTransformPreviewRenderer = transformPreviewRenderer;
       manipulationLayer.canvas.style.zIndex = "2";
+      shapePreviewLayer = controller.createOverlayLayer({
+        name: "shape-preview",
+        ariaLabel: "Shape creation preview",
+      });
+      shapePreviewRenderer = new TransformPreviewRenderer({
+        context: shapePreviewLayer.context,
+        canvas: shapePreviewLayer.canvas,
+        viewport,
+        style: { opacity: 1, clearPadding: 4 },
+      });
+      const activeShapePreviewRenderer = shapePreviewRenderer;
+      shapePreviewLayer.canvas.style.zIndex = "2";
+      measurementElement = document.createElement("div");
+      const activeMeasurementElement = measurementElement;
+      activeMeasurementElement.dataset.shapeMeasurement = "hidden";
+      activeMeasurementElement.setAttribute("aria-hidden", "true");
+      Object.assign(activeMeasurementElement.style, {
+        position: "absolute",
+        zIndex: "4",
+        display: "none",
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+        border: "1px solid var(--folio-border, rgba(37, 37, 34, 0.12))",
+        borderRadius: "9px",
+        background: "color-mix(in srgb, var(--folio-surface, #ffffff) 92%, transparent)",
+        color: "var(--folio-ink, #252522)",
+        boxShadow: "0 8px 24px rgba(0, 0, 0, 0.13)",
+        backdropFilter: "blur(12px)",
+        padding: "5px 8px",
+        font: "600 11px/1.2 Inter, ui-sans-serif, system-ui, sans-serif",
+        letterSpacing: "0.01em",
+        fontVariantNumeric: "tabular-nums",
+      });
+      host.appendChild(activeMeasurementElement);
       const manipulationCoordinateMapper = new PageManipulationCoordinateMapper({
         coordinateConverter,
         viewport,
         getCanvasBounds: getInkCanvasBounds,
       });
       const manipulationManager = createManipulationManager();
-      const strokeVisuals = new Map<string, ReturnType<typeof createStrokeVisual>>();
+      const strokeVisuals = new Map<
+        string,
+        Readonly<{
+          object: InkObject;
+          scale: number;
+          visual: ReturnType<typeof createStrokeVisual>;
+        }>
+      >();
+      const vectorVisuals = new Map<
+        string,
+        Readonly<{ object: VectorPageObject; scale: number; visual: VectorShapeVisual }>
+      >();
+      let renderedDocumentObjects: readonly PageObject[] = documentSession.collection.objects;
       const updateHistoryDiagnostics = (state: IHistoryState): void => {
         host.dataset.historyCanUndo = String(state.canUndo);
         host.dataset.historyCanRedo = String(state.canRedo);
@@ -527,6 +794,16 @@ export function CanvasSurface({
         for (const objectId of strokeVisuals.keys()) {
           if (!documentSession.collection.has(objectId)) strokeVisuals.delete(objectId);
         }
+        for (const objectId of vectorVisuals.keys()) {
+          if (!documentSession.collection.has(objectId)) vectorVisuals.delete(objectId);
+        }
+        activeVectorInteractionRenderer.setHover(null);
+        const nextDocumentObjects = documentSession.collection.objects;
+        const documentChanged =
+          nextDocumentObjects.length !== renderedDocumentObjects.length ||
+          nextDocumentObjects.some((object, index) => object !== renderedDocumentObjects[index]);
+        renderedDocumentObjects = nextDocumentObjects;
+        if (documentChanged) controller.requestRender({ kind: "page" });
         updateDocumentDiagnostics();
         editorSelection.reconcile(documentSession.collection);
         let selection = activeSelectionController.getSelection();
@@ -604,6 +881,37 @@ export function CanvasSurface({
         onError?.(cause instanceof Error ? cause : new Error(message, { cause }));
         return false;
       };
+      const shapeEditingActions: ShapeEditingActions = Object.freeze({
+        updateStyle: (patch: ShapeStylePatch): boolean => {
+          const selected = selectedEditableObjects();
+          const object = selected.length === 1 ? selected[0] : undefined;
+          if (!isVectorObject(object)) return false;
+          const strokeColor = patch.strokeColor ?? object.style.strokeColor.hex;
+          const opacity = patch.opacity ?? object.style.strokeColor.opacity;
+          const strokeWidth = patch.strokeWidth ?? object.style.strokeWidth;
+          if (
+            strokeColor === object.style.strokeColor.hex &&
+            opacity === object.style.strokeColor.opacity &&
+            strokeWidth === object.style.strokeWidth
+          ) {
+            return false;
+          }
+          try {
+            const state = activeHistoryCoordinator.executeVectorStyleUpdate(object, {
+              strokeColor: Object.freeze({ hex: strokeColor, opacity }),
+              strokeWidth,
+              ...(object.style.fillColor === undefined
+                ? {}
+                : { fillColor: object.style.fillColor }),
+            });
+            updateHistoryDiagnostics(state);
+            return true;
+          } catch (cause) {
+            return reportEditingFailure(cause, "Shape appearance update failed.");
+          }
+        },
+      });
+      shapeEditingActionsReadyRef.current?.(shapeEditingActions);
       const deleteSelectedObjects = (): boolean => {
         const objects = selectedEditableObjects();
         if (objects.length === 0) return false;
@@ -726,14 +1034,48 @@ export function CanvasSurface({
           state.finalObjectRotation !== null &&
           state.finalObjectScale !== null
         ) {
-          let visual = strokeVisuals.get(object.id);
-          if (visual === undefined) {
-            visual = createStrokeVisual(object.stroke);
-            strokeVisuals.set(object.id, visual);
+          const cached = strokeVisuals.get(object.id);
+          const visual =
+            cached?.object === object && cached.scale === state.finalObjectScale
+              ? cached.visual
+              : createStrokeVisual(object.stroke, state.finalObjectScale);
+          if (cached?.visual !== visual) {
+            strokeVisuals.set(
+              object.id,
+              Object.freeze({ object, scale: state.finalObjectScale, visual }),
+            );
           }
           activeTransformPreviewRenderer.setPreview({
             objectId: object.id,
             bounds: visual.bounds,
+            transform: Object.freeze({
+              translation: state.finalObjectTranslation,
+              rotation: state.finalObjectRotation,
+              scale: state.finalObjectScale,
+            }),
+            visual,
+          });
+        } else if (
+          state.phase === "dragging" &&
+          isVectorObject(object) &&
+          state.finalObjectTranslation !== null &&
+          state.finalObjectRotation !== null &&
+          state.finalObjectScale !== null
+        ) {
+          const cached = vectorVisuals.get(object.id);
+          const visual =
+            cached?.object === object && cached.scale === state.finalObjectScale
+              ? cached.visual
+              : createVectorShapeVisual(object, state.finalObjectScale);
+          if (cached?.visual !== visual) {
+            vectorVisuals.set(
+              object.id,
+              Object.freeze({ object, scale: state.finalObjectScale, visual }),
+            );
+          }
+          activeTransformPreviewRenderer.setPreview({
+            objectId: object.id,
+            bounds: object.localBounds,
             transform: Object.freeze({
               translation: state.finalObjectTranslation,
               rotation: state.finalObjectRotation,
@@ -756,22 +1098,56 @@ export function CanvasSurface({
         updateManipulation(state, true),
       );
       inkLayer.setResizeHandler(() => {
-        updateViewportDiagnostics();
         activeStrokeRenderer.redraw();
+        activeVectorInteractionRenderer.redraw();
+        updateSelection(activeSelectionController.getSelection(), false);
+        updateDocumentDiagnostics();
+        onDiagnostics?.(controller.snapshot());
       });
       manipulationLayer.setResizeHandler(() => activeTransformPreviewRenderer.redraw());
+      shapePreviewLayer.setResizeHandler(() => activeShapePreviewRenderer.redraw());
       selectionLayer.setResizeHandler(() => activeSelectionOverlayRenderer.redraw());
+      vectorInteractionLayer.setResizeHandler(() => activeVectorInteractionRenderer.redraw());
       activeStrokeRenderer.redraw();
       activeTransformPreviewRenderer.redraw();
+      activeShapePreviewRenderer.redraw();
       activeSelectionOverlayRenderer.redraw();
+      activeVectorInteractionRenderer.redraw();
       updateDocumentDiagnostics();
       updateSelection(activeSelectionController.getSelection(), false);
       updateManipulation(activeManipulationController.getManipulationState(), false);
 
+      const selectionCandidatesAt = (position: ScreenPoint): readonly PageObject[] => {
+        const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
+        if (pagePosition === null) return Object.freeze([]);
+        return Object.freeze(
+          queryEditorSelectionCandidates(hitTestEngine, pagePosition)
+            .map(({ objectId }) => documentSession.collection.lookup(objectId))
+            .filter((object): object is PageObject => object !== undefined),
+        );
+      };
+      const updateOverlapPreview = (position: ScreenPoint | null): PageObject | null => {
+        if (!altSelectionActive || position === null || interactionModeRef.current !== "select") {
+          host.dataset.overlapCandidateId = "";
+          return null;
+        }
+        const candidates = selectionCandidatesAt(position);
+        const candidateId = overlapSelectionCycle.preview(
+          candidates.map(({ id }) => id),
+          activeSelectionController.getSelection().selectedObjectId,
+        );
+        const candidate =
+          candidateId === null ? undefined : documentSession.collection.lookup(candidateId);
+        host.dataset.overlapCandidateId = candidate?.id ?? "";
+        host.dataset.overlapCandidateCount = String(candidates.length);
+        activeVectorInteractionRenderer.setHover(candidate ?? null, "candidate");
+        return candidate ?? null;
+      };
       const updateManipulationCursor = (position: ScreenPoint): void => {
         if (
           interactionModeRef.current !== "select" ||
-          activeManipulationController.hasActiveSession()
+          activeManipulationController.hasActiveSession() ||
+          activeLineEndpointInteraction !== null
         ) {
           return;
         }
@@ -781,15 +1157,112 @@ export function CanvasSurface({
         );
         const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
         if (selection === null || pagePosition === null) {
+          activeVectorInteractionRenderer.setLineHandleHover(null);
           resetManipulationCursor();
           return;
         }
+        const selectedObject =
+          editorSelection.size === 1
+            ? documentSession.collection.lookup(editorSelection.ids[0] ?? "")
+            : undefined;
+        if (isLineObject(selectedObject)) {
+          const lineHit = resolveLineHandleHit(selectedObject, pagePosition, viewport.camera.zoom);
+          activeVectorInteractionRenderer.setLineHandleHover(lineHit?.handle ?? null);
+          setManipulationCursor(lineHit?.cursor ?? "default");
+          return;
+        }
+        activeVectorInteractionRenderer.setLineHandleHover(null);
         const hit = resolveSelectionManipulationHit({
           bounds: selection.bounds,
           position: pagePosition,
           zoom: viewport.camera.zoom,
         });
         setManipulationCursor(hit?.cursor ?? "default");
+      };
+      const updateVectorHover = (
+        position: ScreenPoint | null,
+        mode: CanvasInteractionMode,
+      ): void => {
+        if (
+          position === null ||
+          mode !== "select" ||
+          activeManipulationController.hasActiveSession() ||
+          activeLineEndpointInteraction !== null
+        ) {
+          activeVectorInteractionRenderer.setHover(null);
+          return;
+        }
+        if (altSelectionActive) {
+          updateOverlapPreview(position);
+          return;
+        }
+        activeVectorInteractionRenderer.setHover(selectionCandidatesAt(position)[0] ?? null);
+      };
+      resetVectorHoverRef.current = () => activeVectorInteractionRenderer.setHover(null);
+
+      const finishLineEndpointInteraction = (commit: boolean): void => {
+        const interaction = activeLineEndpointInteraction;
+        if (interaction === null) return;
+        try {
+          if (commit && interaction.moved) {
+            const results = createLineEndpointManipulationResults({
+              objectId: interaction.object.id,
+              sessionId: interaction.sessionId,
+              sessionTimestamp: interaction.sessionTimestamp,
+              initialTransform: interaction.initialTransform,
+              finalTransform: interaction.finalTransform,
+            });
+            if (results.length > 0) {
+              const state = activeHistoryCoordinator.executeManipulations(results, {
+                id: interaction.sessionId,
+                description: "Adjust line endpoint",
+              });
+              updateHistoryDiagnostics(state);
+            }
+          }
+        } catch (cause) {
+          reportEditingFailure(cause, "Line endpoint update failed.");
+        } finally {
+          activeLineEndpointInteraction = null;
+          activeTransformPreviewRenderer.setPreview(null);
+          activeVectorInteractionRenderer.setLineEndpointPreview(null);
+          hideShapeMeasurement();
+          host.dataset.lineEndpointInteraction = "idle";
+        }
+      };
+      const updateLineEndpointInteraction = (
+        interaction: ActiveLineEndpointInteraction,
+        position: ScreenPoint,
+      ): void => {
+        const pagePosition = manipulationCoordinateMapper.screenToPage(position, true);
+        if (pagePosition === null) return;
+        const transform = transformLineEndpoint(
+          interaction.object,
+          interaction.endpoint,
+          pagePosition,
+        );
+        if (transform === null) return;
+        interaction.finalTransform = transform;
+        interaction.moved ||=
+          Math.hypot(position.x - interaction.origin.x, position.y - interaction.origin.y) >= 3;
+        const geometry = lineWorldGeometry(interaction.object, transform);
+        activeTransformPreviewRenderer.setPreview({
+          objectId: interaction.object.id,
+          bounds: interaction.object.localBounds,
+          transform,
+          visual: createVectorShapeVisual(interaction.object, transform.scale),
+        });
+        activeVectorInteractionRenderer.setLineEndpointPreview({
+          object: interaction.object,
+          transform,
+          activeEndpoint: interaction.endpoint,
+        });
+        showShapeMeasurement(
+          formatVectorShapeMeasurement("line", geometry),
+          position.x,
+          position.y,
+        );
+        host.dataset.lineEndpointInteraction = "dragging";
       };
 
       const bridgeEditorPointer = (
@@ -802,7 +1275,11 @@ export function CanvasSurface({
           y: event.clientY,
           coordinateSpace: "screen",
         });
-        if (phase === "move") updateManipulationCursor(position);
+        lastPointerPosition = position;
+        if (phase === "move") {
+          updateManipulationCursor(position);
+          updateVectorHover(position, mode);
+        }
         if (mode === "ink") {
           resetManipulationCursor();
           return;
@@ -812,11 +1289,52 @@ export function CanvasSurface({
         if (mode === "select") {
           let route = selectPointerRoutes.get(event.pointerId);
           if (phase === "down") {
+            if (altSelectionActive && event.isPrimary && event.button === 0) {
+              route = "overlap-selection";
+              overlapPointerOrigin = position;
+              overlapPointerMoved = false;
+              selectPointerRoutes.set(event.pointerId, route);
+            }
             const selectedGeometry = selectionGeometry.resolve(
               documentSession.collection,
               editorSelection.ids,
             );
             const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
+            const selectedLine =
+              editorSelection.size === 1
+                ? documentSession.collection.lookup(editorSelection.ids[0] ?? "")
+                : undefined;
+            const lineHit =
+              route === undefined && isLineObject(selectedLine) && pagePosition !== null
+                ? resolveLineHandleHit(selectedLine, pagePosition, viewport.camera.zoom)
+                : null;
+            if (
+              isLineObject(selectedLine) &&
+              (lineHit?.handle === "start" || lineHit?.handle === "end")
+            ) {
+              route = "line-endpoint";
+              activeLineEndpointInteraction = {
+                pointerId: event.pointerId,
+                object: selectedLine,
+                endpoint: lineHit.handle,
+                sessionId: `line-endpoint-${selectedLine.id}-${Date.now().toString(36)}`,
+                sessionTimestamp: Date.now(),
+                origin: position,
+                initialTransform: selectedLine.transform,
+                finalTransform: selectedLine.transform,
+                moved: false,
+              };
+              activeVectorInteractionRenderer.setLineEndpointPreview({
+                object: selectedLine,
+                transform: selectedLine.transform,
+                activeEndpoint: lineHit.handle,
+              });
+              setManipulationCursor("crosshair");
+              host.dataset.lineEndpointInteraction = "armed";
+            } else if (lineHit?.handle === "midpoint") {
+              route = "translation";
+              setManipulationCursor("grab");
+            }
             const hit =
               selectedGeometry === null || pagePosition === null
                 ? null
@@ -825,8 +1343,10 @@ export function CanvasSurface({
                     position: pagePosition,
                     zoom: viewport.camera.zoom,
                   });
-            route = hit?.kind ?? "selection";
-            if (hit !== null) setManipulationCursor(hit.cursor);
+            if (route === undefined) {
+              route = isLineObject(selectedLine) ? "selection" : (hit?.kind ?? "selection");
+              if (hit !== null && !isLineObject(selectedLine)) setManipulationCursor(hit.cursor);
+            }
             selectPointerRoutes.set(event.pointerId, route);
           }
           if (route === undefined) return;
@@ -838,6 +1358,36 @@ export function CanvasSurface({
               isPrimary: event.isPrimary,
               position,
             });
+          } else if (route === "overlap-selection") {
+            if (phase === "move" && overlapPointerOrigin !== null) {
+              overlapPointerMoved ||=
+                Math.hypot(
+                  position.x - overlapPointerOrigin.x,
+                  position.y - overlapPointerOrigin.y,
+                ) >= 3;
+            } else if (phase === "up" && !overlapPointerMoved) {
+              const candidates = selectionCandidatesAt(position);
+              const candidateId = overlapSelectionCycle.commit(
+                candidates.map(({ id }) => id),
+                activeSelectionController.getSelection().selectedObjectId,
+              );
+              if (candidateId !== null) selectEditorObjects([candidateId]);
+              updateOverlapPreview(position);
+            }
+            if (phase === "up" || phase === "cancel") {
+              overlapPointerOrigin = null;
+              overlapPointerMoved = false;
+            }
+          } else if (route === "line-endpoint") {
+            const interaction = activeLineEndpointInteraction;
+            if (interaction?.pointerId === event.pointerId) {
+              if (phase === "move" || phase === "up") {
+                updateLineEndpointInteraction(interaction, position);
+              }
+              if (phase === "up" || phase === "cancel") {
+                finishLineEndpointInteraction(phase === "up");
+              }
+            }
           } else {
             const pagePosition = manipulationCoordinateMapper.screenToPage(
               position,
@@ -871,10 +1421,14 @@ export function CanvasSurface({
         } else {
           return;
         }
-        const ownsManipulation = activeManipulationController.hasActiveSession();
+        const ownsManipulation =
+          activeManipulationController.hasActiveSession() || activeLineEndpointInteraction !== null;
         const shouldCaptureManipulation =
           (manipulationKindForMode(mode) !== null ||
-            (mode === "select" && selectPointerRoutes.get(event.pointerId) !== "selection")) &&
+            (mode === "select" &&
+              !["selection", "overlap-selection"].includes(
+                selectPointerRoutes.get(event.pointerId) ?? "selection",
+              ))) &&
           ownsManipulation;
         const activePointerManipulation =
           mode === "select"
@@ -933,6 +1487,7 @@ export function CanvasSurface({
       addEditorPointerListener("lostpointercapture", "cancel");
       const cursorLeaveListener: EventListener = () => {
         if (!activeManipulationController.hasActiveSession()) resetManipulationCursor();
+        activeVectorInteractionRenderer.setHover(null);
       };
       inkLayer.canvas.addEventListener("pointerleave", cursorLeaveListener, true);
       editorPointerListeners.push(["pointerleave", cursorLeaveListener]);
@@ -1026,6 +1581,16 @@ export function CanvasSurface({
       });
       const activePointerInput = pointerInput;
       const activeInkCanvas = inkLayer.canvas;
+      let activeShapeCreation: Readonly<{
+        kind: ShapeCreationKind;
+        pointerId: number;
+        start: PagePoint;
+        rawCurrent: PagePoint;
+        clientX: number;
+        clientY: number;
+        draft: VectorShapeDraft;
+      }> | null = null;
+      let shapeConstraintActive = false;
       let eraserPointerId: number | null = null;
       let eraserDeletedObject = false;
       let eraserObjectIds = new Set<string>();
@@ -1082,6 +1647,241 @@ export function CanvasSurface({
           finishEraserGesture(false);
         }
       };
+      const hideShapeMeasurement = (): void => {
+        activeMeasurementElement.style.display = "none";
+        activeMeasurementElement.dataset.shapeMeasurement = "hidden";
+        activeMeasurementElement.textContent = "";
+        host.dataset.shapeMeasurement = "";
+      };
+      const showShapeMeasurement = (
+        measurement: string,
+        clientX: number,
+        clientY: number,
+      ): void => {
+        const hostBounds = host.getBoundingClientRect();
+        activeMeasurementElement.textContent = measurement;
+        activeMeasurementElement.style.display = "block";
+        activeMeasurementElement.style.left = `${Math.max(
+          8,
+          Math.min(host.clientWidth - 230, clientX - hostBounds.left + 14),
+        )}px`;
+        activeMeasurementElement.style.top = `${Math.max(
+          8,
+          Math.min(host.clientHeight - 32, clientY - hostBounds.top + 14),
+        )}px`;
+        activeMeasurementElement.dataset.shapeMeasurement = "visible";
+        host.dataset.shapeMeasurement = measurement;
+      };
+      const clearShapeCreation = (): void => {
+        activeShapeCreation = null;
+        shapeConstraintActive = false;
+        activeShapePreviewRenderer.setPreview(null);
+        hideShapeMeasurement();
+        releaseShapePointerCapture();
+        host.dataset.shapeCreationState = "idle";
+        host.dataset.shapeCreationType = "";
+        host.dataset.shapeMeasurement = "";
+      };
+      const shapeDrawingStyle = () => {
+        const style = resolveDrawingStyle();
+        return Object.freeze({
+          strokeColor: Object.freeze({ hex: style.color, opacity: style.opacity }),
+          strokeWidth: style.width,
+        });
+      };
+      const clampToPage = (point: PagePoint): PagePoint =>
+        Object.freeze({
+          x: Math.max(0, Math.min(viewport.pageRect.width, point.x)),
+          y: Math.max(0, Math.min(viewport.pageRect.height, point.y)),
+          coordinateSpace: "page",
+        });
+      const renderShapeCreation = (
+        rawCurrent: PagePoint,
+        constrain: boolean,
+        clientX: number,
+        clientY: number,
+      ): void => {
+        const creation = activeShapeCreation;
+        if (creation === null) return;
+        const draft = createVectorShapeDraft(
+          creation.kind,
+          creation.start,
+          rawCurrent,
+          constrain,
+          creation.draft.style,
+        );
+        activeShapeCreation = Object.freeze({
+          ...creation,
+          rawCurrent,
+          clientX,
+          clientY,
+          draft,
+        });
+        activeShapePreviewRenderer.setPreview({
+          objectId: `preview-${creation.kind}`,
+          bounds: draft.localBounds,
+          transform: Object.freeze({
+            translation: Object.freeze({ x: 0, y: 0 }),
+            rotation: 0,
+            scale: 1,
+          }),
+          visual: createVectorShapeVisual(draft),
+        });
+        showShapeMeasurement(draft.measurement, clientX, clientY);
+        host.dataset.shapePreviewValid = String(draft.valid);
+      };
+      const createShapeObject = (draft: VectorShapeDraft): PageObject => {
+        switch (draft.type) {
+          case "line":
+            return documentSession.createLineObject(draft.geometry as LineGeometry, draft.style);
+          case "rectangle":
+            return documentSession.createRectangleObject(
+              draft.geometry as RectangleGeometry,
+              draft.style,
+            );
+          case "ellipse":
+            return documentSession.createEllipseObject(
+              draft.geometry as EllipseGeometry,
+              draft.style,
+            );
+        }
+      };
+      const commitShapeCreation = (): void => {
+        const creation = activeShapeCreation;
+        if (creation === null) return;
+        if (!creation.draft.valid) {
+          clearShapeCreation();
+          return;
+        }
+        try {
+          const object = createShapeObject(creation.draft);
+          const state = activeHistoryCoordinator.executeObjectCreation(object);
+          updateHistoryDiagnostics(state);
+          selectEditorObjects([object.id]);
+          host.dataset.lastCreatedShapeType = object.type;
+          host.dataset.lastCreatedShapeId = object.id;
+        } catch (cause) {
+          reportEditingFailure(cause, "Shape creation History execution failed.");
+        } finally {
+          clearShapeCreation();
+        }
+      };
+      const createShapeTool = (kind: ShapeCreationKind) => ({
+        id: kind,
+        cursor: "crosshair",
+        deactivate: clearShapeCreation,
+        pointerDown: (event: PointerEvent) => {
+          if (!event.isPrimary || event.button !== 0 || activeShapeCreation !== null) return;
+          const position = manipulationCoordinateMapper.screenToPage(
+            Object.freeze({
+              x: event.clientX,
+              y: event.clientY,
+              coordinateSpace: "screen" as const,
+            }),
+            false,
+          );
+          if (position === null) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const start = clampToPage(position);
+          const draft = createVectorShapeDraft(
+            kind,
+            start,
+            start,
+            event.shiftKey,
+            shapeDrawingStyle(),
+          );
+          activeShapeCreation = Object.freeze({
+            kind,
+            pointerId: event.pointerId,
+            start,
+            rawCurrent: start,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            draft,
+          });
+          shapeConstraintActive = event.shiftKey;
+          selectEditorObjects([]);
+          activeInkCanvas.setPointerCapture(event.pointerId);
+          shapePointerCapture = Object.freeze({
+            canvas: activeInkCanvas,
+            pointerId: event.pointerId,
+          });
+          host.dataset.shapeCreationState = "dragging";
+          host.dataset.shapeCreationType = kind;
+          renderShapeCreation(start, event.shiftKey, event.clientX, event.clientY);
+        },
+        pointerMove: (event: PointerEvent) => {
+          if (event.pointerId !== activeShapeCreation?.pointerId) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const position = manipulationCoordinateMapper.screenToPage(
+            Object.freeze({
+              x: event.clientX,
+              y: event.clientY,
+              coordinateSpace: "screen" as const,
+            }),
+            true,
+          );
+          if (position !== null) {
+            renderShapeCreation(
+              clampToPage(position),
+              shapeConstraintActive || event.shiftKey,
+              event.clientX,
+              event.clientY,
+            );
+          }
+        },
+        pointerUp: (event: PointerEvent) => {
+          if (event.pointerId !== activeShapeCreation?.pointerId) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const position = manipulationCoordinateMapper.screenToPage(
+            Object.freeze({
+              x: event.clientX,
+              y: event.clientY,
+              coordinateSpace: "screen" as const,
+            }),
+            true,
+          );
+          if (position !== null) {
+            renderShapeCreation(
+              clampToPage(position),
+              shapeConstraintActive || event.shiftKey,
+              event.clientX,
+              event.clientY,
+            );
+          }
+          commitShapeCreation();
+        },
+        pointerCancel: (event: PointerEvent) => {
+          if (event.pointerId !== activeShapeCreation?.pointerId) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          clearShapeCreation();
+        },
+        keyboardDown: (event: KeyboardEvent) => {
+          const creation = activeShapeCreation;
+          if (creation === null) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            clearShapeCreation();
+          } else if (event.key === "Shift") {
+            event.preventDefault();
+            if (shapeConstraintActive) return;
+            shapeConstraintActive = true;
+            renderShapeCreation(creation.rawCurrent, true, creation.clientX, creation.clientY);
+          }
+        },
+        keyboardUp: (event: KeyboardEvent) => {
+          const creation = activeShapeCreation;
+          if (creation !== null && event.key === "Shift") {
+            event.preventDefault();
+            shapeConstraintActive = false;
+            renderShapeCreation(creation.rawCurrent, false, creation.clientX, creation.clientY);
+          }
+        },
+      });
       const createDelegatingTool = (
         id: CanvasInteractionMode,
         mode: CanvasInteractionMode,
@@ -1101,11 +1901,34 @@ export function CanvasSurface({
         },
         requestTemporaryRender: () => {
           activeTransformPreviewRenderer.redraw();
+          activeShapePreviewRenderer.redraw();
           activeSelectionOverlayRenderer.redraw();
+          activeVectorInteractionRenderer.redraw();
         },
       });
       const activeToolRegistry = toolRegistry;
-      activeToolRegistry.register(createDelegatingTool("select", "select", "default"));
+      const clearOverlapSelectionPreview = (): void => {
+        altSelectionActive = false;
+        overlapSelectionCycle.reset();
+        host.dataset.overlapCandidateId = "";
+        host.dataset.overlapCandidateCount = "0";
+        updateVectorHover(lastPointerPosition, "select");
+      };
+      activeToolRegistry.register({
+        ...createDelegatingTool("select", "select", "default"),
+        deactivate: clearOverlapSelectionPreview,
+        keyboardDown: (event: KeyboardEvent) => {
+          if (event.key !== "Alt" || altSelectionActive) return;
+          altSelectionActive = true;
+          event.preventDefault();
+          updateOverlapPreview(lastPointerPosition);
+        },
+        keyboardUp: (event: KeyboardEvent) => {
+          if (event.key !== "Alt") return;
+          event.preventDefault();
+          clearOverlapSelectionPreview();
+        },
+      });
       activeToolRegistry.register(createDelegatingTool("move", "move", "grab"));
       activeToolRegistry.register(createDelegatingTool("rotate", "rotate", "crosshair"));
       activeToolRegistry.register(createDelegatingTool("scale", "scale", "nwse-resize"));
@@ -1117,6 +1940,9 @@ export function CanvasSurface({
           deactivate: () => activePointerInput.detach(),
         });
       }
+      activeToolRegistry.register(createShapeTool("line"));
+      activeToolRegistry.register(createShapeTool("rectangle"));
+      activeToolRegistry.register(createShapeTool("ellipse"));
       activeToolRegistry.register({
         id: "eraser",
         cursor: "cell",
@@ -1193,6 +2019,8 @@ export function CanvasSurface({
       host.dataset.objectLifecycleCapability = "ready";
       host.dataset.clipboardCapability = "ready";
       host.dataset.contextMenuCapability = "ready";
+      host.dataset.shapeCreationCapability = "ready";
+      host.dataset.shapeCreationState = "idle";
       host.dataset.manipulationPointerCapture = "released";
       onControllerReady?.(controller);
       onSelectionControllerReady?.(activeSelectionController);
@@ -1244,7 +2072,9 @@ export function CanvasSurface({
       selectionControllerRef.current = null;
       releaseManipulationPointerCaptureRef.current = null;
       resetManipulationCursorRef.current = null;
+      resetVectorHoverRef.current = null;
       toolRegistry?.destroy();
+      releaseShapePointerCapture();
       toolRegistryRef.current = null;
       updateToolDiagnosticsRef.current = null;
       onToolRegistryReady?.(null);
@@ -1256,15 +2086,22 @@ export function CanvasSurface({
       selectionGeometry.clear();
       historyCoordinator?.destroy();
       objectLifecycleActionsReadyRef.current?.(null);
+      shapeEditingActionsReadyRef.current?.(null);
+      shapeEditingChangeRef.current?.(null);
       selectionController?.destroy();
       pointerInput?.destroy();
       documentSession.clear();
       selectionOverlayRenderer?.destroy();
+      vectorInteractionRenderer?.destroy();
       transformPreviewRenderer?.destroy();
+      shapePreviewRenderer?.destroy();
       strokeRenderer?.destroy();
       selectionLayer?.destroy();
+      vectorInteractionLayer?.destroy();
       manipulationLayer?.destroy();
+      shapePreviewLayer?.destroy();
       inkLayer?.destroy();
+      measurementElement?.remove();
       controller.destroy();
     };
   }, [
