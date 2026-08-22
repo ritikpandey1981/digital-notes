@@ -56,6 +56,7 @@ import {
 import { createEditorGroupManipulationPlan, transformGroupBounds } from "./EditorGroupManipulation";
 import { EditorSelectionGeometry } from "./EditorSelectionGeometry";
 import { EditorSelectionSet } from "./EditorSelectionSet";
+import { firstErasableInkCandidate } from "./EraserEligibility";
 import {
   createEditorSelectionHitTestEngine,
   queryEditorSelectionCandidates,
@@ -1624,16 +1625,17 @@ export function CanvasSurface({
         }
       };
       const eraseAtPointer = (event: PointerEvent): void => {
-        const hit = activeSelectionController.hitTest(
-          Object.freeze({
-            x: event.clientX,
-            y: event.clientY,
-            coordinateSpace: "screen",
-          }),
+        const object = firstErasableInkCandidate(
+          selectionCandidatesAt(
+            Object.freeze({
+              x: event.clientX,
+              y: event.clientY,
+              coordinateSpace: "screen",
+            }),
+          ),
+          eraserObjectIds,
         );
-        if (hit === null || eraserObjectIds.has(hit.objectId)) return;
-        const object = documentSession.collection.lookup(hit.objectId);
-        if (object === undefined || !object.visible || object.locked) return;
+        if (object === null) return;
         try {
           const state = activeHistoryCoordinator.executeManipulation(
             createDeleteManipulationResult({ objectId: object.id }),

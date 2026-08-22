@@ -7,14 +7,17 @@ const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
 const DialogPortal = DialogPrimitive.Portal;
 const DialogClose = DialogPrimitive.Close;
+const MODAL_STACKING_LEVEL = 1_100;
 
 const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
+>(({ className, style, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
-    className={cn("fixed inset-0 z-50 bg-black/35 backdrop-blur-sm", className)}
+    className={cn("fixed inset-0 bg-black/35 backdrop-blur-sm", className)}
+    style={{ ...style, zIndex: MODAL_STACKING_LEVEL }}
+    data-folio-modal-layer="overlay"
     {...props}
   />
 ));
@@ -23,15 +26,17 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[20px] border bg-folio-paper p-6 text-folio-ink shadow-2xl outline-none",
+        "fixed left-1/2 top-1/2 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[20px] border bg-folio-paper p-6 text-folio-ink shadow-2xl outline-none",
         className,
       )}
+      style={{ ...style, zIndex: MODAL_STACKING_LEVEL }}
+      data-folio-modal-layer="content"
       {...props}
     >
       {children}

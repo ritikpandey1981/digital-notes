@@ -40,20 +40,26 @@ function ApplicationShellContent() {
             workspaceName="Studio Notes"
             locationLabel={shellUi.activeSection}
             activeTool={editorWorkspace.activeTool}
+            activeShape={editorWorkspace.activeShape}
             activeFloatingWidget={editorWorkspace.activeFloatingWidget}
             onSelectTool={editorWorkspace.selectTool}
+            onSelectShape={editorWorkspace.selectShape}
             drawingStyle={editorWorkspace.drawingStyle}
             toolOptions={editorWorkspace.toolOptions}
             colors={editorWorkspace.colors}
             onChangeDrawingColor={editorWorkspace.setDrawingColor}
             onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
             onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
+            onChangeShapeStyle={editorWorkspace.updateShapeStyle}
             onDrawingColorUsed={editorWorkspace.rememberColorUsage}
             onDismissFloatingWidget={editorWorkspace.dismissFloatingWidget}
           />
         </main>
       </div>
-      <StatusBar activeTool={editorWorkspace.activeTool} />
+      <StatusBar
+        activeTool={editorWorkspace.activeTool}
+        activeShape={editorWorkspace.activeShape}
+      />
     </div>
   );
 }

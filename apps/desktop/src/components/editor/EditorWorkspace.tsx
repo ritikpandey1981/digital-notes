@@ -21,14 +21,17 @@ interface EditorWorkspaceProps {
   workspaceName: string;
   locationLabel: string;
   activeTool: EditorTool;
+  activeShape: ShapeToolKind;
   activeFloatingWidget: FloatingToolWidgetId | null;
   onSelectTool: (tool: EditorTool) => void;
+  onSelectShape: (shape: ShapeToolKind) => void;
   drawingStyle: CanvasDrawingStyle;
   toolOptions: ToolOptionsDescriptor | null;
   colors: EditorColorSystemSnapshot;
   onChangeDrawingColor: (color: string) => void;
   onChangeDrawingWidth: (width: number) => void;
   onChangeDrawingOpacity: (opacity: number) => void;
+  onChangeShapeStyle: (patch: ShapeStylePatch) => void;
   onDrawingColorUsed: (color: string) => void;
   onDismissFloatingWidget: () => void;
 }
@@ -37,14 +40,17 @@ export function EditorWorkspace({
   workspaceName,
   locationLabel,
   activeTool,
+  activeShape,
   activeFloatingWidget,
   onSelectTool,
+  onSelectShape,
   drawingStyle,
   toolOptions,
   colors,
   onChangeDrawingColor,
   onChangeDrawingWidth,
   onChangeDrawingOpacity,
+  onChangeShapeStyle,
   onDrawingColorUsed,
   onDismissFloatingWidget,
 }: EditorWorkspaceProps) {
@@ -54,7 +60,6 @@ export function EditorWorkspace({
     null,
   );
   const [moreToolsOpen, setMoreToolsOpen] = useState(false);
-  const [activeShape, setActiveShape] = useState<ShapeToolKind>("line");
   const [viewportZoom, setViewportZoom] = useState(1);
   const handleObjectLifecycleActionsReady = useCallback(
     (actions: ObjectLifecycleActions | null) => {
@@ -74,9 +79,13 @@ export function EditorWorkspace({
   const duplicateSelection = useCallback(() => {
     objectLifecycleActionsRef.current?.duplicateSelection();
   }, []);
-  const updateShapeStyle = useCallback((patch: ShapeStylePatch) => {
-    shapeEditingActionsRef.current?.updateStyle(patch);
-  }, []);
+  const updateShapeStyle = useCallback(
+    (patch: ShapeStylePatch) => {
+      onChangeShapeStyle(patch);
+      shapeEditingActionsRef.current?.updateStyle(patch);
+    },
+    [onChangeShapeStyle],
+  );
   const dismissTransientToolUi = useCallback(() => {
     setMoreToolsOpen(false);
     onDismissFloatingWidget();
@@ -95,14 +104,6 @@ export function EditorWorkspace({
     },
     [onSelectTool],
   );
-  const selectShape = useCallback(
-    (shape: ShapeToolKind) => {
-      setActiveShape(shape);
-      onSelectTool("Shapes");
-    },
-    [onSelectTool],
-  );
-
   return (
     <section
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
@@ -130,7 +131,7 @@ export function EditorWorkspace({
       <ShapesWidget
         open={activeTool === "Shapes" && activeFloatingWidget === "shapes"}
         activeShape={activeShape}
-        onSelectShape={selectShape}
+        onSelectShape={onSelectShape}
         onDismiss={dismissTransientToolUi}
       />
       <ShapeEditingToolbar

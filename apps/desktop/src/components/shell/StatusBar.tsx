@@ -1,6 +1,6 @@
 import { CheckCircle2, MousePointer2 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import type { EditorTool } from "../editor/editor-types";
+import type { EditorTool, ShapeToolKind } from "../editor/editor-types";
 import {
   INTERACTION_MOTION,
   motionSeconds,
@@ -10,10 +10,11 @@ import { useContextHint } from "./context-hint-context";
 
 interface StatusBarProps {
   activeTool: EditorTool;
+  activeShape: ShapeToolKind;
 }
 
-export function StatusBar({ activeTool }: StatusBarProps) {
-  const hint = useContextHint(activeTool);
+export function StatusBar({ activeTool, activeShape }: StatusBarProps) {
+  const hint = useContextHint({ tool: activeTool, shapeKind: activeShape });
   const reducedMotion = useReducedMotion() === true;
   return (
     <footer className="flex h-8 shrink-0 items-center border-t border-folio-border bg-folio-status px-3 text-[11px] text-folio-muted">
@@ -32,6 +33,7 @@ export function StatusBar({ activeTool }: StatusBarProps) {
           className="hidden h-4 w-[220px] shrink-0 items-center overflow-hidden md:flex"
           data-testid="context-hint"
           data-context-hint-tool={hint?.tool ?? ""}
+          data-context-hint-shape={hint?.shapeKind ?? ""}
           data-context-hint-motion="fade-150ms"
           aria-live="polite"
         >
