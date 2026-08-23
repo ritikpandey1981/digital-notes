@@ -7,16 +7,21 @@ export {
   type EditorColorSystemSnapshot,
 } from "./foundation/color-system";
 export {
+  DEFAULT_BRUSH_PRESETS,
   DEFAULT_PEN_PRESETS,
   EDITOR_STROKE_WIDTHS,
+  createBrushToolStateStore,
   createPenPresetStore,
-  type BrushType,
+  type ActiveToolState,
+  type ActiveToolStatePatch,
+  type BrushToolStateStore,
+  type BrushToolStateStoreSnapshot,
   type DrawingToolKind,
   type PenPreset,
   type PenPresetPatch,
   type PenPresetStore,
   type PenPresetStoreSnapshot,
-  type PenPressureSettings,
+  type ResolvedDrawingBrush,
 } from "./foundation/pen-presets";
 export {
   createDefaultPropertyDescriptorRegistry,

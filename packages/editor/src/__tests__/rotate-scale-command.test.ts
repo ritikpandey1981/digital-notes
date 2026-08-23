@@ -38,6 +38,7 @@ describe("RotateCommand", () => {
     expect(object(undone).transform.rotation).toBe(0);
     expect(object(redone).transform.rotation).toBe(Math.PI / 2);
     expect(object(executed).stroke).toBe(source.stroke);
+    expect(object(executed).stroke.brush).toBe(source.stroke.brush);
     expect(new Set([initial, executed, undone, redone]).size).toBe(4);
     expect(Object.isFrozen(command)).toBe(true);
     expect(Reflect.ownKeys(command).sort()).toEqual(["description", "id", "timestamp"]);
@@ -70,6 +71,7 @@ describe("ScaleCommand", () => {
     expect(object(undone).transform.scale).toBe(1);
     expect(object(redone).transform.scale).toBe(2.5);
     expect(object(executed).stroke).toBe(source.stroke);
+    expect(object(executed).stroke.brush).toBe(source.stroke.brush);
     expect(Object.isFrozen(command)).toBe(true);
   });
 });

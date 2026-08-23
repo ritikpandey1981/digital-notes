@@ -12,9 +12,11 @@ import {
 } from "@folio/document";
 import type { HistoryNotification, IHistoryController, IHistoryState } from "@folio/history";
 import {
+  createResolvedBrushSnapshot,
   createStrokeVisual,
   PointerInputController,
   StrokeRenderer,
+  type ResolvedBrushSnapshot,
   type StrokeStyle,
 } from "@folio/ink";
 import {
@@ -127,6 +129,7 @@ export interface CanvasDrawingStyle {
   readonly width?: number;
   readonly opacity?: number;
   readonly pressureEnabled?: boolean;
+  readonly brush?: ResolvedBrushSnapshot;
 }
 
 /** Session-scoped object lifecycle actions exposed to the desktop composition layer. */
@@ -602,6 +605,17 @@ export function CanvasSurface({
             opacity: object.style.opacity,
             pressureEnabled: object.style.pressureEnabled,
           }));
+        const strokeBrushes = documentSession.collection.objects
+          .filter((object): object is InkObject => object instanceof InkObject)
+          .map((object) => ({
+            id: object.id,
+            presetId: object.stroke.brush.presetId,
+            presetVersion: object.stroke.brush.presetVersion,
+            family: object.stroke.brush.family,
+            rendererKind: object.stroke.brush.renderer.kind,
+            size: object.stroke.brush.size,
+            opacity: object.stroke.brush.opacity,
+          }));
         const vectorStyles = documentSession.collection.objects
           .filter(isVectorObject)
           .map((object) => ({
@@ -620,6 +634,7 @@ export function CanvasSurface({
           );
           inkLayer.canvas.dataset.documentObjectsImmutable = String(snapshot.allObjectsImmutable);
           inkLayer.canvas.dataset.documentStrokeStyles = JSON.stringify(strokeStyles);
+          inkLayer.canvas.dataset.documentStrokeBrushes = JSON.stringify(strokeBrushes);
           inkLayer.canvas.dataset.documentVectorStyles = JSON.stringify(vectorStyles);
         }
         host.dataset.documentObjectCount = String(snapshot.objectCount);
@@ -630,6 +645,7 @@ export function CanvasSurface({
           documentSession.collection.objects.filter(isVectorObject).map(({ type }) => type),
         );
         host.dataset.documentStrokeStyles = JSON.stringify(strokeStyles);
+        host.dataset.documentStrokeBrushes = JSON.stringify(strokeBrushes);
         host.dataset.documentVectorStyles = JSON.stringify(vectorStyles);
         updateViewportDiagnostics();
       };
@@ -1824,13 +1840,22 @@ export function CanvasSurface({
         );
       };
       inkLayer.canvas.addEventListener("contextmenu", contextMenuListener);
-      const resolveDrawingStyle = (): Required<CanvasDrawingStyle> => {
+      const resolveDrawingStyle = (): Readonly<{
+        color: string;
+        width: number;
+        opacity: number;
+        pressureEnabled: boolean;
+        brush?: ResolvedBrushSnapshot;
+      }> => {
         const highlighter = interactionModeRef.current === "highlighter";
         return {
           color: drawingStyleRef.current?.color ?? (highlighter ? "#facc15" : "#111111"),
           width: drawingStyleRef.current?.width ?? (highlighter ? 12 : 2),
           opacity: drawingStyleRef.current?.opacity ?? (highlighter ? 0.34 : 1),
           pressureEnabled: drawingStyleRef.current?.pressureEnabled ?? !highlighter,
+          ...(drawingStyleRef.current?.brush === undefined
+            ? {}
+            : { brush: drawingStyleRef.current.brush }),
         };
       };
       const dynamicStrokeStyle: Partial<StrokeStyle> = {
@@ -1857,6 +1882,36 @@ export function CanvasSurface({
           return bounds;
         },
         style: dynamicStrokeStyle,
+        resolveBrush: () => {
+          const style = resolveDrawingStyle();
+          if (style.brush !== undefined) return style.brush;
+          const family = interactionModeRef.current === "highlighter" ? "highlighter" : "pen";
+          return createResolvedBrushSnapshot({
+            schemaVersion: 1,
+            presetId: `editor-default-${family}`,
+            presetVersion: 1,
+            family,
+            color: style.color,
+            size: style.width,
+            opacity: style.opacity,
+            smoothing: Object.freeze({ mode: "none", amount: 0 }),
+            dynamics: Object.freeze({
+              pressureSize: Object.freeze({
+                enabled: style.pressureEnabled,
+                minimumFactor: style.pressureEnabled ? 0.5 : 1,
+                maximumFactor: style.pressureEnabled ? 1.5 : 1,
+                curve: Object.freeze({ kind: "linear", exponent: 1 }),
+              }),
+              pressureOpacity: Object.freeze({
+                enabled: false,
+                minimumFactor: 1,
+                maximumFactor: 1,
+                curve: Object.freeze({ kind: "linear", exponent: 1 }),
+              }),
+            }),
+            renderer: Object.freeze({ version: 1, kind: "centerline" }),
+          });
+        },
         onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),
         onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
         onStrokeFinalized: (stroke) => {

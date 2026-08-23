@@ -24,6 +24,8 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     const baseCanvas = host.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
     await expect(surface).toHaveAttribute("data-tool-registry-size", "11");
+    await expect(window.getByRole("button", { name: "Pencil", exact: true })).toHaveCount(0);
+    await expect(window.getByRole("button", { name: "Marker", exact: true })).toHaveCount(0);
     await inkCanvas.evaluate((canvas) => {
       canvas.dataset.phase14LifecycleToken = "mounted-once";
     });
@@ -52,6 +54,16 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     expect(await strokeStyles(surface)).toMatchObject([
       { color: "#2563eb", width: 8, opacity: 0.8, pressureEnabled: true },
     ]);
+    expect(await strokeBrushes(surface)).toMatchObject([
+      {
+        presetId: "pen-black",
+        presetVersion: 1,
+        family: "pen",
+        rendererKind: "centerline",
+        size: 8,
+        opacity: 0.8,
+      },
+    ]);
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
@@ -65,6 +77,10 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     const penStyles = await strokeStyles(surface);
     expect(penStyles[0]).toMatchObject({ color: "#2563eb", width: 8, opacity: 0.8 });
     expect(penStyles[1]).toMatchObject({ color: "#dc2626", width: 4, opacity: 0.8 });
+    expect(await strokeBrushes(surface)).toMatchObject([
+      { presetId: "pen-black", family: "pen", size: 8, opacity: 0.8 },
+      { presetId: "pen-black", family: "pen", size: 4, opacity: 0.8 },
+    ]);
 
     await window.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "highlighter");
@@ -81,6 +97,14 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       width: 12,
       opacity: 0.34,
       pressureEnabled: false,
+    });
+    expect((await strokeBrushes(surface))[2]).toMatchObject({
+      presetId: "highlighter-yellow",
+      presetVersion: 1,
+      family: "highlighter",
+      rendererKind: "centerline",
+      size: 12,
+      opacity: 0.34,
     });
     expect(await attributeNumber(inkCanvas, "data-ink-path-build-count")).toBe(3);
 
@@ -152,6 +176,12 @@ async function strokeStyles(locator: Locator): Promise<readonly StrokeStyleDiagn
   ) as readonly StrokeStyleDiagnostic[];
 }
 
+async function strokeBrushes(locator: Locator): Promise<readonly StrokeBrushDiagnostic[]> {
+  return JSON.parse(
+    (await locator.getAttribute("data-document-stroke-brushes")) ?? "[]",
+  ) as readonly StrokeBrushDiagnostic[];
+}
+
 async function setNumericValue(locator: Locator, value: string): Promise<void> {
   await locator.fill(value);
   await locator.press("Enter");
@@ -175,4 +205,13 @@ interface StrokeStyleDiagnostic {
   readonly width: number;
   readonly opacity: number;
   readonly pressureEnabled: boolean;
+}
+
+interface StrokeBrushDiagnostic {
+  readonly presetId: string;
+  readonly presetVersion: number;
+  readonly family: "pen" | "highlighter";
+  readonly rendererKind: "centerline" | "outline";
+  readonly size: number;
+  readonly opacity: number;
 }

@@ -19,7 +19,7 @@ describe("shape tool state", () => {
       opacity: 1,
       pressureEnabled: false,
     });
-    expect(presets.activePreset("pen").style.strokeColor.hex).toBe("#2563eb");
+    expect(presets.activeState("pen").color.hex).toBe("#2563eb");
   });
 
   it("retains Shape color, width, opacity, and subtype without mutating drawing presets", () => {
@@ -30,8 +30,8 @@ describe("shape tool state", () => {
       strokeWidth: 16,
       opacity: 0.25,
     });
-    const penBeforeShapes = presets.activePreset("pen");
-    const highlighterBeforeShapes = presets.activePreset("highlighter");
+    const penBeforeShapes = presets.activeState("pen");
+    const highlighterBeforeShapes = presets.activeState("highlighter");
     const shapes = createShapeToolState();
 
     shapes.selectShape("rectangle");
@@ -42,8 +42,8 @@ describe("shape tool state", () => {
       activeShape: "ellipse",
       style: { color: "#dc2626", width: 7, opacity: 0.4, pressureEnabled: false },
     });
-    expect(presets.activePreset("pen")).toEqual(penBeforeShapes);
-    expect(presets.activePreset("highlighter")).toEqual(highlighterBeforeShapes);
+    expect(presets.activeState("pen")).toEqual(penBeforeShapes);
+    expect(presets.activeState("highlighter")).toEqual(highlighterBeforeShapes);
 
     shapes.selectShape("rectangle");
     expect(shapes.snapshot().style).toEqual({

@@ -63,6 +63,7 @@ export interface StrokeStyle {
 export interface StrokeUpdate {
   readonly strokeId: string;
   readonly style: StrokeStyle;
+  readonly brush: import("./brush-model").ResolvedBrushSnapshot;
   readonly point: StrokePoint;
   readonly points: ReadonlyArray<StrokePoint>;
   readonly bounds: StrokeBounds;
@@ -92,9 +93,14 @@ export interface StrokeBuilderOptions {
   readonly id?: string;
   readonly timestamp?: number;
   readonly style?: Partial<StrokeStyle>;
+  readonly brush?: import("./brush-model").ResolvedBrushSnapshot;
   readonly smoother?: import("./stroke-smoother").StrokeSmoother;
   readonly createId?: () => string;
   readonly now?: () => number;
+}
+
+export interface StrokeSampleOptions {
+  readonly phase?: "continue" | "terminal";
 }
 
 export interface PointerInputCallbacks {
@@ -114,6 +120,7 @@ export interface PointerInputControllerOptions extends PointerInputCallbacks {
   readonly coordinateConverter: import("@folio/rendering").CoordinateConverter;
   readonly getCanvasBounds: () => import("@folio/rendering").CanvasBounds;
   readonly style?: Partial<StrokeStyle>;
+  readonly resolveBrush?: () => import("./brush-model").ResolvedBrushSnapshot;
   readonly smoother?: import("./stroke-smoother").StrokeSmoother;
   readonly supportedPointerTypes?: readonly InkPointerType[];
   readonly createId?: () => string;

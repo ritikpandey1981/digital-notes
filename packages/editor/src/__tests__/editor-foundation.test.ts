@@ -18,7 +18,7 @@ describe("Phase 14 editor foundation", () => {
     expect(colors.snapshot().presetColors.length).toBeGreaterThan(4);
   });
 
-  it("preserves independent pen and highlighter presets", () => {
+  it("preserves independent pen and highlighter state without mutating presets", () => {
     const presets = createPenPresetStore();
     const originalPen = presets.activePreset("pen");
     const originalHighlighter = presets.activePreset("highlighter");
@@ -27,13 +27,15 @@ describe("Phase 14 editor foundation", () => {
       strokeWidth: 8,
       opacity: 0.8,
     });
-    const changedPen = presets.activePreset("pen");
-    expect(changedPen.id).toBe(originalPen.id);
-    expect(changedPen.style.strokeColor.hex).toBe("#4f46e5");
-    expect(changedPen.style.strokeColor.opacity).toBe(0.8);
-    expect(changedPen.style.strokeWidth).toBe(8);
+    const changedPen = presets.activeState("pen");
+    expect(changedPen.presetId).toBe(originalPen.id);
+    expect(changedPen.color.hex).toBe("#4f46e5");
+    expect(changedPen.opacity).toBe(0.8);
+    expect(changedPen.size).toBe(8);
+    expect(presets.activePreset("pen")).toBe(originalPen);
     expect(presets.activePreset("highlighter")).toEqual(originalHighlighter);
-    expect(originalPen.style.strokeColor.hex).toBe("#111111");
+    expect(originalPen.defaults.color).toBe("#111111");
+    expect(originalPen.defaults.size).toBe(2);
   });
 
   it("exposes ink properties through a provider instead of panel type switches", () => {

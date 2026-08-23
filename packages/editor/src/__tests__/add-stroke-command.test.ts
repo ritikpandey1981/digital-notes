@@ -22,6 +22,9 @@ describe("AddStrokeCommand", () => {
     expect(fixture.session.current.size).toBe(0);
     manager.redo();
     expect(fixture.session.current.lookup(fixture.object.id)).toBe(fixture.object);
+    expect((fixture.session.current.lookup(fixture.object.id) as InkObject).stroke.brush).toBe(
+      fixture.object.stroke.brush,
+    );
     expect(manager.getHistoryState()).toMatchObject({ undoDepth: 1, redoDepth: 0 });
     expect(Object.isFrozen(command)).toBe(true);
   });

@@ -114,6 +114,7 @@ export class PointerInputController {
       builder = new StrokeBuilder({
         timestamp: point.timestamp,
         ...(this.options.style === undefined ? {} : { style: this.options.style }),
+        ...(this.options.resolveBrush === undefined ? {} : { brush: this.options.resolveBrush() }),
         smoother: this.inputSmoother,
         ...(this.options.createId === undefined ? {} : { createId: this.options.createId }),
         ...(this.options.now === undefined ? {} : { now: this.options.now }),
@@ -174,7 +175,7 @@ export class PointerInputController {
     }
     if (event.pointerId !== this.activePointerId) return;
     event.preventDefault();
-    this.appendEvent(event);
+    this.appendEvent(event, "terminal");
     const target = this.target ?? (event.currentTarget as HTMLElement | null);
     const builder = this.activeBuilder;
     this.activePointerId = null;
@@ -222,10 +223,10 @@ export class PointerInputController {
     this.cancelActive("lost-capture");
   };
 
-  private appendEvent(event: PointerEvent): void {
+  private appendEvent(event: PointerEvent, phase: "continue" | "terminal" = "continue"): void {
     if (this.activeBuilder === null) return;
     try {
-      const update = this.activeBuilder.addPoint(this.normalizeEvent(event));
+      const update = this.activeBuilder.addPoint(this.normalizeEvent(event), { phase });
       if (update !== null) this.options.onStrokeUpdate?.(update);
     } catch (cause) {
       this.report(

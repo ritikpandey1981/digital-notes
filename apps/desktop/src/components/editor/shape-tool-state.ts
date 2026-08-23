@@ -1,9 +1,11 @@
 import type { CanvasDrawingStyle, ShapeStylePatch } from "@folio/editor";
 import type { ShapeToolKind } from "./editor-types";
 
+type ShapeDrawingStyle = Readonly<Required<Omit<CanvasDrawingStyle, "brush">>>;
+
 export interface ShapeToolStateSnapshot {
   readonly activeShape: ShapeToolKind;
-  readonly style: Readonly<Required<CanvasDrawingStyle>>;
+  readonly style: ShapeDrawingStyle;
   readonly version: number;
 }
 
@@ -13,7 +15,7 @@ export interface ShapeToolState {
   readonly updateStyle: (patch: ShapeStylePatch) => ShapeToolStateSnapshot;
 }
 
-export const DEFAULT_SHAPE_DRAWING_STYLE: Readonly<Required<CanvasDrawingStyle>> = Object.freeze({
+export const DEFAULT_SHAPE_DRAWING_STYLE: ShapeDrawingStyle = Object.freeze({
   color: "#111111",
   width: 2,
   opacity: 1,

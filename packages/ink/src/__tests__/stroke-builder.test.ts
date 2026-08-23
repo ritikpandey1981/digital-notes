@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { StrokeBuilder } from "../stroke-builder";
+import { Stroke } from "../stroke";
 import { StrokeSmoother } from "../stroke-smoother";
 import type { InkPointerType, StrokePointInput } from "../types";
 
@@ -84,6 +85,26 @@ describe("StrokeBuilder", () => {
     expect(stroke.bounds).toMatchObject({ x: 10, y: 20, width: 0, height: 0 });
   });
 
+  it("keeps the public StrokeData constructor compatible with pre-17A inputs", () => {
+    const builder = unsmoothedBuilder();
+    builder.addPoint(point(10, 20, 100));
+    const original = builder.finalize();
+    const compatible = new Stroke({
+      id: "compatible-stroke",
+      timestamp: original.timestamp,
+      points: original.points,
+      style: original.style,
+      metrics: original.metrics,
+      statistics: original.statistics,
+    });
+
+    expect(compatible.sourceSamples).toHaveLength(1);
+    expect(compatible.brush).toMatchObject({
+      presetId: "legacy-stroke-style",
+      renderer: { kind: "centerline" },
+    });
+  });
+
   it("supports a two-point stroke and computes its incremental dirty rectangle", () => {
     const builder = unsmoothedBuilder();
     const first = builder.addPoint(point(10, 10, 100));
@@ -94,12 +115,57 @@ describe("StrokeBuilder", () => {
     expect(builder.finalize().length).toBeCloseTo(Math.hypot(20, 10));
   });
 
-  it("filters duplicate positions without allocating another stroke point", () => {
+  it("retains meaningful stationary source input without adding render geometry", () => {
     const builder = unsmoothedBuilder();
     builder.addPoint(point(1, 2, 100));
     expect(builder.addPoint(point(1, 2, 110, 0.9))).toBeNull();
     expect(builder.pointCount).toBe(1);
-    expect(builder.finalize().pointCount).toBe(1);
+    const stroke = builder.finalize();
+    expect(stroke.pointCount).toBe(1);
+    expect(stroke.sourceSampleCount).toBe(2);
+    expect(stroke.sourceSamples.map(({ pressure }) => pressure)).toEqual([0.5, 0.9]);
+    expect(stroke.duration).toBe(10);
+  });
+
+  it("bounds useless stationary duplicate spam while preserving dwell and terminal timing", () => {
+    const builder = unsmoothedBuilder();
+    builder.addPoint(point(1, 2, 100));
+    for (let timestamp = 101; timestamp < 200; timestamp += 1) {
+      builder.addPoint(point(1, 2, timestamp));
+    }
+    builder.addPoint(point(1, 2, 200), { phase: "terminal" });
+    const stroke = builder.finalize();
+
+    expect(stroke.pointCount).toBe(1);
+    expect(stroke.sourceSampleCount).toBeLessThanOrEqual(8);
+    expect(stroke.sourceSamples.at(-1)?.timestamp).toBe(200);
+    expect(stroke.duration).toBe(100);
+  });
+
+  it("bounds a ten-thousand-event stationary stream without growing render geometry", () => {
+    const builder = unsmoothedBuilder();
+    const started = performance.now();
+    for (let index = 0; index < 10_000; index += 1) {
+      builder.addPoint(point(1, 2, 100 + index));
+    }
+    const stroke = builder.finalize();
+    const elapsed = performance.now() - started;
+
+    expect(stroke.pointCount).toBe(1);
+    expect(stroke.sourceSampleCount).toBeLessThanOrEqual(626);
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
+  it("retains stationary tilt and twist changes in immutable source samples", () => {
+    const builder = unsmoothedBuilder();
+    builder.addPoint(point(1, 2, 100));
+    builder.addPoint({ ...point(1, 2, 104), tiltX: 2, tiltY: -3, twist: 5 });
+    const stroke = builder.finalize();
+
+    expect(stroke.sourceSampleCount).toBe(2);
+    expect(stroke.sourceSamples[1]).toMatchObject({ tiltX: 2, tiltY: -3, twist: 5 });
+    expect(Object.isFrozen(stroke.sourceSamples)).toBe(true);
+    expect(Object.isFrozen(stroke.sourceSamples[1])).toBe(true);
   });
 
   it("calculates finite statistics for very fast and very slow segments", () => {
@@ -148,6 +214,10 @@ describe("StrokeBuilder", () => {
     );
     builder.addPoint(point(0, 0, 100));
     expect(() => builder.addPoint(point(1, 1, 99))).toThrowError(
+      expect.objectContaining({ code: "INVALID_TIMESTAMP" }),
+    );
+    builder.addPoint(point(0, 0, 110));
+    expect(() => builder.addPoint(point(0, 0, 105))).toThrowError(
       expect.objectContaining({ code: "INVALID_TIMESTAMP" }),
     );
   });

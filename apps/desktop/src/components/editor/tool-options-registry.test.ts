@@ -8,13 +8,13 @@ describe("tool options descriptor registry", () => {
     const presets = createPenPresetStore();
 
     expect(registry.registeredTools()).toEqual(["Pen", "Highlighter"]);
-    expect(registry.describe("Select", presets.activePreset("pen"))).toBeNull();
-    expect(registry.describe("Eraser", presets.activePreset("pen"))).toBeNull();
+    expect(registry.describe("Select", presets.resolvedBrush("pen"))).toBeNull();
+    expect(registry.describe("Eraser", presets.resolvedBrush("pen"))).toBeNull();
   });
 
   it("does not expose creation properties for the unified Shapes tool", () => {
     const registry = createDefaultToolOptionsDescriptorRegistry();
-    const pen = createPenPresetStore().activePreset("pen");
+    const pen = createPenPresetStore().resolvedBrush("pen");
 
     expect(registry.describe("Shapes", pen)).toBeNull();
   });
@@ -24,7 +24,7 @@ describe("tool options descriptor registry", () => {
     const presets = createPenPresetStore();
     presets.updateActivePreset("pen", { color: "#2563eb", strokeWidth: 5.8, opacity: 0.63 });
 
-    const descriptor = registry.describe("Pen", presets.activePreset("pen"));
+    const descriptor = registry.describe("Pen", presets.resolvedBrush("pen"));
     expect(descriptor).not.toBeNull();
     expect(descriptor?.properties.map(({ key }) => key)).toEqual([
       "strokeColor",
@@ -49,7 +49,7 @@ describe("tool options descriptor registry", () => {
   it("shows the complete opacity scale while preserving the highlighter model ceiling", () => {
     const registry = createDefaultToolOptionsDescriptorRegistry();
     const presets = createPenPresetStore();
-    const descriptor = registry.describe("Highlighter", presets.activePreset("highlighter"));
+    const descriptor = registry.describe("Highlighter", presets.resolvedBrush("highlighter"));
     const opacity = descriptor?.properties.find(({ key }) => key === "opacity");
 
     expect(opacity).toMatchObject({

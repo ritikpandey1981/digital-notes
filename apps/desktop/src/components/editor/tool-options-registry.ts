@@ -1,4 +1,4 @@
-import type { EditablePropertyDescriptor, PenPreset } from "@folio/editor";
+import type { EditablePropertyDescriptor, ResolvedDrawingBrush } from "@folio/editor";
 import type { EditorTool } from "./editor-types";
 import {
   displayOpacityForTool,
@@ -34,11 +34,14 @@ export interface ToolOptionsDescriptor {
 
 interface ToolOptionsProvider {
   readonly tool: EditorTool;
-  readonly describe: (preset: PenPreset) => ToolOptionsDescriptor;
+  readonly describe: (brush: ResolvedDrawingBrush) => ToolOptionsDescriptor;
 }
 
 export interface ToolOptionsDescriptorRegistry {
-  readonly describe: (tool: EditorTool, preset: PenPreset) => ToolOptionsDescriptor | null;
+  readonly describe: (
+    tool: EditorTool,
+    brush: ResolvedDrawingBrush,
+  ) => ToolOptionsDescriptor | null;
   readonly registeredTools: () => readonly EditorTool[];
 }
 
@@ -72,8 +75,8 @@ class ToolOptionsDescriptorRegistryImplementation implements ToolOptionsDescript
     this.#providers = new Map(providers.map((provider) => [provider.tool, provider]));
   }
 
-  describe(tool: EditorTool, preset: PenPreset): ToolOptionsDescriptor | null {
-    return this.#providers.get(tool)?.describe(preset) ?? null;
+  describe(tool: EditorTool, brush: ResolvedDrawingBrush): ToolOptionsDescriptor | null {
+    return this.#providers.get(tool)?.describe(brush) ?? null;
   }
 
   registeredTools(): readonly EditorTool[] {
@@ -105,13 +108,13 @@ function createDrawingToolOptionsProvider(
 ): ToolOptionsProvider {
   return Object.freeze({
     tool: configuration.tool,
-    describe: (preset: PenPreset): ToolOptionsDescriptor => {
-      if (preset.kind !== configuration.presetKind) {
+    describe: (brush: ResolvedDrawingBrush): ToolOptionsDescriptor => {
+      if (brush.family !== configuration.presetKind) {
         throw new TypeError(`${configuration.tool} options require a matching drawing preset.`);
       }
-      const color = preset.style.strokeColor.hex;
-      const width = preset.style.strokeWidth;
-      const opacity = preset.style.strokeColor.opacity;
+      const color = brush.color;
+      const width = brush.size;
+      const opacity = brush.opacity;
       return Object.freeze({
         id: `${configuration.tool.toLowerCase()}-options`,
         tool: configuration.tool,
@@ -146,7 +149,7 @@ function createDrawingToolOptionsProvider(
           color,
           width,
           opacity,
-          pressureEnabled: preset.pressure.enabled,
+          pressureEnabled: brush.dynamics.pressureSize.enabled,
         }),
       });
     },

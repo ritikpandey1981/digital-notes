@@ -1,4 +1,9 @@
 import { InkError } from "./errors";
+import {
+  createLegacyBrushSnapshot,
+  createResolvedBrushSnapshot,
+  type ResolvedBrushSnapshot,
+} from "./brush-model";
 import { createStrokeStyle, strokeWidth } from "./internal/style";
 import type {
   StrokeBounds,
@@ -29,7 +34,9 @@ export interface StrokeData {
   readonly id: string;
   readonly timestamp: number;
   readonly points: readonly StrokePoint[];
+  readonly sourceSamples?: readonly import("./types").StrokePointInput[];
   readonly style: StrokeStyle;
+  readonly brush?: ResolvedBrushSnapshot;
   readonly metrics: StrokeMetrics;
   readonly statistics: StrokeStatistics;
 }
@@ -38,7 +45,9 @@ export class Stroke {
   readonly id: string;
   readonly timestamp: number;
   readonly points: readonly StrokePoint[];
+  readonly sourceSamples: readonly import("./types").StrokePointInput[];
   readonly style: StrokeStyle;
+  readonly brush: ResolvedBrushSnapshot;
   readonly metrics: StrokeMetrics;
   readonly statistics: StrokeStatistics;
 
@@ -53,7 +62,16 @@ export class Stroke {
     this.id = data.id;
     this.timestamp = data.timestamp;
     this.points = Object.freeze(data.points.map(freezePoint));
+    const sourceSamples = data.sourceSamples ?? data.points;
+    if (sourceSamples.length === 0) {
+      throw new InkError("INVALID_STROKE", "A stroke requires source input samples.");
+    }
+    this.sourceSamples = Object.freeze(sourceSamples.map(freezeSourceSample));
     this.style = createStrokeStyle(data.style);
+    this.brush =
+      data.brush === undefined
+        ? createLegacyBrushSnapshot(this.style)
+        : createResolvedBrushSnapshot(data.brush);
     const bounds = freezeBounds(data.metrics.bounds);
     const inflatedBounds = freezeBounds(data.metrics.inflatedBounds);
     this.metrics = Object.freeze({
@@ -87,8 +105,31 @@ export class Stroke {
     return this.statistics.pointCount;
   }
 
+  get sourceSampleCount(): number {
+    return this.sourceSamples.length;
+  }
+
   /** Returns the rendered stroke width for a normalized pressure sample. */
   widthAtPressure(pressure: number): number {
     return strokeWidth(this.style, pressure);
   }
+}
+
+function freezeSourceSample(
+  point: import("./types").StrokePointInput,
+): import("./types").StrokePointInput {
+  return Object.freeze({
+    x: point.x,
+    y: point.y,
+    timestamp: point.timestamp,
+    pressure: point.pressure,
+    tiltX: point.tiltX,
+    tiltY: point.tiltY,
+    twist: point.twist,
+    pointerType: point.pointerType,
+    button: point.button,
+    buttons: point.buttons,
+    ...(point.altitudeAngle === undefined ? {} : { altitudeAngle: point.altitudeAngle }),
+    ...(point.azimuthAngle === undefined ? {} : { azimuthAngle: point.azimuthAngle }),
+  });
 }

@@ -39,6 +39,7 @@ describe("EditorClipboard", () => {
       throw new Error("Expected immutable ink clipboard fixtures.");
     }
     expect(pastedInk.stroke).toBe(sourceInk.stroke);
+    expect(pastedInk.stroke.brush).toBe(sourceInk.stroke.brush);
     expect(pastedInk.renderingHints).toEqual(sourceInk.renderingHints);
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.objects)).toBe(true);

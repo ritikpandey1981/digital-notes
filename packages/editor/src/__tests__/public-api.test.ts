@@ -14,11 +14,13 @@ describe("@folio/editor public API", () => {
   it("exposes only the application-facing canvas adapter at runtime", () => {
     expect(Object.keys(editor).sort()).toEqual([
       "CanvasSurface",
+      "DEFAULT_BRUSH_PRESETS",
       "DEFAULT_EDITOR_VIEWPORT_SNAPSHOT",
       "DEFAULT_PEN_PRESETS",
       "EDITOR_PRESET_COLORS",
       "EDITOR_STROKE_WIDTHS",
       "EDITOR_VIEWPORT_ZOOM_PRESETS",
+      "createBrushToolStateStore",
       "createDefaultPropertyDescriptorRegistry",
       "createEditorColorSystem",
       "createEditorToolRegistry",

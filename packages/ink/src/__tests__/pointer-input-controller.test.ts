@@ -1,6 +1,7 @@
 import { CoordinateConverter, Viewport } from "@folio/rendering";
 import { describe, expect, it, vi } from "vitest";
 import { PointerInputController } from "../pointer-input-controller";
+import { createResolvedBrushSnapshot, type ResolvedBrushSnapshot } from "../brush-model";
 import { StrokeSmoother } from "../stroke-smoother";
 
 function createTarget() {
@@ -47,6 +48,9 @@ interface EventOptions {
   readonly button?: number;
   readonly buttons?: number;
   readonly isPrimary?: boolean;
+  readonly tiltX?: number;
+  readonly tiltY?: number;
+  readonly twist?: number;
   readonly coalesced?: readonly PointerEvent[];
 }
 
@@ -58,9 +62,9 @@ function pointerEvent(options: EventOptions = {}): PointerEvent {
     clientY: options.y ?? 400,
     timeStamp: options.timestamp ?? 100,
     pressure: options.pressure ?? 0.5,
-    tiltX: 0,
-    tiltY: 0,
-    twist: 0,
+    tiltX: options.tiltX ?? 0,
+    tiltY: options.tiltY ?? 0,
+    twist: options.twist ?? 0,
     altitudeAngle: undefined,
     azimuthAngle: undefined,
     button: options.button ?? 0,
@@ -74,6 +78,7 @@ function pointerEvent(options: EventOptions = {}): PointerEvent {
 function createHarness(
   bounds = { x: 0, y: 0, width: 1_000, height: 800 },
   useDefaultSmoother = false,
+  resolveBrush?: () => ResolvedBrushSnapshot,
 ) {
   const viewport = new Viewport({
     size: { width: 1_000, height: 800 },
@@ -90,6 +95,7 @@ function createHarness(
     coordinateConverter: new CoordinateConverter(viewport),
     getCanvasBounds: () => bounds,
     ...(useDefaultSmoother ? {} : { smoother: new StrokeSmoother({ mode: "none" }) }),
+    ...(resolveBrush === undefined ? {} : { resolveBrush }),
     createId: () => "pointer-stroke",
     onStrokeStart,
     onStrokeUpdate,
@@ -175,6 +181,71 @@ describe("PointerInputController", () => {
     );
     expect(harness.onStrokeUpdate).toHaveBeenCalledTimes(4);
     expect(harness.onStrokeFinalized.mock.calls[0]?.[0].pointCount).toBe(5);
+  });
+
+  it("retains meaningful coalesced stationary process samples without duplicate geometry", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(
+      pointerEvent({ pointerType: "pen", x: 500, y: 400, timestamp: 100, pressure: 0.2 }),
+    );
+    harness.controller.handlePointerMove(
+      pointerEvent({
+        pointerType: "pen",
+        timestamp: 120,
+        coalesced: [
+          pointerEvent({
+            pointerType: "pen",
+            x: 500,
+            y: 400,
+            timestamp: 104,
+            pressure: 0.7,
+            tiltX: 3,
+            tiltY: -2,
+            twist: 10,
+          }),
+          pointerEvent({
+            pointerType: "pen",
+            x: 500,
+            y: 400,
+            timestamp: 120,
+            pressure: 0.7,
+            tiltX: 3,
+            tiltY: -2,
+            twist: 10,
+          }),
+        ],
+      }),
+    );
+    harness.controller.handlePointerUp(
+      pointerEvent({ pointerType: "pen", x: 500, y: 400, timestamp: 124, buttons: 0 }),
+    );
+
+    const stroke = harness.onStrokeFinalized.mock.calls[0]?.[0];
+    expect(stroke.pointCount).toBe(1);
+    expect(stroke.sourceSampleCount).toBe(4);
+    expect(stroke.sourceSamples[1]).toMatchObject({
+      pressure: 0.7,
+      tiltX: 3,
+      tiltY: -2,
+      twist: 10,
+    });
+    expect(stroke.sourceSamples.at(-1)?.timestamp).toBe(124);
+  });
+
+  it("snapshots resolved brush metadata once at pointer-down", () => {
+    let active = brushSnapshot("pen-black", "#111111", 2);
+    const harness = createHarness(undefined, false, () => active);
+    harness.controller.handlePointerDown(pointerEvent({ pointerType: "pen", timestamp: 100 }));
+    active = brushSnapshot("pen-blue", "#2563eb", 8);
+    harness.controller.handlePointerUp(
+      pointerEvent({ pointerType: "pen", x: 520, timestamp: 120, buttons: 0 }),
+    );
+
+    expect(harness.onStrokeFinalized.mock.calls[0]?.[0].brush).toMatchObject({
+      presetId: "pen-black",
+      color: "#111111",
+      size: 2,
+    });
   });
 
   it("compensates for CSS scaling and device-pixel-ratio-independent coordinates", () => {
@@ -277,3 +348,31 @@ describe("PointerInputController", () => {
     );
   });
 });
+
+function brushSnapshot(presetId: string, color: string, size: number): ResolvedBrushSnapshot {
+  return createResolvedBrushSnapshot({
+    schemaVersion: 1,
+    presetId,
+    presetVersion: 1,
+    family: "pen",
+    color,
+    size,
+    opacity: 1,
+    smoothing: { mode: "none", amount: 0 },
+    dynamics: {
+      pressureSize: {
+        enabled: true,
+        minimumFactor: 0.5,
+        maximumFactor: 1.5,
+        curve: { kind: "linear", exponent: 1 },
+      },
+      pressureOpacity: {
+        enabled: false,
+        minimumFactor: 1,
+        maximumFactor: 1,
+        curve: { kind: "linear", exponent: 1 },
+      },
+    },
+    renderer: { version: 1, kind: "centerline" },
+  });
+}

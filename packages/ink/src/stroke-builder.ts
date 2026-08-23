@@ -1,5 +1,10 @@
 import { InkError } from "./errors";
 import {
+  createLegacyBrushSnapshot,
+  createResolvedBrushSnapshot,
+  type ResolvedBrushSnapshot,
+} from "./brush-model";
+import {
   assertCoordinate,
   assertFinite,
   createBounds,
@@ -20,9 +25,15 @@ import type {
   StrokeStatistics,
   StrokeStyle,
   StrokeUpdate,
+  StrokeSampleOptions,
 } from "./types";
 
 type BuilderStatus = "active" | "finalized" | "cancelled";
+
+export const STATIONARY_SAMPLE_INTERVAL_MS = 16;
+export const STATIONARY_PRESSURE_EPSILON = 0.01;
+export const STATIONARY_ANGLE_EPSILON_DEGREES = 1;
+const STATIONARY_OPTIONAL_ANGLE_EPSILON_RADIANS = 0.01;
 
 function defaultId(): string {
   return (
@@ -52,10 +63,13 @@ export class StrokeBuilder {
   readonly id: string;
   readonly timestamp: number;
   readonly style: StrokeStyle;
+  readonly brush: ResolvedBrushSnapshot;
   private readonly smoother: StrokeSmoother;
   private readonly rawPoints: StrokePointInput[] = [];
+  private readonly sourceSamples: StrokePointInput[] = [];
   private readonly strokePoints: StrokePoint[] = [];
   private statusValue: BuilderStatus = "active";
+  private lastInputTimestamp: number | undefined;
   private minX = Number.POSITIVE_INFINITY;
   private minY = Number.POSITIVE_INFINITY;
   private maxX = Number.NEGATIVE_INFINITY;
@@ -75,6 +89,10 @@ export class StrokeBuilder {
     this.id = options.id ?? (options.createId ?? defaultId)();
     this.timestamp = options.timestamp ?? now();
     this.style = createStrokeStyle(options.style);
+    this.brush =
+      options.brush === undefined
+        ? createLegacyBrushSnapshot(this.style)
+        : createResolvedBrushSnapshot(options.brush);
     this.smoother = options.smoother ?? new StrokeSmoother();
     if (this.id.trim().length === 0) {
       throw new InkError("INVALID_STROKE", "Stroke id must not be empty.");
@@ -94,29 +112,37 @@ export class StrokeBuilder {
     return this.strokePoints;
   }
 
-  addPoint(input: StrokePointInput): StrokeUpdate | null {
+  addPoint(input: StrokePointInput, options: StrokeSampleOptions = {}): StrokeUpdate | null {
     this.assertActive();
     this.validateInput(input);
-    const previousRaw = this.rawPoints.at(-1);
-    if (previousRaw !== undefined && previousRaw.x === input.x && previousRaw.y === input.y) {
-      return null;
-    }
-    if (previousRaw !== undefined && input.timestamp < previousRaw.timestamp) {
+    const previousSource = this.sourceSamples.at(-1);
+    if (this.lastInputTimestamp !== undefined && input.timestamp < this.lastInputTimestamp) {
       throw new InkError("INVALID_TIMESTAMP", "Stroke timestamps must be ordered.", {
-        previousTimestamp: previousRaw.timestamp,
+        previousTimestamp: this.lastInputTimestamp,
         timestamp: input.timestamp,
       });
     }
+    const previousRaw = this.rawPoints.at(-1);
+    if (previousRaw !== undefined && previousRaw.x === input.x && previousRaw.y === input.y) {
+      if (shouldRetainStationarySample(previousSource ?? previousRaw, input, options)) {
+        this.sourceSamples.push(freezeInput(input));
+      }
+      this.lastInputTimestamp = input.timestamp;
+      return null;
+    }
 
     const rawPoint = freezeInput(input);
+    this.sourceSamples.push(rawPoint);
     this.rawPoints.push(rawPoint);
     let smoothedPosition;
     try {
       smoothedPosition = this.smoother.smoothNext(this.rawPoints);
     } catch (error) {
       this.rawPoints.pop();
+      this.sourceSamples.pop();
       throw error;
     }
+    this.lastInputTimestamp = input.timestamp;
 
     const previous = this.strokePoints.at(-1);
     const delta = freezePoint({
@@ -150,6 +176,7 @@ export class StrokeBuilder {
     return Object.freeze({
       strokeId: this.id,
       style: this.style,
+      brush: this.brush,
       point,
       points: this.strokePoints,
       bounds: this.currentBounds(),
@@ -174,7 +201,9 @@ export class StrokeBuilder {
       id: this.id,
       timestamp: this.timestamp,
       points: Object.freeze([...this.strokePoints]),
+      sourceSamples: Object.freeze([...this.sourceSamples]),
       style: this.style,
+      brush: this.brush,
       metrics,
       statistics,
     });
@@ -247,8 +276,8 @@ export class StrokeBuilder {
       this.style.width,
     );
     const inflatedBounds = inflateBounds(bounds, maximumWidth / 2 + 2);
-    const first = this.strokePoints[0];
-    const last = this.strokePoints.at(-1);
+    const first = this.sourceSamples[0];
+    const last = this.sourceSamples.at(-1);
     const duration =
       first === undefined || last === undefined ? 0 : last.timestamp - first.timestamp;
     return Object.freeze({
@@ -279,6 +308,7 @@ export class StrokeBuilder {
 
   private releaseRawBuffers(): void {
     this.rawPoints.length = 0;
+    this.sourceSamples.length = 0;
   }
 
   private assertActive(): void {
@@ -289,4 +319,54 @@ export class StrokeBuilder {
       throw new InkError("BUILDER_CANCELLED", "The stroke builder is cancelled.");
     }
   }
+}
+
+function shouldRetainStationarySample(
+  previous: StrokePointInput,
+  current: StrokePointInput,
+  options: StrokeSampleOptions,
+): boolean {
+  if (options.phase === "terminal") return true;
+  if (current.timestamp - previous.timestamp >= STATIONARY_SAMPLE_INTERVAL_MS) return true;
+  if (Math.abs(current.pressure - previous.pressure) >= STATIONARY_PRESSURE_EPSILON) return true;
+  if (Math.abs(current.tiltX - previous.tiltX) >= STATIONARY_ANGLE_EPSILON_DEGREES) return true;
+  if (Math.abs(current.tiltY - previous.tiltY) >= STATIONARY_ANGLE_EPSILON_DEGREES) return true;
+  if (
+    circularAngleDistance(current.twist, previous.twist, 360) >= STATIONARY_ANGLE_EPSILON_DEGREES
+  ) {
+    return true;
+  }
+  if (
+    optionalAngleChanged(
+      previous.altitudeAngle,
+      current.altitudeAngle,
+      STATIONARY_OPTIONAL_ANGLE_EPSILON_RADIANS,
+    ) ||
+    optionalAngleChanged(
+      previous.azimuthAngle,
+      current.azimuthAngle,
+      STATIONARY_OPTIONAL_ANGLE_EPSILON_RADIANS,
+    )
+  ) {
+    return true;
+  }
+  return (
+    current.pointerType !== previous.pointerType ||
+    current.button !== previous.button ||
+    current.buttons !== previous.buttons
+  );
+}
+
+function circularAngleDistance(current: number, previous: number, period: number): number {
+  const direct = Math.abs(current - previous) % period;
+  return Math.min(direct, period - direct);
+}
+
+function optionalAngleChanged(
+  previous: number | undefined,
+  current: number | undefined,
+  epsilon: number,
+): boolean {
+  if (previous === undefined || current === undefined) return previous !== current;
+  return Math.abs(current - previous) >= epsilon;
 }
