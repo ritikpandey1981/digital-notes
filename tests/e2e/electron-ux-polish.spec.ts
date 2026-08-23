@@ -28,6 +28,7 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     const palette = window.getByTestId("context-tool-palette");
     const shapesWidget = window.getByTestId("shapes-widget");
     const contextHint = window.getByTestId("context-hint");
+    const tooltipLayer = window.locator('[data-tooltip-layer="global"]');
     await expect(toolDock).toBeVisible();
     await expect(palette).toHaveCount(0);
     await expect(contextHint).toHaveAttribute("data-context-hint-tool", "Select");
@@ -67,6 +68,23 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     const selectTooltip = window.getByRole("tooltip", { name: "Select", exact: true });
     await expect(selectTooltip).toBeVisible();
     await expect(selectTooltip).toHaveAttribute("data-tooltip-motion", "fade-120ms");
+    await expect(selectTooltip).toHaveAttribute("data-tooltip-surface", "auxiliary-soft");
+    await selectButton.click();
+    await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
+    await selectButton.hover();
+    await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
+    await window.mouse.move(500, 120);
+    await selectButton.hover();
+    await expect(selectTooltip).toBeVisible();
+    await window.mouse.move(500, 120);
+    await penButton.focus();
+    await selectButton.focus();
+    await expect(selectTooltip).toBeVisible();
+    await selectButton.press("Enter");
+    await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
+    await penButton.focus();
+    await selectButton.focus();
+    await expect(selectTooltip).toBeVisible();
     expect(await toolDock.locator("button[title]").count()).toBe(0);
     expect(await toolDock.locator("svg[data-optical-alignment]").count()).toBe(8);
     await expect(selectButton.locator("svg")).toHaveAttribute(
@@ -90,13 +108,15 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     );
     await expect(selectButton).toHaveAttribute("data-tool-active", "false");
     await expect(contextHint).toHaveAttribute("data-context-hint-tool", "");
+    await expect(contextHint).toContainText("Tip: Hold Space + Drag → Move canvas");
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "pen");
     const penCursor = await inkCanvas.evaluate((canvas) => canvas.style.cursor);
     expect(penCursor).toContain("data:image/svg+xml");
+    await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
+    await window.mouse.move(500, 120);
     await penButton.hover();
     const penTooltip = window.getByRole("tooltip", { name: "Pen", exact: true });
     await expect(penTooltip).toBeVisible();
-    const tooltipLayer = window.locator('[data-tooltip-layer="global"]');
     await expect(tooltipLayer).toHaveCount(1);
     expect(await stackingLevel(tooltipLayer)).toBeGreaterThan(await parentStackingLevel(palette));
     expect(await rectanglesOverlap(penTooltip, palette)).toBe(true);
@@ -111,6 +131,7 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
 
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await expect(palette).toHaveAttribute("data-mount-token", "persistent-options-container");
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "highlighter");

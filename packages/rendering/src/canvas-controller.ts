@@ -23,6 +23,7 @@ import {
   type RenderTheme,
   type ResizeObserverFactory,
   type Size,
+  type ViewportMode,
 } from "./types";
 import { Viewport } from "./viewport";
 
@@ -79,6 +80,7 @@ export class CanvasController {
   private theme: RenderTheme;
   private readonly fitPadding;
   private hasFitNonZeroViewport = false;
+  private viewportModeValue: ViewportMode = "fit-page";
 
   constructor(options: CanvasControllerOptions = {}) {
     this.options = options;
@@ -102,6 +104,10 @@ export class CanvasController {
 
   get viewport(): Viewport | null {
     return this.viewportValue;
+  }
+
+  get viewportMode(): ViewportMode {
+    return this.viewportModeValue;
   }
 
   get coordinateConverter(): CoordinateConverter | null {
@@ -211,14 +217,19 @@ export class CanvasController {
     if (!this.hasFitNonZeroViewport && logicalSize.width > 0 && logicalSize.height > 0) {
       viewport.fitPage(this.fitPadding);
       this.hasFitNonZeroViewport = true;
-    } else {
-      viewport.centerPage();
+    } else if (this.hasFitNonZeroViewport) {
+      if (this.viewportModeValue === "fit-page") {
+        viewport.fitPage(this.fitPadding);
+      } else if (this.viewportModeValue === "fit-width") {
+        viewport.fitWidth(this.fitPadding);
+      }
     }
     this.diagnosticsValue.recordResize(logicalSize, logicalSize, physicalSize, dpr);
     this.requestRender({ kind: "viewport" });
     for (const layer of this.overlayLayers) {
       layer.resize(logicalSize, dpr);
     }
+    this.notifyViewportChange();
   }
 
   createOverlayLayer(options: CanvasOverlayLayerOptions): CanvasOverlayLayer {
@@ -259,10 +270,61 @@ export class CanvasController {
     this.requireRenderer().setPage(page);
     if (fit) {
       viewport.fitPage(this.fitPadding);
+      this.viewportModeValue = "fit-page";
     } else {
       viewport.centerPage();
+      this.viewportModeValue = "manual";
     }
-    this.requestRender({ kind: "viewport" });
+    this.commitViewportChange();
+  }
+
+  setZoom(zoom: number): number {
+    const viewport = this.requireViewport();
+    return this.zoomAt(zoom, {
+      x: viewport.size.width / 2,
+      y: viewport.size.height / 2,
+    });
+  }
+
+  resetZoom(): number {
+    return this.setZoom(1);
+  }
+
+  zoomAt(zoom: number, viewportAnchor: Readonly<{ x: number; y: number }>): number {
+    this.assertMounted();
+    const viewport = this.requireViewport();
+    const clampedZoom = Math.min(viewport.camera.maxZoom, Math.max(viewport.camera.minZoom, zoom));
+    viewport.zoomAt(clampedZoom, viewportAnchor);
+    this.viewportModeValue = "manual";
+    this.commitViewportChange();
+    return clampedZoom;
+  }
+
+  panBy(viewportDelta: Readonly<{ x: number; y: number }>): void {
+    this.assertMounted();
+    const viewport = this.requireViewport();
+    viewport.panBy({
+      x: -viewportDelta.x / viewport.camera.zoom,
+      y: -viewportDelta.y / viewport.camera.zoom,
+    });
+    this.viewportModeValue = "manual";
+    this.commitViewportChange();
+  }
+
+  fitPage(): number {
+    this.assertMounted();
+    const zoom = this.requireViewport().fitPage(this.fitPadding);
+    this.viewportModeValue = "fit-page";
+    this.commitViewportChange();
+    return zoom;
+  }
+
+  fitWidth(): number {
+    this.assertMounted();
+    const zoom = this.requireViewport().fitWidth(this.fitPadding);
+    this.viewportModeValue = "fit-width";
+    this.commitViewportChange();
+    return zoom;
   }
 
   setTheme(theme: RenderTheme): void {
@@ -295,6 +357,7 @@ export class CanvasController {
     return Object.freeze({
       status: this.statusValue,
       viewport: this.viewportValue?.snapshot() ?? null,
+      viewportMode: this.viewportModeValue,
       diagnostics: this.diagnosticsValue.snapshot(),
     });
   }
@@ -399,6 +462,15 @@ export class CanvasController {
     canvas.dataset.logicalWidth = String(viewport.size.width);
     canvas.dataset.logicalHeight = String(viewport.size.height);
     canvas.dataset.devicePixelRatio = String(viewport.devicePixelRatio);
+  }
+
+  private commitViewportChange(): void {
+    this.requestRender({ kind: "viewport" });
+    this.notifyViewportChange();
+  }
+
+  private notifyViewportChange(): void {
+    this.options.onViewportChange?.(this.snapshot());
   }
 
   private cleanupMount(): void {

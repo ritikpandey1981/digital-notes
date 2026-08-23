@@ -55,5 +55,6 @@ export {
   type ResizeObserverFactory,
   type Size,
   type ViewportSnapshot,
+  type ViewportMode,
 } from "./types";
 export { Viewport, type ViewportOptions } from "./viewport";

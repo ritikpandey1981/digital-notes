@@ -63,6 +63,17 @@ describe("PageSelectionCoordinateMapper", () => {
     });
   });
 
+  it("remains page-correct after combined off-center zoom and pan", () => {
+    const { viewport, coordinateConverter, mapper } = createHarness();
+    viewport.zoomAt(2.5, { x: 315, y: 540 });
+    viewport.panBy({ x: -83, y: 117 });
+    expect(mapper.screenToPage(pagePointToScreen(coordinateConverter, 413, 287))).toEqual({
+      x: 413,
+      y: 287,
+      coordinateSpace: "page",
+    });
+  });
+
   it("uses logical canvas geometry independently of HiDPI backing-store scale", () => {
     const first = createHarness(1);
     const firstScreen = pagePointToScreen(first.coordinateConverter, 300, 350);

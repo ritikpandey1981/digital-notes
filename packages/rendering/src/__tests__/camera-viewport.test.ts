@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Camera } from "../camera";
 import { RenderingError } from "../errors";
-import { Viewport } from "../viewport";
+import { MINIMUM_VISIBLE_PAGE_PIXELS, Viewport } from "../viewport";
 
 const page = { x: 10, y: 20, width: 800, height: 1_000 };
 const padding = { top: 50, right: 50, bottom: 50, left: 50 };
@@ -91,6 +91,21 @@ describe("Viewport", () => {
     expect(viewport.pageViewportRect.y + viewport.pageViewportRect.height / 2).toBe(450);
   });
 
+  it("fits width with a horizontal gutter and a stable page-top margin", () => {
+    const viewport = new Viewport({
+      size: { width: 1_000, height: 800 },
+      pageRect: page,
+    });
+
+    expect(viewport.fitWidth(padding)).toBe(1.125);
+    expect(viewport.pageViewportRect).toEqual({
+      x: 50,
+      y: 50,
+      width: 900,
+      height: 1_125,
+    });
+  });
+
   it("pans and zooms around an anchored viewport point", () => {
     const viewport = new Viewport({
       size: { width: 1_000, height: 800 },
@@ -103,6 +118,54 @@ describe("Viewport", () => {
     expect(viewport.viewportToWorld(anchor)).toEqual(before);
     viewport.panBy({ x: 10, y: 20 });
     expect(viewport.camera.position).toEqual({ x: 295, y: 490 });
+  });
+
+  it.each([0.25, 1, 2, 8])(
+    "keeps at least 64 screen pixels recoverable at %sx zoom on every pan boundary",
+    (zoom) => {
+      const viewport = new Viewport({
+        size: { width: 1_000, height: 800 },
+        pageRect: page,
+      });
+      viewport.centerPage();
+      viewport.zoomAt(zoom, { x: 500, y: 400 });
+
+      for (const delta of [
+        { x: -1_000_000, y: 0 },
+        { x: 1_000_000, y: 0 },
+        { x: 0, y: -1_000_000 },
+        { x: 0, y: 1_000_000 },
+        { x: -1_000_000, y: 1_000_000 },
+      ]) {
+        viewport.panBy(delta);
+        expect(visiblePageExtent(viewport).width).toBeGreaterThanOrEqual(
+          MINIMUM_VISIBLE_PAGE_PIXELS - 1e-9,
+        );
+        expect(visiblePageExtent(viewport).height).toBeGreaterThanOrEqual(
+          MINIMUM_VISIBLE_PAGE_PIXELS - 1e-9,
+        );
+      }
+
+      viewport.panBy({ x: 1_000_000, y: 1_000_000 });
+      const boundary = viewport.camera.position;
+      viewport.panBy({ x: 1_000_000, y: 1_000_000 });
+      expect(viewport.camera.position).toEqual(boundary);
+    },
+  );
+
+  it("preserves a manual camera on resize unless recoverability requires a minimal clamp", () => {
+    const viewport = new Viewport({
+      size: { width: 1_000, height: 800 },
+      pageRect: page,
+    });
+    viewport.centerPage();
+    viewport.panBy({ x: 1_000_000, y: 1_000_000 });
+    viewport.resize({ width: 320, height: 240 });
+
+    expect(visiblePageExtent(viewport)).toMatchObject({
+      width: MINIMUM_VISIBLE_PAGE_PIXELS,
+      height: MINIMUM_VISIBLE_PAGE_PIXELS,
+    });
   });
 
   it("updates page and world rectangles and rejects invalid viewport state", () => {
@@ -121,3 +184,11 @@ describe("Viewport", () => {
     );
   });
 });
+
+function visiblePageExtent(viewport: Viewport): Readonly<{ width: number; height: number }> {
+  const rect = viewport.pageViewportRect;
+  return {
+    width: Math.max(0, Math.min(rect.x + rect.width, viewport.size.width) - Math.max(rect.x, 0)),
+    height: Math.max(0, Math.min(rect.y + rect.height, viewport.size.height) - Math.max(rect.y, 0)),
+  };
+}

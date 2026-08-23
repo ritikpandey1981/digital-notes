@@ -5,6 +5,8 @@ import {
   type ObjectLifecycleActions,
   type ShapeEditingActions,
   type ShapeEditingSnapshot,
+  type EditorViewportSnapshot,
+  type ViewportActions,
 } from "@folio/editor";
 import { memo, useCallback, useEffect, useRef } from "react";
 import { cursorPresentationForTool } from "./editor-cursor-policy";
@@ -18,7 +20,9 @@ interface CanvasHostProps {
   readonly onShapeEditingActionsReady: (actions: ShapeEditingActions | null) => void;
   readonly onShapeEditingChange: (snapshot: ShapeEditingSnapshot | null) => void;
   readonly onDrawingColorUsed: (color: string) => void;
-  readonly onViewportZoomChange: (zoom: number) => void;
+  readonly onViewportActionsReady: (actions: ViewportActions | null) => void;
+  readonly onViewportChange: (snapshot: EditorViewportSnapshot) => void;
+  readonly onViewportNavigationLearned: () => void;
 }
 
 export const CanvasHost = memo(function CanvasHost({
@@ -29,7 +33,9 @@ export const CanvasHost = memo(function CanvasHost({
   onShapeEditingActionsReady,
   onShapeEditingChange,
   onDrawingColorUsed,
-  onViewportZoomChange,
+  onViewportActionsReady,
+  onViewportChange,
+  onViewportNavigationLearned,
 }: CanvasHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const drawingColorRef = useRef(drawingStyle.color);
@@ -51,10 +57,6 @@ export const CanvasHost = memo(function CanvasHost({
       }
     },
     [],
-  );
-  const handleDiagnostics: NonNullable<CanvasSurfaceProps["onDiagnostics"]> = useCallback(
-    (snapshot) => onViewportZoomChange(snapshot.viewport?.camera.zoom ?? 1),
-    [onViewportZoomChange],
   );
   const interactionMode =
     activeTool === "Select"
@@ -80,8 +82,29 @@ export const CanvasHost = memo(function CanvasHost({
     );
     if (inkCanvas === undefined || inkCanvas === null) return;
     const presentation = cursorPresentationForTool(activeTool);
+    const cursorCss = presentation.css ?? inkCanvas.dataset.editorCursor ?? "default";
     inkCanvas.dataset.desktopToolCursor = presentation.id;
-    inkCanvas.style.cursor = presentation.css ?? inkCanvas.dataset.editorCursor ?? "default";
+    inkCanvas.dataset.desktopCursorCss = cursorCss;
+    inkCanvas.dataset.desktopCursorPhase =
+      presentation.adaptiveCss === undefined ? "steady" : "fallback";
+    if ((inkCanvas.dataset.viewportPanState ?? "idle") === "idle") {
+      inkCanvas.style.cursor = cursorCss;
+    } else {
+      inkCanvas.dataset.viewportRestoreCursor = cursorCss;
+    }
+    const activateAdaptiveCursor = (): void => {
+      const adaptiveCss = presentation.adaptiveCss;
+      if (adaptiveCss === undefined || inkCanvas.dataset.desktopCursorPhase === "adaptive") return;
+      inkCanvas.dataset.desktopCursorPhase = "adaptive";
+      inkCanvas.dataset.desktopCursorCss = adaptiveCss;
+      if ((inkCanvas.dataset.viewportPanState ?? "idle") === "idle") {
+        inkCanvas.style.cursor = adaptiveCss;
+      } else {
+        inkCanvas.dataset.viewportRestoreCursor = adaptiveCss;
+      }
+    };
+    inkCanvas.addEventListener("pointermove", activateAdaptiveCursor, { once: true });
+    return () => inkCanvas.removeEventListener("pointermove", activateAdaptiveCursor);
   }, [activeShape, activeTool]);
   return (
     <div
@@ -102,7 +125,9 @@ export const CanvasHost = memo(function CanvasHost({
         onObjectLifecycleActionsReady={onObjectLifecycleActionsReady}
         onShapeEditingActionsReady={onShapeEditingActionsReady}
         onShapeEditingChange={onShapeEditingChange}
-        onDiagnostics={handleDiagnostics}
+        onViewportActionsReady={onViewportActionsReady}
+        onViewportChange={onViewportChange}
+        onViewportNavigationLearned={onViewportNavigationLearned}
       />
     </div>
   );

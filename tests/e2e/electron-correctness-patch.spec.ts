@@ -38,6 +38,8 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     const penButton = toolDock.getByRole("button", { name: "Pen", exact: true });
     await penButton.click();
     await expect(palette).toBeVisible();
+    await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
+    await window.mouse.move(500, 120);
     await penButton.hover();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");
     expect(await stackingLevel(tooltipLayer)).toBeGreaterThan(await parentStackingLevel(palette));
@@ -51,6 +53,8 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
       exact: true,
     });
     await highlighterButton.click();
+    await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
+    await window.mouse.move(500, 120);
     await highlighterButton.hover();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");
     expect(await stackingLevel(tooltipLayer)).toBeGreaterThan(await parentStackingLevel(palette));
@@ -61,6 +65,11 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     const shapesButton = toolDock.getByRole("button", { name: "Shapes", exact: true });
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
+    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
+    expect(await inkCanvas.evaluate((canvas) => canvas.style.cursor)).toContain(
+      "data:image/svg+xml",
+    );
+    await window.mouse.move(500, 120);
     await shapesButton.hover();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");
     expect(await stackingLevel(tooltipLayer)).toBeGreaterThan(
@@ -72,10 +81,13 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
 
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).click();
     await expect(contextHint).toContainText("Tip: Hold Shift → Draw a perfect square");
+    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
     await shapesWidget.getByRole("button", { name: "Ellipse", exact: true }).click();
     await expect(contextHint).toContainText("Tip: Hold Shift → Draw a perfect circle");
+    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
     await shapesWidget.getByRole("button", { name: "Line", exact: true }).click();
-    await expect(contextHint).toHaveText("");
+    await expect(contextHint).toContainText("Tip: Hold Space + Drag → Move canvas");
+    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).click();
     await expect(contextHint).toContainText("Tip: Hold Shift → Draw a perfect square");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");

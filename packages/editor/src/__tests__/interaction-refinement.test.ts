@@ -85,6 +85,23 @@ describe("editor selection hit policy", () => {
     expect(engine.hitTest(pagePoint(80, 70))?.objectId).toBe(rectangle.id);
     expect(engine.hitTest(pagePoint(250, 100))?.objectId).toBe(ellipse.id);
   });
+
+  it("keeps the editor hit target screen-stable at practical zoom extremes", () => {
+    const object = createObject("zoom-target", 0);
+    const collection = new ObjectCollection([object]);
+    let zoom = 0.25;
+    const engine = createEditorSelectionHitTestEngine(
+      {
+        getObjects: () => collection.objects,
+        getObject: (objectId) => collection.lookup(objectId),
+      },
+      () => zoom,
+    );
+
+    expect(engine.hitTest(pagePoint(107, 50))?.objectId).toBe(object.id);
+    zoom = 4;
+    expect(engine.hitTest(pagePoint(107, 50))).toBeNull();
+  });
 });
 
 describe("Select tool manipulation targeting", () => {

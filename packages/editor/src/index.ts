@@ -48,3 +48,12 @@ export {
   type ShapeEditingSnapshot,
   type ShapeStylePatch,
 } from "./CanvasSurface";
+export {
+  DEFAULT_EDITOR_VIEWPORT_SNAPSHOT,
+  EDITOR_VIEWPORT_ZOOM_PRESETS,
+  editorViewportWheelZoom,
+  formatEditorViewportZoom,
+  nextEditorViewportZoom,
+  type EditorViewportSnapshot,
+  type ViewportActions,
+} from "./EditorViewport";

@@ -58,6 +58,18 @@ describe("PageManipulationCoordinateMapper", () => {
     );
   });
 
+  it("keeps captured manipulation points page-correct after combined zoom and pan", () => {
+    const { viewport, coordinateConverter, mapper } = createHarness();
+    viewport.zoomAt(3, { x: 740, y: 165 });
+    viewport.panBy({ x: 130, y: -75 });
+    const transformed = pageToScreen(coordinateConverter, 487, 612);
+    expect(mapper.screenToPage(transformed, true)).toEqual({
+      x: 487,
+      y: 612,
+      coordinateSpace: "page",
+    });
+  });
+
   it("clips session starts to the page but permits captured drags beyond it", () => {
     const { coordinateConverter, mapper } = createHarness();
     const outside = pageToScreen(coordinateConverter, -25, 50);

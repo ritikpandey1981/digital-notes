@@ -1,6 +1,8 @@
 import { EditorWorkspace } from "../editor/EditorWorkspace";
+import { useCallback, useState } from "react";
 import { TooltipLayerProvider } from "../editor/ToolTooltip";
 import { useEditorWorkspaceState } from "../editor/useEditorWorkspaceState";
+import { useEditorViewportState } from "../editor/useEditorViewportState";
 import { AppMenuBar } from "./AppMenuBar";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
@@ -20,6 +22,9 @@ export function ApplicationShell() {
 function ApplicationShellContent() {
   const shellUi = useShellUiState();
   const editorWorkspace = useEditorWorkspaceState();
+  const viewport = useEditorViewportState();
+  const [navigationTeachingLearned, setNavigationTeachingLearned] = useState(false);
+  const learnViewportNavigation = useCallback(() => setNavigationTeachingLearned(true), []);
 
   return (
     <div className="flex h-screen min-h-[640px] flex-col overflow-hidden bg-folio-workspace text-folio-ink">
@@ -53,12 +58,24 @@ function ApplicationShellContent() {
             onChangeShapeStyle={editorWorkspace.updateShapeStyle}
             onDrawingColorUsed={editorWorkspace.rememberColorUsage}
             onDismissFloatingWidget={editorWorkspace.dismissFloatingWidget}
+            viewportSnapshot={viewport.snapshot}
+            onViewportActionsReady={viewport.handleActionsReady}
+            onViewportChange={viewport.handleViewportChange}
+            onViewportNavigationLearned={learnViewportNavigation}
           />
         </main>
       </div>
       <StatusBar
         activeTool={editorWorkspace.activeTool}
         activeShape={editorWorkspace.activeShape}
+        viewport={viewport.snapshot}
+        onZoomOut={viewport.zoomOut}
+        onZoomIn={viewport.zoomIn}
+        onSetZoom={viewport.setZoom}
+        onResetZoom={viewport.resetZoom}
+        onFitPage={viewport.fitPage}
+        onFitWidth={viewport.fitWidth}
+        navigationTeachingAvailable={!navigationTeachingLearned}
       />
     </div>
   );

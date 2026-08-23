@@ -86,13 +86,19 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     ).not.toBe("none");
     const floatingStyle = await floatingSurfaceStyle(toolDock);
     expect(await floatingSurfaceStyle(shapesWidget)).toEqual(floatingStyle);
-    expect(await floatingSurfaceStyle(lineTooltip)).toEqual(floatingStyle);
+    expect(await floatingSurfaceStyle(lineTooltip)).not.toEqual(floatingStyle);
+    await expect(lineTooltip).toHaveAttribute("data-tooltip-surface", "auxiliary-soft");
     await expect(window.getByTestId("context-tool-palette")).toHaveCount(0);
-    await expect(inkCanvas).toHaveCSS("cursor", "crosshair");
+    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
+    expect(await inkCanvas.evaluate((canvas) => canvas.style.cursor)).toContain(
+      "data:image/svg+xml",
+    );
     await lineButton.click();
     const lineStart = pageToScreen(100, 160);
     const lineEnd = pageToScreen(240, 230);
     await window.mouse.move(lineStart.x, lineStart.y);
+    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "adaptive");
+    await expect(inkCanvas).toHaveCSS("cursor", "crosshair");
     await window.mouse.down();
     await window.keyboard.down("Shift");
     await window.mouse.move(lineEnd.x, lineEnd.y, { steps: 6 });

@@ -144,6 +144,11 @@
   }
 
   .folio-tool-tooltip {
+    border: 1px solid color-mix(in srgb, var(--folio-border) 82%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--folio-glass) 88%, transparent);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.09);
+    backdrop-filter: blur(10px);
     transition:
       opacity var(--folio-motion-tooltip) var(--folio-motion-ease),
       visibility var(--folio-motion-tooltip) var(--folio-motion-ease);
@@ -153,8 +158,8 @@
     position: absolute;
     width: var(--folio-tooltip-arrow-size);
     height: var(--folio-tooltip-arrow-size);
-    border-color: var(--folio-border);
-    background: var(--folio-glass);
+    border-color: color-mix(in srgb, var(--folio-border) 82%, transparent);
+    background: color-mix(in srgb, var(--folio-glass) 88%, transparent);
     content: "";
     transform: rotate(45deg);
   }

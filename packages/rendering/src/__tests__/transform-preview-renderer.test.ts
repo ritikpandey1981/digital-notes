@@ -77,7 +77,7 @@ describe("TransformPreviewRenderer", () => {
   });
 
   it("coalesces transform invalidation and releases lifecycle state", () => {
-    const { renderer, flush, frames, canvas } = harness();
+    const { renderer, flush, frames, canvas, context } = harness();
     const visual = { draw: vi.fn() };
     const base = { objectId: "object", bounds: { x: 0, y: 0, width: 20, height: 10 }, visual };
     renderer.setPreview({
@@ -91,9 +91,16 @@ describe("TransformPreviewRenderer", () => {
     expect(frames.size).toBe(1);
     flush();
     expect(renderer.snapshot().renderCount).toBe(1);
+    renderer.setPreview({
+      ...base,
+      transform: { translation: { x: 0, y: 0 }, rotation: 0.4, scale: 0.1 },
+    });
+    flush();
+    vi.mocked(context.clearRect).mockClear();
     renderer.setPreview(null);
     flush();
     expect(canvas.dataset.manipulationPreviewState).toBe("empty");
+    expect(context.clearRect).toHaveBeenCalledWith(0, 0, 1_000, 800);
     renderer.destroy();
     renderer.destroy();
     expect(() => renderer.redraw()).toThrowError(

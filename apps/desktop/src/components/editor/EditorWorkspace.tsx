@@ -5,6 +5,8 @@ import type {
   ShapeEditingActions,
   ShapeEditingSnapshot,
   ShapeStylePatch,
+  EditorViewportSnapshot,
+  ViewportActions,
 } from "@folio/editor";
 import { useCallback, useRef, useState } from "react";
 import type { EditorTool, ShapeToolKind } from "./editor-types";
@@ -34,6 +36,10 @@ interface EditorWorkspaceProps {
   onChangeShapeStyle: (patch: ShapeStylePatch) => void;
   onDrawingColorUsed: (color: string) => void;
   onDismissFloatingWidget: () => void;
+  viewportSnapshot: EditorViewportSnapshot;
+  onViewportActionsReady: (actions: ViewportActions | null) => void;
+  onViewportChange: (snapshot: EditorViewportSnapshot) => void;
+  onViewportNavigationLearned: () => void;
 }
 
 export function EditorWorkspace({
@@ -53,6 +59,10 @@ export function EditorWorkspace({
   onChangeShapeStyle,
   onDrawingColorUsed,
   onDismissFloatingWidget,
+  viewportSnapshot,
+  onViewportActionsReady,
+  onViewportChange,
+  onViewportNavigationLearned,
 }: EditorWorkspaceProps) {
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
   const shapeEditingActionsRef = useRef<ShapeEditingActions | null>(null);
@@ -60,7 +70,6 @@ export function EditorWorkspace({
     null,
   );
   const [moreToolsOpen, setMoreToolsOpen] = useState(false);
-  const [viewportZoom, setViewportZoom] = useState(1);
   const handleObjectLifecycleActionsReady = useCallback(
     (actions: ObjectLifecycleActions | null) => {
       objectLifecycleActionsRef.current = actions;
@@ -117,7 +126,9 @@ export function EditorWorkspace({
         onShapeEditingActionsReady={handleShapeEditingActionsReady}
         onShapeEditingChange={handleShapeEditingChange}
         onDrawingColorUsed={onDrawingColorUsed}
-        onViewportZoomChange={setViewportZoom}
+        onViewportActionsReady={onViewportActionsReady}
+        onViewportChange={onViewportChange}
+        onViewportNavigationLearned={onViewportNavigationLearned}
       />
       <WorkspaceChrome workspaceName={workspaceName} locationLabel={locationLabel} />
       <ToolDock
@@ -147,7 +158,7 @@ export function EditorWorkspace({
         onChangeWidth={onChangeDrawingWidth}
         onChangeOpacity={onChangeDrawingOpacity}
         onDismiss={dismissTransientToolUi}
-        previewScale={viewportZoom}
+        previewScale={viewportSnapshot.zoom}
       />
     </section>
   );

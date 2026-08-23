@@ -26,6 +26,33 @@ describe("context hint registry", () => {
     });
   });
 
+  it("uses navigation teaching only as a generic fallback behind specific tool hints", () => {
+    const registry = createContextHintRegistry();
+
+    expect(registry.resolve({ tool: "Pen", navigationTeachingAvailable: true })).toEqual({
+      id: "canvas-navigation-space-drag",
+      text: "Tip: Hold Space + Drag → Move canvas",
+    });
+    expect(registry.resolve({ tool: "Select", navigationTeachingAvailable: true })?.id).toBe(
+      "select-overlapping-object",
+    );
+    expect(
+      registry.resolve({
+        tool: "Shapes",
+        shapeKind: "rectangle",
+        navigationTeachingAvailable: true,
+      })?.id,
+    ).toBe("shape-perfect-square");
+    expect(
+      registry.resolve({
+        tool: "Shapes",
+        shapeKind: "ellipse",
+        navigationTeachingAvailable: true,
+      })?.id,
+    ).toBe("shape-perfect-circle");
+    expect(registry.resolve({ tool: "Pen", navigationTeachingAvailable: false })).toBeNull();
+  });
+
   it("returns no shape hint for Line, Pen, or Highlighter and falls back to Select", () => {
     const registry = createContextHintRegistry();
 

@@ -10,6 +10,9 @@ import {
 } from "./internal/geometry";
 import type { Insets, Point, Rect, Size, ViewportSnapshot } from "./types";
 
+/** Screen-space page extent retained at every manual navigation boundary. */
+export const MINIMUM_VISIBLE_PAGE_PIXELS = 64;
+
 export interface ViewportOptions {
   readonly size: Size;
   readonly pageRect: Rect;
@@ -82,11 +85,13 @@ export class Viewport {
     this.assertDevicePixelRatio(devicePixelRatio);
     this.currentSize = freezeSize(size);
     this.currentDevicePixelRatio = devicePixelRatio;
+    this.ensurePageRecoverable();
   }
 
   setPageRect(pageRect: Rect): void {
     assertRect(pageRect, "viewport.pageRect");
     this.currentPageRect = freezeRect(pageRect);
+    this.ensurePageRecoverable();
   }
 
   setWorldBounds(worldBounds: Rect): void {
@@ -102,8 +107,13 @@ export class Viewport {
     return this.camera.fitPage(this.currentPageRect, this.currentSize, padding);
   }
 
+  fitWidth(padding: Insets): number {
+    return this.camera.fitWidth(this.currentPageRect, this.currentSize, padding);
+  }
+
   panBy(delta: Point): void {
     this.camera.panBy(delta);
+    this.ensurePageRecoverable();
   }
 
   zoomAt(zoom: number, viewportAnchor: Point): void {
@@ -114,6 +124,47 @@ export class Viewport {
     this.camera.panBy({
       x: worldAnchor.x - worldAfterZoom.x,
       y: worldAnchor.y - worldAfterZoom.y,
+    });
+    this.ensurePageRecoverable();
+  }
+
+  ensurePageRecoverable(minimumVisiblePixels = MINIMUM_VISIBLE_PAGE_PIXELS): void {
+    assertFiniteNumber(minimumVisiblePixels, "minimumVisiblePixels");
+    if (minimumVisiblePixels < 0) {
+      throw new RenderingError(
+        "INVALID_GEOMETRY",
+        "Minimum visible page pixels must be non-negative.",
+        { minimumVisiblePixels },
+      );
+    }
+    const zoom = this.camera.zoom;
+    const horizontalVisiblePixels = Math.min(
+      minimumVisiblePixels,
+      this.currentSize.width,
+      this.currentPageRect.width * zoom,
+    );
+    const verticalVisiblePixels = Math.min(
+      minimumVisiblePixels,
+      this.currentSize.height,
+      this.currentPageRect.height * zoom,
+    );
+    const halfWorldWidth = this.currentSize.width / 2 / zoom;
+    const halfWorldHeight = this.currentSize.height / 2 / zoom;
+    const minimumX = this.currentPageRect.x - halfWorldWidth + horizontalVisiblePixels / zoom;
+    const maximumX =
+      this.currentPageRect.x +
+      this.currentPageRect.width +
+      halfWorldWidth -
+      horizontalVisiblePixels / zoom;
+    const minimumY = this.currentPageRect.y - halfWorldHeight + verticalVisiblePixels / zoom;
+    const maximumY =
+      this.currentPageRect.y +
+      this.currentPageRect.height +
+      halfWorldHeight -
+      verticalVisiblePixels / zoom;
+    this.camera.setPosition({
+      x: Math.min(maximumX, Math.max(minimumX, this.camera.position.x)),
+      y: Math.min(maximumY, Math.max(minimumY, this.camera.position.y)),
     });
   }
 

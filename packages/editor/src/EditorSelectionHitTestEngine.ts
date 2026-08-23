@@ -61,7 +61,10 @@ function isInsideVector(position: PagePoint, object: VectorPageObject): boolean 
 class EditorSelectionHitTestEngine implements HitTestEngine {
   readonly #vectorEngine: HitTestEngine;
 
-  constructor(private readonly objectSource: SelectionObjectSource) {
+  constructor(
+    private readonly objectSource: SelectionObjectSource,
+    private readonly getZoom: () => number,
+  ) {
     this.#vectorEngine = createHitTestEngine({
       objectSource: {
         getObjects: () =>
@@ -83,8 +86,13 @@ class EditorSelectionHitTestEngine implements HitTestEngine {
   }
 
   hitTest(position: PagePoint): HitTestResult | null {
+    const zoom = this.readZoom();
     return (
-      this.query(position, EDITOR_BOUNDS_HIT_TOLERANCE, EDITOR_VECTOR_HIT_TOLERANCE)[0] ?? null
+      this.query(
+        position,
+        EDITOR_BOUNDS_HIT_TOLERANCE / zoom,
+        EDITOR_VECTOR_HIT_TOLERANCE / zoom,
+      )[0] ?? null
     );
   }
 
@@ -99,6 +107,17 @@ class EditorSelectionHitTestEngine implements HitTestEngine {
       return Object.freeze([]);
     }
     return this.query(position, radius, radius);
+  }
+
+  querySelectionCandidates(position: PagePoint): readonly HitTestResult[] {
+    const zoom = this.readZoom();
+    const inkTolerance = EDITOR_BOUNDS_HIT_TOLERANCE / zoom;
+    const vectorTolerance = EDITOR_VECTOR_HIT_TOLERANCE / zoom;
+    return Object.freeze(
+      this.query(position, inkTolerance, vectorTolerance).filter(
+        (result) => result.objectType !== "ink" || result.hitDistance <= inkTolerance,
+      ),
+    );
   }
 
   private query(
@@ -134,13 +153,19 @@ class EditorSelectionHitTestEngine implements HitTestEngine {
     results.sort(compareTopMost);
     return Object.freeze(results);
   }
+
+  private readZoom(): number {
+    const zoom = this.getZoom();
+    return Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  }
 }
 
 /** Creates the editor's forgiving bounds-oriented selection policy. */
 export function createEditorSelectionHitTestEngine(
   objectSource: SelectionObjectSource,
+  getZoom: () => number = () => 1,
 ): HitTestEngine {
-  return new EditorSelectionHitTestEngine(objectSource);
+  return new EditorSelectionHitTestEngine(objectSource, getZoom);
 }
 
 /** Package-internal exact candidate query matching the editor's asymmetric ink/vector tolerances. */
@@ -148,6 +173,9 @@ export function queryEditorSelectionCandidates(
   engine: HitTestEngine,
   position: PagePoint,
 ): readonly HitTestResult[] {
+  if (engine instanceof EditorSelectionHitTestEngine) {
+    return engine.querySelectionCandidates(position);
+  }
   return Object.freeze(
     engine
       .queryNearby(position, EDITOR_VECTOR_HIT_TOLERANCE)

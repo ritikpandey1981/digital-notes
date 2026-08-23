@@ -233,12 +233,13 @@ describe("CanvasController", () => {
     expect(harness.controller.snapshot().diagnostics.renderCount).toBe(1);
   });
 
-  it("resizes logical and HiDPI backing stores while keeping the page centered", () => {
+  it("resizes logical and HiDPI backing stores while recomputing Fit Page", () => {
     const harness = createHarness({ dpr: 2 });
     harness.controller.mount(harness.container);
     harness.flushFrame();
     expect(harness.canvas.width).toBe(1_600);
     expect(harness.canvas.height).toBe(1_200);
+    const initialZoom = harness.controller.viewport?.camera.zoom;
 
     harness.emitResize(1_000, 700);
     harness.flushFrame();
@@ -250,6 +251,54 @@ describe("CanvasController", () => {
     });
     expect((page?.x ?? 0) + (page?.width ?? 0) / 2).toBe(500);
     expect((page?.y ?? 0) + (page?.height ?? 0) / 2).toBe(350);
+    expect(snapshot.viewport?.camera.zoom).not.toBe(initialZoom);
+    expect(snapshot.viewportMode).toBe("fit-page");
+  });
+
+  it("clamps manual zoom, preserves a pointer anchor, and pans in viewport pixels", () => {
+    const harness = createHarness();
+    harness.controller.mount(harness.container);
+    const viewport = harness.controller.viewport;
+    if (viewport === null) throw new Error("Viewport was not mounted.");
+    const anchor = { x: 450, y: 300 };
+    const anchoredWorldPoint = viewport.viewportToWorld(anchor);
+
+    expect(harness.controller.zoomAt(20, anchor)).toBe(8);
+    expect(viewport.viewportToWorld(anchor)).toEqual(anchoredWorldPoint);
+    const positionBeforePan = viewport.camera.position;
+    harness.controller.panBy({ x: 80, y: -40 });
+    expect(viewport.camera.position).toEqual({
+      x: positionBeforePan.x - 10,
+      y: positionBeforePan.y + 5,
+    });
+    expect(harness.controller.setZoom(0.01)).toBe(0.25);
+    expect(harness.controller.viewportMode).toBe("manual");
+  });
+
+  it("preserves manual camera position across canvas resize", () => {
+    const harness = createHarness();
+    harness.controller.mount(harness.container);
+    harness.controller.panBy({ x: 140, y: -70 });
+    const position = harness.controller.viewport?.camera.position;
+
+    harness.emitResize(1_100, 720);
+
+    expect(harness.controller.viewportMode).toBe("manual");
+    expect(harness.controller.viewport?.camera.position).toEqual(position);
+  });
+
+  it("recomputes Fit Width across resize with fixed horizontal and top margins", () => {
+    const harness = createHarness();
+    harness.controller.mount(harness.container);
+    harness.controller.fitWidth();
+    expect(harness.controller.viewport?.pageViewportRect.x).toBeCloseTo(56);
+    expect(harness.controller.viewport?.pageViewportRect.y).toBeCloseTo(88);
+
+    harness.emitResize(1_000, 720);
+
+    expect(harness.controller.viewportMode).toBe("fit-width");
+    expect(harness.controller.viewport?.pageViewportRect.x).toBeCloseTo(56);
+    expect(harness.controller.viewport?.pageViewportRect.y).toBeCloseTo(88);
   });
 
   it("responds to dynamic device pixel ratio changes", () => {

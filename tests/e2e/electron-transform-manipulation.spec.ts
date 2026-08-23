@@ -124,8 +124,8 @@ test("rotates and scales one selected object through History", async () => {
     };
     const scaleStart = pageToScreen(scaleStartPage.x, scaleStartPage.y);
     const scaleEnd = pageToScreen(
-      rotatedCenter.x + scaleVector.x * 1.5,
-      rotatedCenter.y + scaleVector.y * 1.5,
+      rotatedCenter.x + scaleVector.x * 0.2,
+      rotatedCenter.y + scaleVector.y * 0.2,
     );
 
     await hoverForCursor(window, inkCanvas, scaleStart, "nwse-resize");
@@ -133,10 +133,12 @@ test("rotates and scales one selected object through History", async () => {
     await window.mouse.move(scaleEnd.x, scaleEnd.y, { steps: 8 });
     await expect(surface).toHaveAttribute("data-manipulation-kind", "scale");
     await expect(previewCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
+    await expect.poll(() => nonTransparentPixelCount(previewCanvas)).toBeGreaterThan(0);
     await window.mouse.up();
     await expect(surface).toHaveAttribute("data-history-undo-depth", "3");
     await expect(surface).not.toHaveAttribute("data-selected-object-scale", "1");
     const committedScale = await surface.getAttribute("data-selected-object-scale");
+    await expect.poll(() => nonTransparentPixelCount(previewCanvas)).toBe(0);
 
     await window.keyboard.press("Control+Z");
     await expect(surface).toHaveAttribute("data-selected-object-scale", "1");
@@ -144,6 +146,7 @@ test("rotates and scales one selected object through History", async () => {
     await window.keyboard.press("Control+Y");
     await expect(surface).toHaveAttribute("data-selected-object-scale", committedScale ?? "");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "3");
+    expect(await nonTransparentPixelCount(previewCanvas)).toBe(0);
     await expect(selectionCanvas).toHaveAttribute(
       "data-selected-object-id",
       selectedObjectId ?? "",
@@ -167,4 +170,18 @@ async function hoverForCursor(
       return canvas.getAttribute("data-manipulation-cursor");
     })
     .toBe(cursor);
+}
+
+async function nonTransparentPixelCount(canvas: Locator): Promise<number> {
+  return canvas.evaluate((element) => {
+    const target = element as HTMLCanvasElement;
+    const context = target.getContext("2d");
+    if (context === null) throw new Error("Preview canvas context is unavailable.");
+    const pixels = context.getImageData(0, 0, target.width, target.height).data;
+    let count = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if ((pixels[index] ?? 0) !== 0) count += 1;
+    }
+    return count;
+  });
 }

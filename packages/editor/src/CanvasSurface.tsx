@@ -34,6 +34,7 @@ import {
   TransformPreviewRenderer,
   type CanvasBounds,
   type CanvasControllerSnapshot,
+  type Point,
   type RenderTheme,
   type Viewport,
 } from "@folio/rendering";
@@ -48,6 +49,12 @@ import {
 } from "@folio/selection";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EditorClipboard } from "./EditorClipboard";
+import {
+  editorViewportWheelZoom,
+  nextEditorViewportZoom,
+  type EditorViewportSnapshot,
+  type ViewportActions,
+} from "./EditorViewport";
 import {
   EditorContextMenu,
   type EditorContextMenuAction,
@@ -187,6 +194,12 @@ export interface CanvasSurfaceProps {
   readonly onHistoryChange?: (notification: HistoryNotification) => void;
   /** Receives immutable rendering diagnostics at lifecycle checkpoints. */
   readonly onDiagnostics?: (snapshot: CanvasControllerSnapshot) => void;
+  /** Receives session-bound viewport actions and null during cleanup. */
+  readonly onViewportActionsReady?: (actions: ViewportActions | null) => void;
+  /** Receives a small immutable presentation snapshot after viewport changes. */
+  readonly onViewportChange?: (snapshot: EditorViewportSnapshot) => void;
+  /** Reports the first successful Space + Drag canvas movement in this editor session. */
+  readonly onViewportNavigationLearned?: () => void;
   /** Receives initialization or rendering adapter failures. */
   readonly onError?: (error: Error) => void;
 }
@@ -206,6 +219,13 @@ function readTheme(): RenderTheme {
         : "rgba(0, 0, 0, 0.16)",
     pageLineColor: value("--folio-page-rule", "rgba(102, 118, 151, 0.16)"),
   });
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName))
+  );
 }
 
 function manipulationKindForMode(mode: CanvasInteractionMode): ManipulationKind | null {
@@ -292,6 +312,9 @@ export function CanvasSurface({
   onManipulationChange,
   onHistoryChange,
   onDiagnostics,
+  onViewportActionsReady,
+  onViewportChange,
+  onViewportNavigationLearned,
   onError,
 }: CanvasSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -311,6 +334,9 @@ export function CanvasSurface({
   const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
   const shapeEditingActionsReadyRef = useRef(onShapeEditingActionsReady);
   const shapeEditingChangeRef = useRef(onShapeEditingChange);
+  const viewportActionsReadyRef = useRef(onViewportActionsReady);
+  const viewportChangeRef = useRef(onViewportChange);
+  const viewportNavigationLearnedRef = useRef(onViewportNavigationLearned);
   const editingActionsRef = useRef<EditorEditingShortcutActions | null>(null);
 
   useLayoutEffect(() => {
@@ -360,6 +386,18 @@ export function CanvasSurface({
   }, [onShapeEditingChange]);
 
   useEffect(() => {
+    viewportActionsReadyRef.current = onViewportActionsReady;
+  }, [onViewportActionsReady]);
+
+  useEffect(() => {
+    viewportChangeRef.current = onViewportChange;
+  }, [onViewportChange]);
+
+  useEffect(() => {
+    viewportNavigationLearnedRef.current = onViewportNavigationLearned;
+  }, [onViewportNavigationLearned]);
+
+  useEffect(() => {
     const host = hostRef.current;
     if (host === null) {
       return;
@@ -369,6 +407,7 @@ export function CanvasSurface({
     const editorClipboard = new EditorClipboard();
     const editorSelection = new EditorSelectionSet();
     const selectionGeometry = new EditorSelectionGeometry();
+    let synchronizeViewportLayers: (snapshot: CanvasControllerSnapshot) => void = () => undefined;
     const controller = new CanvasController({
       theme: readTheme(),
       overlayHooks: [
@@ -379,6 +418,7 @@ export function CanvasSurface({
           },
         ),
       ],
+      onViewportChange: (snapshot) => synchronizeViewportLayers(snapshot),
       onError: (error) => onError?.(error),
     });
     let themeObserver: MutationObserver | null = null;
@@ -404,7 +444,10 @@ export function CanvasSurface({
     let uninstallEditingShortcuts: (() => void) | null = null;
     let toolKeyboardDownListener: ((event: KeyboardEvent) => void) | null = null;
     let toolKeyboardUpListener: ((event: KeyboardEvent) => void) | null = null;
+    let viewportBlurListener: (() => void) | null = null;
     let contextMenuListener: ((event: MouseEvent) => void) | null = null;
+    let viewportPresentationFrame: number | null = null;
+    let latestViewportPresentation: EditorViewportSnapshot | null = null;
     let manipulationPointerCapture: Readonly<{
       canvas: HTMLCanvasElement;
       pointerId: number;
@@ -459,7 +502,12 @@ export function CanvasSurface({
       });
       const setManipulationCursor = (cursor: SelectionManipulationCursor): void => {
         if (inkLayer === null || inkLayer.canvas.dataset.manipulationCursor === cursor) return;
-        inkLayer.canvas.style.cursor = selectionManipulationCursorCss(cursor);
+        const cursorCss = selectionManipulationCursorCss(cursor);
+        if ((inkLayer.canvas.dataset.viewportPanState ?? "idle") === "idle") {
+          inkLayer.canvas.style.cursor = cursorCss;
+        } else {
+          inkLayer.canvas.dataset.viewportRestoreCursor = cursorCss;
+        }
         inkLayer.canvas.dataset.manipulationCursor = cursor;
         host.dataset.manipulationCursor = cursor;
       };
@@ -484,7 +532,10 @@ export function CanvasSurface({
         getObject: (objectId: string) => documentSession.collection.lookup(objectId),
       };
       const selectionManager = createSelectionManager();
-      const hitTestEngine = createEditorSelectionHitTestEngine(objectSource);
+      const hitTestEngine = createEditorSelectionHitTestEngine(
+        objectSource,
+        () => viewport.camera.zoom,
+      );
       const selectionCoordinateMapper = new PageSelectionCoordinateMapper({
         coordinateConverter,
         viewport,
@@ -528,7 +579,17 @@ export function CanvasSurface({
       vectorInteractionLayer.canvas.style.zIndex = "3";
       selectionLayer.canvas.style.zIndex = "4";
       const updateViewportDiagnostics = (): void => {
+        const pageRect = viewport.pageViewportRect;
         host.dataset.viewportZoom = String(viewport.camera.zoom);
+        host.dataset.viewportMode = controller.viewportMode;
+        host.dataset.viewportCameraX = String(viewport.camera.position.x);
+        host.dataset.viewportCameraY = String(viewport.camera.position.y);
+        host.dataset.viewportPageX = String(pageRect.x);
+        host.dataset.viewportPageY = String(pageRect.y);
+        host.dataset.viewportPageWidth = String(pageRect.width);
+        host.dataset.viewportPageHeight = String(pageRect.height);
+        host.dataset.viewportWidth = String(viewport.size.width);
+        host.dataset.viewportHeight = String(viewport.size.height);
       };
       const updateDocumentDiagnostics = (): void => {
         const snapshot = documentSession.snapshot();
@@ -1098,25 +1159,210 @@ export function CanvasSurface({
       unsubscribeManipulation = activeManipulationController.subscribe((state) =>
         updateManipulation(state, true),
       );
-      inkLayer.setResizeHandler(() => {
+      const publishViewportPresentation = (snapshot: CanvasControllerSnapshot): void => {
+        if (snapshot.viewport === null) return;
+        latestViewportPresentation = Object.freeze({
+          zoom: snapshot.viewport.camera.zoom,
+          mode: snapshot.viewportMode,
+          minZoom: viewport.camera.minZoom,
+          maxZoom: viewport.camera.maxZoom,
+        });
+        if (viewportPresentationFrame !== null) return;
+        viewportPresentationFrame = requestAnimationFrame(() => {
+          viewportPresentationFrame = null;
+          const presentation = latestViewportPresentation;
+          latestViewportPresentation = null;
+          if (presentation !== null) viewportChangeRef.current?.(presentation);
+        });
+      };
+      synchronizeViewportLayers = (snapshot): void => {
         activeStrokeRenderer.redraw();
+        activeTransformPreviewRenderer.redraw();
+        activeShapePreviewRenderer.redraw();
+        activeSelectionOverlayRenderer.redraw();
         activeVectorInteractionRenderer.redraw();
         updateSelection(activeSelectionController.getSelection(), false);
+        updateManipulation(activeManipulationController.getManipulationState(), false);
         updateDocumentDiagnostics();
-        onDiagnostics?.(controller.snapshot());
+        publishViewportPresentation(snapshot);
+        onDiagnostics?.(snapshot);
+      };
+      const viewportActions: ViewportActions = Object.freeze({
+        zoomIn: () =>
+          controller.setZoom(
+            nextEditorViewportZoom(
+              viewport.camera.zoom,
+              "in",
+              viewport.camera.minZoom,
+              viewport.camera.maxZoom,
+            ),
+          ),
+        zoomOut: () =>
+          controller.setZoom(
+            nextEditorViewportZoom(
+              viewport.camera.zoom,
+              "out",
+              viewport.camera.minZoom,
+              viewport.camera.maxZoom,
+            ),
+          ),
+        setZoom: (zoom: number) => controller.setZoom(zoom),
+        resetZoom: () => controller.resetZoom(),
+        zoomAt: (zoom: number, viewportAnchor: Point) => controller.zoomAt(zoom, viewportAnchor),
+        panBy: (viewportDelta: Point) => controller.panBy(viewportDelta),
+        fitPage: () => controller.fitPage(),
+        fitWidth: () => controller.fitWidth(),
       });
-      manipulationLayer.setResizeHandler(() => activeTransformPreviewRenderer.redraw());
-      shapePreviewLayer.setResizeHandler(() => activeShapePreviewRenderer.redraw());
-      selectionLayer.setResizeHandler(() => activeSelectionOverlayRenderer.redraw());
-      vectorInteractionLayer.setResizeHandler(() => activeVectorInteractionRenderer.redraw());
-      activeStrokeRenderer.redraw();
-      activeTransformPreviewRenderer.redraw();
-      activeShapePreviewRenderer.redraw();
-      activeSelectionOverlayRenderer.redraw();
-      activeVectorInteractionRenderer.redraw();
-      updateDocumentDiagnostics();
-      updateSelection(activeSelectionController.getSelection(), false);
-      updateManipulation(activeManipulationController.getManipulationState(), false);
+      viewportActionsReadyRef.current?.(viewportActions);
+      synchronizeViewportLayers(controller.snapshot());
+
+      const editorPointerIds = new Set<number>();
+      const viewportPanPointerIds = new Set<number>();
+      let spacePanHeld = false;
+      let pointerOverCanvas = false;
+      let navigationTeachingReported = false;
+      let activeViewportPan: {
+        pointerId: number;
+        lastViewportPoint: Point;
+        source: "space" | "middle";
+      } | null = null;
+      const setViewportPanCursor = (state: "idle" | "grab" | "grabbing"): void => {
+        const canvas = inkLayer?.canvas;
+        if (canvas === undefined) return;
+        const previousState = canvas.dataset.viewportPanState ?? "idle";
+        if (state !== "idle" && previousState === "idle") {
+          canvas.dataset.viewportRestoreCursor = canvas.style.cursor || "default";
+        }
+        canvas.dataset.viewportPanState = state;
+        host.dataset.viewportPanState = state;
+        if (state === "idle") {
+          canvas.style.cursor =
+            canvas.dataset.viewportRestoreCursor ??
+            canvas.dataset.desktopCursorCss ??
+            canvas.dataset.editorCursor ??
+            "default";
+          delete canvas.dataset.viewportRestoreCursor;
+        } else {
+          canvas.style.cursor = state;
+        }
+      };
+      setViewportPanCursor("idle");
+      const pointerViewportPoint = (event: PointerEvent): Point | null => {
+        const bounds = getInkCanvasBounds();
+        if (bounds === null || bounds.width <= 0 || bounds.height <= 0) return null;
+        return coordinateConverter.screenToCanvas({ x: event.clientX, y: event.clientY }, bounds);
+      };
+      const finishViewportPan = (pointerId: number, releaseCapture: boolean): void => {
+        if (activeViewportPan?.pointerId !== pointerId) return;
+        activeViewportPan = null;
+        if (releaseCapture) {
+          try {
+            inkLayer?.canvas.releasePointerCapture(pointerId);
+          } catch {
+            // Capture may already have been released by the browser.
+          }
+        }
+        setViewportPanCursor(spacePanHeld ? "grab" : "idle");
+      };
+      const cancelViewportPan = (): void => {
+        const pointerId = activeViewportPan?.pointerId;
+        if (pointerId !== undefined) finishViewportPan(pointerId, true);
+        viewportPanPointerIds.clear();
+        spacePanHeld = false;
+        setViewportPanCursor("idle");
+      };
+      const handleViewportPointer = (
+        phase: SelectionPointerInput["phase"],
+        event: PointerEvent,
+      ): boolean => {
+        const active = activeViewportPan;
+        if (phase === "down") {
+          viewportPanPointerIds.delete(event.pointerId);
+          const startsViewportPan =
+            active === null &&
+            editorPointerIds.size === 0 &&
+            (event.button === 1 || (spacePanHeld && event.button === 0));
+          if (!startsViewportPan) return false;
+          const point = pointerViewportPoint(event);
+          if (point === null) return false;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          activeViewportPan = {
+            pointerId: event.pointerId,
+            lastViewportPoint: point,
+            source: event.button === 1 ? "middle" : "space",
+          };
+          viewportPanPointerIds.add(event.pointerId);
+          try {
+            inkLayer?.canvas.setPointerCapture(event.pointerId);
+          } catch {
+            // Panning remains available while the pointer stays over the canvas.
+          }
+          setViewportPanCursor("grabbing");
+          return true;
+        }
+        if (active?.pointerId === event.pointerId) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (phase === "move") {
+            const point = pointerViewportPoint(event);
+            if (point !== null) {
+              const delta = {
+                x: point.x - active.lastViewportPoint.x,
+                y: point.y - active.lastViewportPoint.y,
+              };
+              const cameraBeforePan = viewport.camera.position;
+              viewportActions.panBy(delta);
+              const cameraMoved =
+                viewport.camera.position.x !== cameraBeforePan.x ||
+                viewport.camera.position.y !== cameraBeforePan.y;
+              if (active.source === "space" && !navigationTeachingReported && cameraMoved) {
+                navigationTeachingReported = true;
+                host.dataset.navigationTeachingLearned = "true";
+                viewportNavigationLearnedRef.current?.();
+              }
+              active.lastViewportPoint = point;
+            }
+          } else {
+            finishViewportPan(event.pointerId, phase !== "cancel");
+          }
+          return true;
+        }
+        if (viewportPanPointerIds.has(event.pointerId)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (phase === "up" || phase === "cancel") viewportPanPointerIds.delete(event.pointerId);
+          return true;
+        }
+        if (spacePanHeld && editorPointerIds.size === 0 && phase === "move") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          setViewportPanCursor("grab");
+          return true;
+        }
+        return false;
+      };
+      const handleViewportKeyboard = (phase: "down" | "up", event: KeyboardEvent): boolean => {
+        if (
+          event.code !== "Space" ||
+          isEditableKeyboardTarget(event.target) ||
+          (phase === "down" && event.target instanceof HTMLButtonElement && !pointerOverCanvas)
+        ) {
+          return false;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (phase === "down") {
+          spacePanHeld = true;
+          if (activeViewportPan === null && editorPointerIds.size === 0) {
+            setViewportPanCursor("grab");
+          }
+        } else {
+          spacePanHeld = false;
+          if (activeViewportPan === null) setViewportPanCursor("idle");
+        }
+        return true;
+      };
 
       const selectionCandidatesAt = (position: ScreenPoint): readonly PageObject[] => {
         const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
@@ -1476,8 +1722,19 @@ export function CanvasSurface({
         type: keyof HTMLElementEventMap,
         phase: SelectionPointerInput["phase"],
       ): void => {
-        const listener: EventListener = (event) =>
-          toolRegistry?.handlePointer(phase, event as PointerEvent);
+        const listener: EventListener = (nativeEvent) => {
+          const event = nativeEvent as PointerEvent;
+          pointerOverCanvas = true;
+          if (handleViewportPointer(phase, event)) return;
+          if (phase === "down") editorPointerIds.add(event.pointerId);
+          toolRegistry?.handlePointer(phase, event);
+          if (phase === "up" || phase === "cancel") {
+            editorPointerIds.delete(event.pointerId);
+            if (spacePanHeld && editorPointerIds.size === 0 && activeViewportPan === null) {
+              setViewportPanCursor("grab");
+            }
+          }
+        };
         inkLayer?.canvas.addEventListener(type, listener, true);
         editorPointerListeners.push([type, listener]);
       };
@@ -1486,8 +1743,51 @@ export function CanvasSurface({
       addEditorPointerListener("pointerup", "up");
       addEditorPointerListener("pointercancel", "cancel");
       addEditorPointerListener("lostpointercapture", "cancel");
+      const wheelListener: EventListener = (nativeEvent) => {
+        const event = nativeEvent as WheelEvent;
+        const bounds = getInkCanvasBounds();
+        if (bounds === null || bounds.width <= 0 || bounds.height <= 0) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const deltaScale =
+          event.deltaMode === WheelEvent.DOM_DELTA_LINE
+            ? 16
+            : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+              ? Math.max(viewport.size.height, 1)
+              : 1;
+        if (event.ctrlKey) {
+          const anchor = coordinateConverter.screenToCanvas(
+            { x: event.clientX, y: event.clientY },
+            bounds,
+          );
+          viewportActions.zoomAt(
+            editorViewportWheelZoom(
+              viewport.camera.zoom,
+              event.deltaY,
+              event.deltaMode,
+              viewport.size.height,
+            ),
+            anchor,
+          );
+        } else {
+          viewportActions.panBy({
+            x: -event.deltaX * deltaScale,
+            y: -event.deltaY * deltaScale,
+          });
+        }
+      };
+      inkLayer.canvas.addEventListener("wheel", wheelListener, { capture: true, passive: false });
+      editorPointerListeners.push(["wheel", wheelListener]);
+      host.dataset.viewportWheelPolicy = "ctrl-zoom-wheel-pan";
       const cursorLeaveListener: EventListener = () => {
-        if (!activeManipulationController.hasActiveSession()) resetManipulationCursor();
+        pointerOverCanvas = false;
+        if (
+          !activeManipulationController.hasActiveSession() &&
+          activeViewportPan === null &&
+          !spacePanHeld
+        ) {
+          resetManipulationCursor();
+        }
         activeVectorInteractionRenderer.setHover(null);
       };
       inkLayer.canvas.addEventListener("pointerleave", cursorLeaveListener, true);
@@ -1898,8 +2198,12 @@ export function CanvasSurface({
       });
       toolRegistry = createEditorToolRegistry({
         setCursor: (cursor) => {
-          activeInkCanvas.style.cursor = cursor;
           activeInkCanvas.dataset.editorCursor = cursor;
+          if ((activeInkCanvas.dataset.viewportPanState ?? "idle") === "idle") {
+            activeInkCanvas.style.cursor = cursor;
+          } else {
+            activeInkCanvas.dataset.viewportRestoreCursor = cursor;
+          }
         },
         requestTemporaryRender: () => {
           activeTransformPreviewRenderer.redraw();
@@ -2008,10 +2312,20 @@ export function CanvasSurface({
       activeToolRegistry.activate(interactionModeRef.current);
       updateToolDiagnostics();
       onToolRegistryReady?.(activeToolRegistry);
-      toolKeyboardDownListener = (event) => activeToolRegistry.handleKeyboard("down", event);
-      toolKeyboardUpListener = (event) => activeToolRegistry.handleKeyboard("up", event);
-      window.addEventListener("keydown", toolKeyboardDownListener);
-      window.addEventListener("keyup", toolKeyboardUpListener);
+      toolKeyboardDownListener = (event) => {
+        if (!handleViewportKeyboard("down", event)) {
+          activeToolRegistry.handleKeyboard("down", event);
+        }
+      };
+      toolKeyboardUpListener = (event) => {
+        if (!handleViewportKeyboard("up", event)) {
+          activeToolRegistry.handleKeyboard("up", event);
+        }
+      };
+      viewportBlurListener = cancelViewportPan;
+      window.addEventListener("keydown", toolKeyboardDownListener, true);
+      window.addEventListener("keyup", toolKeyboardUpListener, true);
+      window.addEventListener("blur", viewportBlurListener);
       host.dataset.rendererState = "ready";
       host.dataset.inkState = "ready";
       host.dataset.documentState = "ready";
@@ -2061,11 +2375,19 @@ export function CanvasSurface({
         inkLayer?.canvas.removeEventListener("contextmenu", contextMenuListener);
       }
       if (toolKeyboardDownListener !== null) {
-        window.removeEventListener("keydown", toolKeyboardDownListener);
+        window.removeEventListener("keydown", toolKeyboardDownListener, true);
       }
       if (toolKeyboardUpListener !== null) {
-        window.removeEventListener("keyup", toolKeyboardUpListener);
+        window.removeEventListener("keyup", toolKeyboardUpListener, true);
       }
+      if (viewportBlurListener !== null) {
+        window.removeEventListener("blur", viewportBlurListener);
+      }
+      if (viewportPresentationFrame !== null) {
+        cancelAnimationFrame(viewportPresentationFrame);
+        viewportPresentationFrame = null;
+      }
+      viewportActionsReadyRef.current?.(null);
       unsubscribeSelection?.();
       unsubscribeManipulation?.();
       manipulationController?.destroy();

@@ -3,11 +3,12 @@ import type { EditorTool, ShapeToolKind } from "../editor/editor-types";
 export interface ContextHintContext {
   readonly tool: EditorTool;
   readonly shapeKind?: ShapeToolKind;
+  readonly navigationTeachingAvailable?: boolean;
 }
 
 export interface ContextHint {
   readonly id: string;
-  readonly tool: EditorTool;
+  readonly tool?: EditorTool;
   readonly shapeKind?: ShapeToolKind;
   readonly text: string;
 }
@@ -35,6 +36,10 @@ const defaultHints: readonly ContextHint[] = Object.freeze([
     shapeKind: "ellipse",
     text: "Tip: Hold Shift → Draw a perfect circle",
   }),
+  Object.freeze({
+    id: "canvas-navigation-space-drag",
+    text: "Tip: Hold Space + Drag → Move canvas",
+  }),
 ]);
 
 export function createContextHintRegistry(
@@ -47,13 +52,19 @@ export function createContextHintRegistry(
     entries.set(key, Object.freeze({ ...hint }));
   }
   return Object.freeze({
-    resolve: (context: ContextHintContext): ContextHint | null =>
-      entries.get(contextKey(context)) ?? entries.get(contextKey({ tool: context.tool })) ?? null,
+    resolve: (context: ContextHintContext): ContextHint | null => {
+      const specific =
+        entries.get(contextKey(context)) ?? entries.get(contextKey({ tool: context.tool }));
+      if (specific !== undefined) return specific;
+      return context.navigationTeachingAvailable === true
+        ? (entries.get(contextKey({})) ?? null)
+        : null;
+    },
     registeredTools: (): readonly EditorTool[] =>
-      Object.freeze([...new Set(hints.map(({ tool }) => tool))]),
+      Object.freeze([...new Set(hints.flatMap(({ tool }) => (tool === undefined ? [] : [tool])))]),
   });
 }
 
-function contextKey(context: ContextHintContext): string {
-  return `${context.tool}:${context.shapeKind ?? ""}`;
+function contextKey(context: Pick<ContextHint, "tool" | "shapeKind">): string {
+  return `${context.tool ?? "*"}:${context.shapeKind ?? ""}`;
 }

@@ -47,8 +47,14 @@ describe("desktop editor cursor policy", () => {
     ]);
   });
 
-  it("uses one crosshair cursor for the unified Shapes tool", () => {
-    expect(cursorPresentationForTool("Shapes")).toEqual({ id: "shapes", css: "crosshair" });
+  it("starts Shapes with a black crosshair before returning to the adaptive native cursor", () => {
+    const shapes = cursorPresentationForTool("Shapes");
+
+    expect(shapes.id).toBe("shapes");
+    expect(shapes.css).toContain("data:image/svg+xml");
+    expect(shapes.css).toContain("%23111111");
+    expect(shapes.css).not.toContain("%232563eb");
+    expect(shapes.adaptiveCss).toBe("crosshair");
   });
 
   it("leaves interactive selection cursors under the editor engine's control", () => {

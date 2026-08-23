@@ -3,18 +3,22 @@ import * as editor from "../index";
 import type {
   CanvasDrawingStyle,
   CanvasSurfaceProps,
+  EditorViewportSnapshot,
   ObjectLifecycleActions,
   ShapeEditingActions,
   ShapeEditingSnapshot,
+  ViewportActions,
 } from "../index";
 
 describe("@folio/editor public API", () => {
   it("exposes only the application-facing canvas adapter at runtime", () => {
     expect(Object.keys(editor).sort()).toEqual([
       "CanvasSurface",
+      "DEFAULT_EDITOR_VIEWPORT_SNAPSHOT",
       "DEFAULT_PEN_PRESETS",
       "EDITOR_PRESET_COLORS",
       "EDITOR_STROKE_WIDTHS",
+      "EDITOR_VIEWPORT_ZOOM_PRESETS",
       "createDefaultPropertyDescriptorRegistry",
       "createEditorColorSystem",
       "createEditorToolRegistry",
@@ -22,6 +26,9 @@ describe("@folio/editor public API", () => {
       "createPenPresetStore",
       "createPropertyDescriptorRegistry",
       "createVectorPropertyProvider",
+      "editorViewportWheelZoom",
+      "formatEditorViewportZoom",
+      "nextEditorViewportZoom",
     ]);
   });
 
@@ -71,6 +78,26 @@ describe("@folio/editor public API", () => {
       onShapeEditingActionsReady: (actions) => actions?.updateStyle({ strokeWidth: 4 }),
       onShapeEditingChange: (snapshot) => snapshot?.objectId,
     };
+    const viewportSnapshot: EditorViewportSnapshot = {
+      zoom: 1,
+      mode: "manual",
+      minZoom: 0.25,
+      maxZoom: 8,
+    };
+    const viewportActions: ViewportActions = {
+      zoomIn: () => undefined,
+      zoomOut: () => undefined,
+      setZoom: () => undefined,
+      resetZoom: () => undefined,
+      zoomAt: () => undefined,
+      panBy: () => undefined,
+      fitPage: () => undefined,
+      fitWidth: () => undefined,
+    };
+    const viewportProps: CanvasSurfaceProps = {
+      onViewportActionsReady: (actions) => actions?.fitPage(),
+      onViewportChange: (snapshot) => snapshot.zoom,
+    };
 
     expect(existingProps.interactionMode).toBe("move");
     expect(rotationProps.interactionMode).toBe("rotate");
@@ -88,5 +115,8 @@ describe("@folio/editor public API", () => {
     expect(shapeActions.updateStyle({ opacity: 0.5 })).toBe(true);
     expect(shapeSnapshot.objectType).toBe("rectangle");
     expect(shapeEditingProps.onShapeEditingChange).toBeTypeOf("function");
+    expect(viewportSnapshot.mode).toBe("manual");
+    expect(viewportActions.fitWidth).toBeTypeOf("function");
+    expect(viewportProps.onViewportChange).toBeTypeOf("function");
   });
 });

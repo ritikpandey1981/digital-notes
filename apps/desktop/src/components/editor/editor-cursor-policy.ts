@@ -3,6 +3,7 @@ import type { EditorTool } from "./editor-types";
 export interface EditorCursorPresentation {
   readonly id: string;
   readonly css: string | null;
+  readonly adaptiveCss?: string;
 }
 
 const penCursor = createSvgCursor(
@@ -26,6 +27,13 @@ const eraserCursor = createSvgCursor(
   "cell",
 );
 
+const initialShapeCrosshairCursor = createSvgCursor(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18" fill="none" stroke="#111111" stroke-width="1.5" stroke-linecap="square"/></svg>',
+  12,
+  12,
+  "crosshair",
+);
+
 const cursorByTool: Readonly<Record<EditorTool, EditorCursorPresentation>> = Object.freeze({
   Select: Object.freeze({ id: "select", css: null }),
   Move: Object.freeze({ id: "move", css: null }),
@@ -34,7 +42,11 @@ const cursorByTool: Readonly<Record<EditorTool, EditorCursorPresentation>> = Obj
   Pen: Object.freeze({ id: "pen", css: penCursor }),
   Highlighter: Object.freeze({ id: "highlighter", css: highlighterCursor }),
   Eraser: Object.freeze({ id: "eraser", css: eraserCursor }),
-  Shapes: Object.freeze({ id: "shapes", css: "crosshair" }),
+  Shapes: Object.freeze({
+    id: "shapes",
+    css: initialShapeCrosshairCursor,
+    adaptiveCss: "crosshair",
+  }),
   Text: Object.freeze({ id: "text", css: "text" }),
   Image: Object.freeze({ id: "image", css: "copy" }),
   Table: Object.freeze({ id: "table", css: "cell" }),

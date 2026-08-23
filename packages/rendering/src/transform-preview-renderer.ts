@@ -150,8 +150,15 @@ export class TransformPreviewRenderer {
     this.assertActive();
     const next = target === null ? null : freezeTarget(target);
     if (sameTarget(this.target, next)) return;
+    if (next === null) {
+      this.target = null;
+      this.fullRedraw = true;
+      this.dirtyPageRects.length = 0;
+      this.invalidate();
+      return;
+    }
     if (this.target !== null) this.addDirtyRect(transformedBounds(this.target));
-    if (next !== null) this.addDirtyRect(transformedBounds(next));
+    this.addDirtyRect(transformedBounds(next));
     this.target = next;
     this.invalidate();
   }

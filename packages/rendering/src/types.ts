@@ -35,6 +35,8 @@ export interface ViewportSnapshot {
   readonly worldBounds: Rect;
 }
 
+export type ViewportMode = "manual" | "fit-page" | "fit-width";
+
 export type PageBackground =
   | { readonly kind: "plain" }
   | {
@@ -109,6 +111,7 @@ export interface RenderDiagnosticsSnapshot {
 export interface CanvasControllerSnapshot {
   readonly status: "idle" | "mounted" | "context-lost" | "destroyed";
   readonly viewport: ViewportSnapshot | null;
+  readonly viewportMode: ViewportMode;
   readonly diagnostics: RenderDiagnosticsSnapshot;
 }
 
@@ -138,6 +141,7 @@ export interface CanvasControllerOptions {
   readonly observeDevicePixelRatio?: (listener: () => void) => () => void;
   readonly now?: () => number;
   readonly overlayHooks?: readonly OverlayRenderHook[];
+  readonly onViewportChange?: (snapshot: CanvasControllerSnapshot) => void;
   readonly onError?: (error: Error) => void;
 }
 

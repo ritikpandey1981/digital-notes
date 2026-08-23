@@ -95,6 +95,22 @@ export class Camera {
     return this.currentZoom;
   }
 
+  fitWidth(pageRect: Rect, viewportSize: Size, padding: Insets): number {
+    assertRect(pageRect, "pageRect");
+    assertSize(viewportSize, "viewportSize");
+    const availableWidth = viewportSize.width - padding.left - padding.right;
+    const zoom =
+      availableWidth <= 0
+        ? this.minZoom
+        : Math.min(this.maxZoom, Math.max(this.minZoom, availableWidth / pageRect.width));
+    this.setZoom(zoom);
+    this.setPosition({
+      x: pageRect.x + pageRect.width / 2,
+      y: pageRect.y + (viewportSize.height / 2 - padding.top) / zoom,
+    });
+    return this.currentZoom;
+  }
+
   snapshot(): CameraSnapshot {
     return Object.freeze({
       position: freezePoint(this.currentPosition),

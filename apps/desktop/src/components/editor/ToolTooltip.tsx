@@ -100,13 +100,14 @@ export function TooltipLayerProvider({ children }: { readonly children: ReactNod
         >
           <span
             className={cn(
-              "folio-floating-surface folio-tool-tooltip pointer-events-none fixed whitespace-nowrap px-2.5 py-1.5 text-xs font-medium leading-none text-folio-ink",
+              "folio-tool-tooltip pointer-events-none fixed whitespace-nowrap px-2.5 py-1.5 text-xs font-medium leading-none text-folio-ink",
               visible && request !== null ? "visible opacity-100" : "invisible opacity-0",
             )}
             style={tooltipPosition(request)}
             role="tooltip"
             data-side={request?.side ?? "right"}
             data-tooltip-motion="fade-120ms"
+            data-tooltip-surface="auxiliary-soft"
           >
             {request?.label ?? ""}
           </span>
@@ -127,40 +128,57 @@ export function ToolTooltip({ label, side = "right", hidden = false }: ToolToolt
     if (!(anchor instanceof HTMLElement) || layer === null) return;
     let hovered = false;
     let focused = false;
-    const show = (): void => {
-      if (!hidden) layer.show({ anchor, label, side });
+    let hoverSuppressed = false;
+    let focusSuppressed = false;
+    const show = (source: "hover" | "focus"): void => {
+      if (!hidden && (source === "hover" ? !hoverSuppressed : !focusSuppressed)) {
+        layer.show({ anchor, label, side });
+      }
     };
     const hideIfInactive = (): void => {
-      if (!hovered && !focused) layer.hide(anchor);
+      if ((!hovered || hoverSuppressed) && (!focused || focusSuppressed)) layer.hide(anchor);
     };
     const handleMouseEnter = (): void => {
       hovered = true;
-      show();
+      show("hover");
     };
     const handleMouseLeave = (): void => {
       hovered = false;
+      hoverSuppressed = false;
       hideIfInactive();
     };
     const handleFocusIn = (): void => {
       focused = true;
-      show();
+      show("focus");
     };
     const handleFocusOut = (): void => {
       focused = false;
+      focusSuppressed = false;
       hideIfInactive();
+    };
+    const handleActivation = (event: Event): void => {
+      hoverSuppressed = hovered || anchor.matches(":hover");
+      focusSuppressed =
+        event.type === "pointerdown" || focused || anchor.contains(document.activeElement);
+      layer.hide(anchor);
     };
     anchor.addEventListener("mouseenter", handleMouseEnter);
     anchor.addEventListener("mouseleave", handleMouseLeave);
     anchor.addEventListener("focusin", handleFocusIn);
     anchor.addEventListener("focusout", handleFocusOut);
+    anchor.addEventListener("pointerdown", handleActivation);
+    anchor.addEventListener("click", handleActivation);
     if (hidden) layer.hide(anchor);
-    else if (anchor.matches(":hover") || anchor.matches(":focus-visible")) show();
+    else if (anchor.matches(":hover")) show("hover");
+    else if (anchor.matches(":focus-visible")) show("focus");
     return () => {
       layer.hide(anchor);
       anchor.removeEventListener("mouseenter", handleMouseEnter);
       anchor.removeEventListener("mouseleave", handleMouseLeave);
       anchor.removeEventListener("focusin", handleFocusIn);
       anchor.removeEventListener("focusout", handleFocusOut);
+      anchor.removeEventListener("pointerdown", handleActivation);
+      anchor.removeEventListener("click", handleActivation);
     };
   }, [hidden, label, layer, side]);
 
