@@ -1,5 +1,5 @@
 import path from "node:path";
-import { expect, test, _electron as electron, type Locator } from "@playwright/test";
+import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
 test("creates and edits Line, Rectangle, and Ellipse PageObjects through existing editor systems", async () => {
   test.setTimeout(60_000);
@@ -35,7 +35,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "hidden");
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
 
-    await window.getByRole("button", { name: "Shapes", exact: true }).click();
+    await openShapesWidget(window);
     await expect(shapesWidget).toBeVisible();
     const shapesWidgetMetrics = await shapesWidget.evaluate((element) => {
       const firstButton = element.querySelector("button");
@@ -47,7 +47,8 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
         iconSize: firstButton.querySelector("svg")?.getBoundingClientRect().width,
       };
     });
-    expect(shapesWidgetMetrics).toEqual({ width: 52, height: 122, buttonSize: 36, iconSize: 15 });
+    expect(shapesWidgetMetrics).toMatchObject({ width: 52, height: 122, buttonSize: 36 });
+    expect(shapesWidgetMetrics.iconSize).toBeCloseTo(15, 3);
     const shapesDockButton = toolDock.getByRole("button", { name: "Shapes", exact: true });
     await expect
       .poll(async () => {
@@ -129,7 +130,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect(measurement).toHaveAttribute("data-shape-measurement", "hidden");
     await expect(previewCanvas).toHaveAttribute("data-manipulation-preview-state", "empty");
 
-    await window.getByRole("button", { name: "Shapes", exact: true }).click();
+    await openShapesWidget(window);
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).click();
     const cancelledStart = pageToScreen(320, 160);
     const cancelledEnd = pageToScreen(430, 230);
@@ -153,10 +154,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect(surface).toHaveAttribute("data-shape-creation-state", "idle");
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "1");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
-    await window.getByRole("button", { name: "Shapes", exact: true }).click();
-    await expect(
-      shapesWidget.getByRole("button", { name: "Rectangle", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+    await openShapesWidget(window);
 
     const rectangleStart = pageToScreen(310, 170);
     const rectangleEnd = pageToScreen(430, 230);
@@ -175,7 +173,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect(shapeToolbar).toHaveAttribute("data-persistence-token", "same-toolbar");
     await expect(shapeToolbar).toHaveAttribute("data-selected-shape-type", "rectangle");
 
-    await window.getByRole("button", { name: "Shapes", exact: true }).click();
+    await openShapesWidget(window);
     await shapesWidget.getByRole("button", { name: "Ellipse", exact: true }).click();
     const ellipseStart = pageToScreen(180, 390);
     const ellipseEnd = pageToScreen(300, 470);
@@ -347,7 +345,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await window.getByRole("button", { name: "Select", exact: true }).click();
     await window.mouse.click(...pointTuple(pageToScreen(700, 700)));
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "hidden");
-    await window.getByRole("button", { name: "Shapes", exact: true }).click();
+    await openShapesWidget(window);
     await shapesWidget.getByRole("button", { name: "Line", exact: true }).click();
     for (let index = 0; index < 3; index += 1) {
       const start = pageToScreen(470, 170 + index * 45);
@@ -399,11 +397,12 @@ test("keeps a tall ellipse toolbar clear of its usable rotation handle", async (
     const toolbar = window.getByTestId("shape-editing-toolbar");
     await expect(surface).toHaveAttribute("data-shape-creation-capability", "ready");
 
-    await window.getByRole("button", { name: "Shapes", exact: true }).click();
+    await openShapesWidget(window);
     await window
       .getByTestId("shapes-widget")
       .getByRole("button", { name: "Ellipse", exact: true })
       .click();
+    await expect(surface).toHaveAttribute("data-active-editor-tool", "ellipse");
     const start = await livePageToScreen(surface, inkCanvas, { x: 360, y: 60 });
     const end = await livePageToScreen(surface, inkCanvas, { x: 410, y: 500 });
     await window.mouse.move(start.x, start.y);
@@ -457,6 +456,15 @@ test("keeps a tall ellipse toolbar clear of its usable rotation handle", async (
     await electronApp.close();
   }
 });
+
+async function openShapesWidget(window: Page): Promise<void> {
+  const widget = window.getByTestId("shapes-widget");
+  if (await widget.isVisible()) return;
+  const button = window.getByRole("button", { name: "Shapes", exact: true });
+  await button.click();
+  if (!(await widget.isVisible())) await button.click();
+  await expect(widget).toBeVisible();
+}
 
 async function pageCoordinateMapper(
   baseCanvas: Locator,

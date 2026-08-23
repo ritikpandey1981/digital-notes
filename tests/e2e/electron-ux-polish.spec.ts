@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
-test("keeps a content-sized Tool Dock and persistent professional Context Palette workflow", async () => {
+test("keeps a compact Tool Dock and active-tool Context Palette workflow", async () => {
   test.setTimeout(75_000);
   const repositoryRoot = process.cwd();
   const electronApp = await electron.launch({
@@ -45,8 +45,8 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
 
     const initialDock = await dockMetrics(toolDock);
     expect(initialDock.width).toBe(48);
-    expect(initialDock.height).toBeLessThan(420);
-    expect(initialDock.height).toBeGreaterThan(300);
+    expect(initialDock.height).toBeLessThan(260);
+    expect(initialDock.height).toBeGreaterThan(190);
     expect(initialDock.contentTopGap).toBeCloseTo(initialDock.contentBottomGap, 0);
     expect(initialDock.scrollHeight).toBeLessThanOrEqual(initialDock.clientHeight);
     expect(initialDock.overflowY).not.toBe("auto");
@@ -86,16 +86,15 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     await selectButton.focus();
     await expect(selectTooltip).toBeVisible();
     expect(await toolDock.locator("button[title]").count()).toBe(0);
-    expect(await toolDock.locator("svg[data-optical-alignment]").count()).toBe(8);
+    expect(await toolDock.locator("svg[data-optical-alignment]").count()).toBe(5);
     await expect(selectButton.locator("svg")).toHaveAttribute(
       "data-optical-alignment",
       "down-right-1px",
     );
-    await expect(
-      toolDock.getByRole("button", { name: "Duplicate selected object" }).locator("svg"),
-    ).toHaveAttribute("data-optical-alignment", "up-left-1px");
     expect(await inactiveIconColor(penButton)).not.toBe(await mutedTokenColor(window));
 
+    await penButton.click();
+    await expect(palette).toHaveCount(0);
     await penButton.click();
     await expect(palette).toBeVisible();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
@@ -132,13 +131,16 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
 
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
-    await expect(palette).toHaveAttribute("data-mount-token", "persistent-options-container");
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "highlighter");
     const highlighterCursor = await inkCanvas.evaluate((canvas) => canvas.style.cursor);
     expect(highlighterCursor).not.toBe(penCursor);
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
 
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(palette).toHaveCount(0);
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
     await chooseColor(window, "#2563eb");
@@ -250,7 +252,8 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "5.8");
 
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
-    await expect(palette).toHaveAttribute("data-mount-token", "persistent-options-container");
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(window.getByRole("spinbutton", { name: "Width value" })).toHaveValue("12");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("72");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.34");
@@ -272,6 +275,8 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     );
 
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(window.getByRole("spinbutton", { name: "Width value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
 
@@ -289,6 +294,8 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
@@ -303,12 +310,16 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     await expect(shapesWidget).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
     await toolDock.getByRole("button", { name: "Shapes", exact: true }).click();
     await expect(palette).toHaveCount(0);
     await expect(shapesWidget).toBeVisible();
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(shapesWidget).toHaveCount(0);
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
     await toolDock.getByRole("button", { name: "Eraser", exact: true }).click();
@@ -317,15 +328,16 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     expect(eraserCursor).not.toBe(penCursor);
     expect(eraserCursor).not.toBe(highlighterCursor);
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
     await expect(window.getByRole("spinbutton", { name: "Width value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
 
-    await toolDock.getByRole("button", { name: "More tools" }).click();
-    await expect(window.getByRole("menuitem", { name: "Table", exact: true })).toBeVisible();
-    await expect(palette).toHaveCount(0);
+    for (const futureTool of ["Pencil", "Marker", "Layers", "Reference", "AI"] as const) {
+      await expect(toolDock.getByRole("button", { name: futureTool, exact: true })).toHaveCount(0);
+    }
     await window.mouse.click(emptyWorkspacePoint.x, emptyWorkspacePoint.y);
-    await expect(window.getByRole("menuitem", { name: "Table", exact: true })).toHaveCount(0);
     await expect(palette).toHaveCount(0, { timeout: 1_000 });
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
@@ -363,24 +375,24 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
 
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
-    await palette.evaluate((element) => {
-      element.dataset.secondMountToken = "stable-across-configurable-tools";
-    });
     for (let index = 0; index < 8; index += 1) {
       await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
+      await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
+      await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
       await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     }
-    await expect(palette).toHaveAttribute(
-      "data-second-mount-token",
-      "stable-across-configurable-tools",
-    );
+    await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
     await expect(inkCanvas).toHaveAttribute("data-phase141-lifecycle-token", "mounted-once");
 
     for (let index = 0; index < 4; index += 1) {
       await toolDock.getByRole("button", { name: "Select", exact: true }).click();
       await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     }
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
     await expect(inkCanvas).toHaveAttribute("data-phase141-lifecycle-token", "mounted-once");
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
@@ -411,6 +423,7 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
       width: 40,
       pressureEnabled: true,
     });
+    await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "40");
     await drawPath(window, pageToScreen, [

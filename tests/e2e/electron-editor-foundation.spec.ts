@@ -39,6 +39,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
 
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
     await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Use color #2563eb" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");

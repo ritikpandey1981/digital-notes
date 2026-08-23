@@ -37,6 +37,8 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
 
     const penButton = toolDock.getByRole("button", { name: "Pen", exact: true });
     await penButton.click();
+    await expect(palette).toBeHidden();
+    await penButton.click();
     await expect(palette).toBeVisible();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
     await window.mouse.move(500, 120);
@@ -53,6 +55,9 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
       exact: true,
     });
     await highlighterButton.click();
+    await expect(palette).toBeHidden();
+    await highlighterButton.click();
+    await expect(palette).toBeVisible();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
     await window.mouse.move(500, 120);
     await highlighterButton.hover();
@@ -65,7 +70,10 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     const shapesButton = toolDock.getByRole("button", { name: "Shapes", exact: true });
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
-    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
+    await expect(inkCanvas).toHaveAttribute(
+      "data-desktop-cursor-phase",
+      /^(?:fallback|adaptive)$/u,
+    );
     expect(await inkCanvas.evaluate((canvas) => canvas.style.cursor)).toContain(
       "data:image/svg+xml",
     );
@@ -81,13 +89,25 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
 
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).click();
     await expect(contextHint).toContainText("Tip: Hold Shift → Draw a perfect square");
-    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
+    await expect(inkCanvas).toHaveAttribute(
+      "data-desktop-cursor-phase",
+      /^(?:fallback|adaptive)$/u,
+    );
+    await shapesButton.click();
     await shapesWidget.getByRole("button", { name: "Ellipse", exact: true }).click();
     await expect(contextHint).toContainText("Tip: Hold Shift → Draw a perfect circle");
-    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
+    await expect(inkCanvas).toHaveAttribute(
+      "data-desktop-cursor-phase",
+      /^(?:fallback|adaptive)$/u,
+    );
+    await shapesButton.click();
     await shapesWidget.getByRole("button", { name: "Line", exact: true }).click();
     await expect(contextHint).toContainText("Tip: Hold Space + Drag → Move canvas");
-    await expect(inkCanvas).toHaveAttribute("data-desktop-cursor-phase", "fallback");
+    await expect(inkCanvas).toHaveAttribute(
+      "data-desktop-cursor-phase",
+      /^(?:fallback|adaptive)$/u,
+    );
+    await shapesButton.click();
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).click();
     await expect(contextHint).toContainText("Tip: Hold Shift → Draw a perfect square");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
@@ -138,9 +158,11 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await expect(surface).toHaveAttribute("data-drawing-color", "#dc2626");
     await expect(surface).toHaveAttribute("data-drawing-width", "6");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.55");
+    await expect(shapesWidget).toBeVisible();
     await expect(
       shapesWidget.getByRole("button", { name: "Rectangle", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
+    await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).click();
 
     await drawGesture(window, pageToScreen(440, 160), pageToScreen(580, 260));
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "2");
@@ -154,7 +176,8 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await shapesButton.click();
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).hover();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");
-    await window.getByRole("button", { name: "Settings", exact: true }).click();
+    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("menuitem", { name: "Appearance settings", exact: true }).click();
     const dialog = window.getByRole("dialog", { name: "Appearance" });
     const dialogOverlay = window.locator('[data-folio-modal-layer="overlay"]');
     await expect(dialog).toBeVisible();

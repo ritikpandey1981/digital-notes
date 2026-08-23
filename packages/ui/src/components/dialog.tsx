@@ -32,7 +32,7 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[20px] border bg-folio-paper p-6 text-folio-ink shadow-2xl outline-none",
+        "fixed left-1/2 top-1/2 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-folio-border bg-folio-surface p-6 text-folio-ink shadow-[var(--folio-shadow-floating)] outline-none",
         className,
       )}
       style={{ ...style, zIndex: MODAL_STACKING_LEVEL }}

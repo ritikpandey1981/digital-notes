@@ -53,6 +53,7 @@ test("keeps active transform previews clean while preserving History", async () 
     const strokeStart = pageToScreen(strokeStartPage.x, strokeStartPage.y);
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.getByRole("button", { name: "Pen", exact: true }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "30");
     await window.keyboard.press("Escape");
     await expect(window.getByTestId("context-tool-palette")).toBeHidden();

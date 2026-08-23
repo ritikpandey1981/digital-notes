@@ -143,8 +143,11 @@ test("refines overlap selection and line endpoint editing without changing the i
 });
 
 async function chooseShape(window: Page, shape: "Line" | "Rectangle" | "Ellipse"): Promise<void> {
-  await window.getByRole("button", { name: "Shapes", exact: true }).click();
-  await window.getByTestId("shapes-widget").getByRole("button", { name: shape }).click();
+  const button = window.getByRole("button", { name: "Shapes", exact: true });
+  const widget = window.getByTestId("shapes-widget");
+  await button.click();
+  if (!(await widget.isVisible())) await button.click();
+  await widget.getByRole("button", { name: shape }).click();
 }
 
 async function drawShape(window: Page, start: Point, end: Point): Promise<void> {

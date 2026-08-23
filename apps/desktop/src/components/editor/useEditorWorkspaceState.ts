@@ -11,6 +11,7 @@ import { constrainOpacityForTool } from "./drawing-style-policy";
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import {
   createFloatingToolWidgetRegistry,
+  resolveFloatingWidgetAfterToolSelection,
   type FloatingToolWidgetId,
 } from "./floating-tool-widget-registry";
 import { createShapeToolState } from "./shape-tool-state";
@@ -18,6 +19,7 @@ import { createDefaultToolOptionsDescriptorRegistry } from "./tool-options-regis
 
 export function useEditorWorkspaceState() {
   const [activeTool, setActiveTool] = React.useState<EditorTool>("Select");
+  const [armedShape, setArmedShape] = React.useState<ShapeToolKind | null>(null);
   const [activeFloatingWidget, setActiveFloatingWidget] =
     React.useState<FloatingToolWidgetId | null>(null);
   const [, setFoundationVersion] = React.useState(0);
@@ -50,20 +52,25 @@ export function useEditorWorkspaceState() {
   );
   const selectTool = React.useCallback(
     (tool: EditorTool): void => {
+      setActiveFloatingWidget((current) =>
+        resolveFloatingWidgetAfterToolSelection(activeTool, tool, current, floatingWidgetRegistry),
+      );
+      setArmedShape((current) => (tool === "Shapes" && activeTool === "Shapes" ? current : null));
       setActiveTool(tool);
-      setActiveFloatingWidget(floatingWidgetRegistry.widgetFor(tool));
     },
-    [floatingWidgetRegistry],
+    [activeTool, floatingWidgetRegistry],
   );
   const dismissFloatingWidget = React.useCallback((): void => setActiveFloatingWidget(null), []);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
   const selectShape = React.useCallback(
     (shape: ShapeToolKind): void => {
       shapeToolState.selectShape(shape);
-      selectTool("Shapes");
+      setActiveTool("Shapes");
+      setArmedShape(shape);
+      setActiveFloatingWidget(null);
       refresh();
     },
-    [refresh, selectTool, shapeToolState],
+    [refresh, shapeToolState],
   );
   const updateShapeStyle = React.useCallback(
     (patch: ShapeStylePatch): void => {
@@ -103,6 +110,7 @@ export function useEditorWorkspaceState() {
   return {
     activeTool,
     activeShape: shapeState.activeShape,
+    armedShape,
     activeFloatingWidget,
     selectTool,
     selectShape,

@@ -392,8 +392,11 @@ async function createShape(
 }
 
 async function chooseShape(window: Page, name: "Line" | "Rectangle" | "Ellipse"): Promise<void> {
-  await window.getByRole("button", { name: "Shapes", exact: true }).click();
-  await window.getByTestId("shapes-widget").getByRole("button", { name, exact: true }).click();
+  const button = window.getByRole("button", { name: "Shapes", exact: true });
+  const widget = window.getByTestId("shapes-widget");
+  await button.click();
+  if (!(await widget.isVisible())) await button.click();
+  await widget.getByRole("button", { name, exact: true }).click();
 }
 
 async function drawGesture(window: Page, start: Point, end: Point): Promise<void> {

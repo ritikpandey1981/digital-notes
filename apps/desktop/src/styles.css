@@ -5,6 +5,7 @@
 @theme inline {
   --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
   --color-folio-workspace: var(--folio-workspace);
+  --color-folio-topbar: var(--folio-topbar);
   --color-folio-paper: var(--folio-paper);
   --color-folio-ink: var(--folio-ink);
   --color-folio-muted: var(--folio-muted);
@@ -16,6 +17,8 @@
   --color-folio-status: var(--folio-status);
   --color-folio-surface: var(--folio-surface);
   --color-folio-surface-muted: var(--folio-surface-muted);
+  --color-folio-surface-hover: var(--folio-surface-hover);
+  --color-folio-surface-active: var(--folio-surface-active);
   --color-folio-hover: var(--folio-hover);
   --color-folio-border: var(--folio-border);
   --color-folio-glass: var(--folio-glass);
@@ -24,6 +27,8 @@
   --color-folio-page-muted: var(--folio-page-muted);
   --color-folio-page-rule: var(--folio-page-rule);
   --color-folio-page-mark: var(--folio-page-mark);
+  --color-folio-selection: var(--folio-selection);
+  --color-folio-paper-surround: var(--folio-paper-surround);
 }
 
 @layer base {
@@ -35,57 +40,73 @@
     --folio-motion-tooltip: 120ms;
     --folio-motion-content: 150ms;
     --folio-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
-    --folio-floating-radius: 20px;
+    --folio-floating-radius: 14px;
     --folio-tooltip-arrow-size: 0.5rem;
+    --folio-shadow-floating: 0 10px 32px rgb(0 0 0 / 0.18), 0 1px 2px rgb(0 0 0 / 0.16);
+    --folio-shadow-quiet: 0 5px 18px rgb(0 0 0 / 0.14);
   }
 
   :root,
   [data-theme="light"] {
     --folio-workspace: #f1f1ef;
+    --folio-topbar: #fafaf8;
     --folio-paper: #fffdf8;
     --folio-ink: #20201e;
     --folio-muted: #777772;
-    --folio-accent: #4f46e5;
-    --folio-accent-hover: #4338ca;
-    --folio-accent-soft: #eeedff;
-    --folio-sidebar: rgb(250 250 248 / 0.94);
-    --folio-menubar: rgb(255 255 255 / 0.76);
-    --folio-status: rgb(250 250 248 / 0.92);
+    --folio-accent: #6f64b5;
+    --folio-accent-hover: #6358a8;
+    --folio-accent-soft: rgb(111 100 181 / 0.14);
+    --folio-sidebar: var(--folio-surface);
+    --folio-menubar: var(--folio-topbar);
+    --folio-status: var(--folio-surface);
     --folio-surface: #ffffff;
     --folio-surface-muted: #f7f7f5;
-    --folio-hover: rgb(37 37 34 / 0.065);
+    --folio-surface-hover: rgb(37 37 34 / 0.065);
+    --folio-surface-active: rgb(111 100 181 / 0.15);
+    --folio-hover: var(--folio-surface-hover);
     --folio-border: rgb(37 37 34 / 0.11);
-    --folio-glass: rgb(255 255 255 / 0.82);
+    --folio-glass: rgb(255 255 255 / 0.94);
+    --folio-selection: #7669c2;
+    --folio-paper-surround: #e4e4e0;
     --folio-icon-neutral: color-mix(in srgb, var(--folio-ink) 72%, var(--folio-muted));
     --folio-page: #fffdf8;
     --folio-page-ink: #282721;
     --folio-page-muted: #8c897e;
     --folio-page-rule: rgb(102 118 151 / 0.16);
     --folio-page-mark: #4b4a43;
+    --folio-shadow-floating: 0 10px 30px rgb(32 32 30 / 0.1), 0 1px 2px rgb(32 32 30 / 0.09);
+    --folio-shadow-quiet: 0 5px 16px rgb(32 32 30 / 0.08);
   }
 
   [data-theme="dark"] {
-    --folio-workspace: #181818;
-    --folio-paper: #252525;
-    --folio-ink: #f1f1ee;
-    --folio-muted: #a3a39d;
-    --folio-accent: #7771ff;
-    --folio-accent-hover: #8a85ff;
-    --folio-accent-soft: rgb(99 102 241 / 0.17);
-    --folio-sidebar: rgb(31 31 31 / 0.96);
-    --folio-menubar: rgb(35 35 35 / 0.78);
-    --folio-status: rgb(30 30 30 / 0.94);
-    --folio-surface: #292929;
-    --folio-surface-muted: #222222;
-    --folio-hover: rgb(255 255 255 / 0.075);
-    --folio-border: rgb(255 255 255 / 0.105);
-    --folio-glass: rgb(39 39 39 / 0.86);
+    --folio-workspace: #24211f;
+    --folio-topbar: #2b2825;
+    --folio-paper: #fffdf8;
+    --folio-ink: #eeeae4;
+    --folio-muted: #aaa39a;
+    --folio-accent: #8b7bd6;
+    --folio-accent-hover: #9b8ce1;
+    --folio-accent-soft: rgb(139 123 214 / 0.18);
+    --folio-sidebar: var(--folio-surface);
+    --folio-menubar: var(--folio-topbar);
+    --folio-status: var(--folio-surface);
+    --folio-surface: #332f2b;
+    --folio-surface-muted: #2d2926;
+    --folio-surface-hover: rgb(255 251 245 / 0.075);
+    --folio-surface-active: rgb(139 123 214 / 0.2);
+    --folio-hover: var(--folio-surface-hover);
+    --folio-border: rgb(255 248 238 / 0.11);
+    --folio-glass: rgb(51 47 43 / 0.94);
+    --folio-selection: #9a8ae2;
+    --folio-paper-surround: #1d1a18;
     --folio-icon-neutral: color-mix(in srgb, var(--folio-ink) 72%, var(--folio-muted));
-    --folio-page: #252525;
-    --folio-page-ink: #f4f2ea;
-    --folio-page-muted: #aaa79c;
-    --folio-page-rule: rgb(180 191 218 / 0.12);
-    --folio-page-mark: #e2dfd5;
+    --folio-page: #fffdf8;
+    --folio-page-ink: #282721;
+    --folio-page-muted: #8c897e;
+    --folio-page-rule: rgb(102 118 151 / 0.16);
+    --folio-page-mark: #4b4a43;
+    --folio-shadow-floating: 0 10px 34px rgb(0 0 0 / 0.26), 0 1px 2px rgb(0 0 0 / 0.2);
+    --folio-shadow-quiet: 0 5px 18px rgb(0 0 0 / 0.2);
   }
 
   * {
@@ -139,8 +160,19 @@
 
 @layer components {
   .folio-floating-surface {
-    @apply border border-folio-border bg-folio-glass shadow-xl backdrop-blur-xl;
+    @apply border border-folio-border bg-folio-surface;
     border-radius: var(--folio-floating-radius);
+    box-shadow: var(--folio-shadow-floating);
+  }
+
+  .folio-compact-surface {
+    @apply border border-folio-border bg-folio-surface;
+    border-radius: 10px;
+    box-shadow: var(--folio-shadow-quiet);
+  }
+
+  .folio-chrome-button {
+    @apply relative grid size-8 place-items-center rounded-lg text-folio-muted transition-[background-color,color,transform] duration-100 ease-out hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35;
   }
 
   .folio-tool-tooltip {

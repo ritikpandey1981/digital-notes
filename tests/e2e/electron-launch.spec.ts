@@ -25,16 +25,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
         0,
       );
     }
-    for (const retainedTool of [
-      "Select",
-      "Pen",
-      "Highlighter",
-      "Eraser",
-      "Shapes",
-      "Duplicate selected object",
-      "Delete selected object",
-      "More tools",
-    ] as const) {
+    for (const retainedTool of ["Select", "Pen", "Highlighter", "Eraser", "Shapes"] as const) {
       await expect(toolDock.getByRole("button", { name: retainedTool, exact: true })).toBeVisible();
     }
     for (const individualShape of ["Line", "Rectangle", "Ellipse"] as const) {
@@ -48,14 +39,28 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     for (const shape of ["Line", "Rectangle", "Ellipse"] as const) {
       await expect(shapesWidget.getByRole("button", { name: shape, exact: true })).toBeVisible();
     }
-    const moreTools = toolDock.getByRole("button", { name: "More tools" });
-    await moreTools.click();
-    for (const action of ["Text", "Image", "Table", "Sticky Note"] as const) {
-      await expect(window.getByRole("menuitem", { name: action, exact: true })).toBeVisible();
+    for (const futureTool of [
+      "Pencil",
+      "Marker",
+      "Layers",
+      "Reference",
+      "AI",
+      "Text",
+      "Image",
+      "Table",
+      "Sticky Note",
+    ] as const) {
+      await expect(toolDock.getByRole("button", { name: futureTool, exact: true })).toHaveCount(0);
     }
     await window.keyboard.press("Escape");
-    await expect(window.getByRole("complementary", { name: "Sidebar" })).toBeVisible();
+    await expect(window.getByRole("complementary", { name: "Sidebar" })).toHaveCount(0);
+    await expect(window.getByTestId("sketchbook-top-bar")).toBeVisible();
+    await expect(window.getByTestId("sketchbook-workspace")).toBeVisible();
     await expect(window.getByLabel("Notebook workspace")).toBeVisible();
+    const undoButton = window.getByRole("button", { name: "Undo", exact: true });
+    const redoButton = window.getByRole("button", { name: "Redo", exact: true });
+    await expect(undoButton).toBeDisabled();
+    await expect(redoButton).toBeDisabled();
     const canvasHost = window.getByTestId("canvas-host");
     const canvasSurface = window.getByTestId("canvas-surface");
     await expect(canvasHost).toHaveAttribute("data-canvas-state", "ready");
@@ -94,7 +99,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await manipulationCanvas.evaluate((element) =>
       element.setAttribute("data-manipulation-mount-probe", "retained"),
     );
-    await expect(window.getByText("Page 1 of 12")).toBeVisible();
+    await expect(window.getByRole("contentinfo")).toHaveCount(0);
 
     const metrics = await canvas.evaluate((element) => {
       const canvasElement = element as HTMLCanvasElement;
@@ -117,6 +122,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
 
     const inkBounds = await inkCanvas.boundingBox();
     if (inkBounds === null) throw new Error("Ink canvas has no visible bounds.");
+    expect(inkBounds.width).toBeGreaterThan(1_000);
     const scaleX = inkBounds.width / metrics.logicalWidth;
     const scaleY = inkBounds.height / metrics.logicalHeight;
     const zoom = Number(await canvasSurface.getAttribute("data-viewport-zoom"));
@@ -131,7 +137,11 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     const baseRenderBeforeInk = Number(await canvas.getAttribute("data-render-count"));
     const inkRenderBefore = Number(await inkCanvas.getAttribute("data-ink-render-count"));
     await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await expect(window.getByRole("contentinfo")).toContainText("Pen");
+    await expect(window.getByRole("button", { name: "Pen", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(window.getByTestId("context-tool-palette")).toBeHidden();
     await window.mouse.move(start.x, start.y);
     await window.mouse.down();
     await window.mouse.move(start.x + 45, start.y + 20, { steps: 5 });
@@ -142,6 +152,8 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "1");
     await expect(canvasSurface).toHaveAttribute("data-document-object-count", "1");
     await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "1");
+    await expect(undoButton).toBeEnabled();
+    await expect(redoButton).toBeDisabled();
     await expect
       .poll(async () => Number(await canvas.getAttribute("data-render-count")))
       .toBeGreaterThan(baseRenderBeforeInk);
@@ -340,7 +352,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     );
     const baseRenderBeforeShortcutUndo = Number(await canvas.getAttribute("data-render-count"));
 
-    await window.keyboard.press("Control+Z");
+    await undoButton.click();
     await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "2");
     await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "1");
     await expect(canvasSurface).toHaveAttribute("data-history-can-undo", "true");
@@ -362,7 +374,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       .poll(async () => Number(await canvas.getAttribute("data-render-count")))
       .toBeGreaterThan(baseRenderBeforeShortcutUndo);
 
-    await window.keyboard.press("Control+Shift+Z");
+    await redoButton.click();
     await expect(canvasSurface).toHaveAttribute("data-history-undo-depth", "3");
     await expect(canvasSurface).toHaveAttribute("data-history-redo-depth", "0");
     await expect(canvasSurface).toHaveAttribute(
@@ -437,14 +449,11 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await window.mouse.up();
     await window.getByRole("button", { name: "Select", exact: true }).click();
 
-    await window.getByRole("button", { name: "Show notification preview" }).click();
-    await expect(window.getByRole("status")).toContainText("Shell ready");
-
-    await window.getByRole("button", { name: "Settings", exact: true }).click();
+    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("menuitem", { name: "Appearance settings", exact: true }).click();
     await expect(window.getByRole("dialog")).toContainText("Appearance");
     await window.getByRole("button", { name: "Cancel" }).click();
 
-    await window.getByRole("button", { name: "Collapse sidebar" }).click();
     await expect(canvas).toHaveAttribute("data-mount-probe", "retained");
     await expect(inkCanvas).toHaveAttribute("data-ink-mount-probe", "retained");
     await expect(selectionCanvas).toHaveAttribute("data-selection-mount-probe", "retained");
@@ -539,7 +548,8 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       "data-history-undo-depth",
       "0",
     );
-    await expect(window.getByText("Page 1 of 12")).toBeVisible();
+    await expect(window.getByTestId("sketchbook-top-bar")).toBeVisible();
+    await expect(window.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
   } finally {
     await electronApp.close();
   }

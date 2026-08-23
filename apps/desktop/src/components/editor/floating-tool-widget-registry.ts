@@ -33,3 +33,16 @@ export function createFloatingToolWidgetRegistry(
     registeredTools: (): readonly EditorTool[] => Object.freeze([...widgets.keys()]),
   });
 }
+
+export function resolveFloatingWidgetAfterToolSelection(
+  activeTool: EditorTool,
+  selectedTool: EditorTool,
+  activeWidget: FloatingToolWidgetId | null,
+  registry: FloatingToolWidgetRegistry,
+): FloatingToolWidgetId | null {
+  const selectedWidget = registry.widgetFor(selectedTool);
+  if (selectedWidget === null) return null;
+  if (selectedTool === "Shapes" && selectedTool !== activeTool) return selectedWidget;
+  if (selectedTool !== activeTool) return null;
+  return activeWidget === selectedWidget ? null : selectedWidget;
+}

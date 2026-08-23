@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron } from "@playwright/test";
 
-test("captures the Phase 6 canvas shell in light and dark themes", async ({
+test("captures the sketchbook shell in dark and light appearances", async ({
   browserName,
 }, testInfo) => {
   void browserName;
@@ -29,11 +29,12 @@ test("captures the Phase 6 canvas shell in light and dark themes", async ({
     );
 
     await window.screenshot({
-      path: path.join(screenshotDirectory, "phase-6-light.png"),
+      path: path.join(screenshotDirectory, "phase-16-5-light.png"),
       animations: "disabled",
     });
 
-    await window.getByRole("button", { name: "Switch to dark theme" }).click();
+    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("menuitem", { name: "Use dark appearance", exact: true }).click();
     await expect(window.locator("html")).toHaveAttribute("data-theme", "dark");
     await expect(window.locator("canvas[data-folio-renderer='true']")).toHaveAttribute(
       "data-render-count",
@@ -41,7 +42,7 @@ test("captures the Phase 6 canvas shell in light and dark themes", async ({
     );
 
     await window.screenshot({
-      path: path.join(screenshotDirectory, "phase-6-dark.png"),
+      path: path.join(screenshotDirectory, "phase-16-5-dark.png"),
       animations: "disabled",
     });
   } finally {

@@ -48,7 +48,7 @@ test("duplicates and deletes one selected object through immutable History", asy
     };
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await expect(window.getByTestId("context-tool-palette")).toBeVisible();
+    await expect(window.getByTestId("context-tool-palette")).toBeHidden();
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "pen");
     await window.mouse.move(start.x, start.y);
     await window.mouse.down();
@@ -79,7 +79,7 @@ test("duplicates and deletes one selected object through immutable History", asy
     await window.mouse.click(start.x + 30, start.y + 8);
     await expect(selectionCanvas).toHaveAttribute("data-selected-object-id", originalId ?? "");
 
-    await window.getByRole("button", { name: "Duplicate selected object" }).click();
+    await window.keyboard.press("Control+D");
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "2");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "2");
@@ -107,7 +107,7 @@ test("duplicates and deletes one selected object through immutable History", asy
 
     await window.mouse.click(start.x + 30, start.y + 8);
     await expect(selectionCanvas).toHaveAttribute("data-selected-object-id", duplicateId ?? "");
-    await window.getByRole("button", { name: "Delete selected object" }).click();
+    await window.keyboard.press("Delete");
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
     await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");

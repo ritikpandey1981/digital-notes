@@ -115,8 +115,10 @@ test("renders every PageObject in one creation-ordered document stack", async ()
 });
 
 async function selectDrawingColor(window: Page, color: string): Promise<void> {
-  await window.getByRole("button", { name: "Pen", exact: true }).click();
+  const penButton = window.getByRole("button", { name: "Pen", exact: true });
   const colorInput = window.getByLabel("Custom stroke color");
+  await penButton.click();
+  if (!(await colorInput.isVisible())) await penButton.click();
   await colorInput.fill(color);
   await expect(window.getByTestId("canvas-surface")).toHaveAttribute("data-drawing-color", color);
   const host = window.getByTestId("canvas-host");
@@ -127,8 +129,11 @@ async function selectDrawingColor(window: Page, color: string): Promise<void> {
 }
 
 async function chooseShape(window: Page, shape: "Line" | "Rectangle" | "Ellipse"): Promise<void> {
-  await window.getByRole("button", { name: "Shapes", exact: true }).click();
-  await window.getByTestId("shapes-widget").getByRole("button", { name: shape }).click();
+  const button = window.getByRole("button", { name: "Shapes", exact: true });
+  const widget = window.getByTestId("shapes-widget");
+  await button.click();
+  if (!(await widget.isVisible())) await button.click();
+  await widget.getByRole("button", { name: shape }).click();
 }
 
 async function drawPath(

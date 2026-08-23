@@ -17,13 +17,12 @@ import { ShapeEditingToolbar } from "./ShapeEditingToolbar";
 import { ToolDock } from "./ToolDock";
 import { ToolOptionsWidget } from "./ToolOptionsWidget";
 import type { ToolOptionsDescriptor } from "./tool-options-registry";
-import { WorkspaceChrome } from "./WorkspaceChrome";
+import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
 interface EditorWorkspaceProps {
-  workspaceName: string;
-  locationLabel: string;
   activeTool: EditorTool;
   activeShape: ShapeToolKind;
+  armedShape: ShapeToolKind | null;
   activeFloatingWidget: FloatingToolWidgetId | null;
   onSelectTool: (tool: EditorTool) => void;
   onSelectShape: (shape: ShapeToolKind) => void;
@@ -36,6 +35,8 @@ interface EditorWorkspaceProps {
   onChangeShapeStyle: (patch: ShapeStylePatch) => void;
   onDrawingColorUsed: (color: string) => void;
   onDismissFloatingWidget: () => void;
+  onHistoryActionsReady: (actions: WorkspaceHistoryActions | null) => void;
+  onHistoryAvailabilityChange: (availability: WorkspaceHistoryAvailability) => void;
   viewportSnapshot: EditorViewportSnapshot;
   onViewportActionsReady: (actions: ViewportActions | null) => void;
   onViewportChange: (snapshot: EditorViewportSnapshot) => void;
@@ -43,10 +44,9 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace({
-  workspaceName,
-  locationLabel,
   activeTool,
   activeShape,
+  armedShape,
   activeFloatingWidget,
   onSelectTool,
   onSelectShape,
@@ -59,6 +59,8 @@ export function EditorWorkspace({
   onChangeShapeStyle,
   onDrawingColorUsed,
   onDismissFloatingWidget,
+  onHistoryActionsReady,
+  onHistoryAvailabilityChange,
   viewportSnapshot,
   onViewportActionsReady,
   onViewportChange,
@@ -69,7 +71,6 @@ export function EditorWorkspace({
   const [shapeEditingSnapshot, setShapeEditingSnapshot] = useState<ShapeEditingSnapshot | null>(
     null,
   );
-  const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const handleObjectLifecycleActionsReady = useCallback(
     (actions: ObjectLifecycleActions | null) => {
       objectLifecycleActionsRef.current = actions;
@@ -95,24 +96,6 @@ export function EditorWorkspace({
     },
     [onChangeShapeStyle],
   );
-  const dismissTransientToolUi = useCallback(() => {
-    setMoreToolsOpen(false);
-    onDismissFloatingWidget();
-  }, [onDismissFloatingWidget]);
-  const handleMoreToolsOpenChange = useCallback(
-    (open: boolean) => {
-      setMoreToolsOpen(open);
-      if (open) onDismissFloatingWidget();
-    },
-    [onDismissFloatingWidget],
-  );
-  const selectTool = useCallback(
-    (tool: EditorTool) => {
-      setMoreToolsOpen(false);
-      onSelectTool(tool);
-    },
-    [onSelectTool],
-  );
   return (
     <section
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
@@ -120,30 +103,24 @@ export function EditorWorkspace({
     >
       <CanvasHost
         activeTool={activeTool}
-        activeShape={activeShape}
+        armedShape={armedShape}
         drawingStyle={drawingStyle}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
         onShapeEditingActionsReady={handleShapeEditingActionsReady}
         onShapeEditingChange={handleShapeEditingChange}
         onDrawingColorUsed={onDrawingColorUsed}
+        onHistoryActionsReady={onHistoryActionsReady}
+        onHistoryAvailabilityChange={onHistoryAvailabilityChange}
         onViewportActionsReady={onViewportActionsReady}
         onViewportChange={onViewportChange}
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
-      <WorkspaceChrome workspaceName={workspaceName} locationLabel={locationLabel} />
-      <ToolDock
-        activeTool={activeTool}
-        onSelectTool={selectTool}
-        onDeleteSelection={deleteSelection}
-        onDuplicateSelection={duplicateSelection}
-        moreToolsOpen={moreToolsOpen}
-        onMoreToolsOpenChange={handleMoreToolsOpenChange}
-      />
+      <ToolDock activeTool={activeTool} onSelectTool={onSelectTool} />
       <ShapesWidget
         open={activeTool === "Shapes" && activeFloatingWidget === "shapes"}
         activeShape={activeShape}
         onSelectShape={onSelectShape}
-        onDismiss={dismissTransientToolUi}
+        onDismiss={onDismissFloatingWidget}
       />
       <ShapeEditingToolbar
         snapshot={shapeEditingSnapshot}
@@ -157,7 +134,7 @@ export function EditorWorkspace({
         onChangeColor={onChangeDrawingColor}
         onChangeWidth={onChangeDrawingWidth}
         onChangeOpacity={onChangeDrawingOpacity}
-        onDismiss={dismissTransientToolUi}
+        onDismiss={onDismissFloatingWidget}
         previewScale={viewportSnapshot.zoom}
       />
     </section>

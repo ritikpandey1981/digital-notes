@@ -1,13 +1,17 @@
 import { EditorWorkspace } from "../editor/EditorWorkspace";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { TooltipLayerProvider } from "../editor/ToolTooltip";
 import { useEditorWorkspaceState } from "../editor/useEditorWorkspaceState";
 import { useEditorViewportState } from "../editor/useEditorViewportState";
-import { AppMenuBar } from "./AppMenuBar";
-import { Sidebar } from "./Sidebar";
-import { StatusBar } from "./StatusBar";
+import {
+  EMPTY_WORKSPACE_HISTORY,
+  type WorkspaceHistoryActions,
+  type WorkspaceHistoryAvailability,
+} from "../editor/workspace-history";
 import { ContextHintProvider } from "./ContextHintProvider";
-import { useShellUiState } from "./useShellUiState";
+import { SketchbookTopBar } from "./SketchbookTopBar";
+import { WorkspaceContextHint } from "./WorkspaceContextHint";
+import { WorkspaceViewportControl } from "./WorkspaceViewportControl";
 
 export function ApplicationShell() {
   return (
@@ -20,63 +24,85 @@ export function ApplicationShell() {
 }
 
 function ApplicationShellContent() {
-  const shellUi = useShellUiState();
   const editorWorkspace = useEditorWorkspaceState();
   const viewport = useEditorViewportState();
+  const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
+  const [historyAvailability, setHistoryAvailability] =
+    useState<WorkspaceHistoryAvailability>(EMPTY_WORKSPACE_HISTORY);
   const [navigationTeachingLearned, setNavigationTeachingLearned] = useState(false);
   const learnViewportNavigation = useCallback(() => setNavigationTeachingLearned(true), []);
+  const handleHistoryActionsReady = useCallback((actions: WorkspaceHistoryActions | null) => {
+    historyActionsRef.current = actions;
+  }, []);
+  const handleHistoryAvailabilityChange = useCallback(
+    (availability: WorkspaceHistoryAvailability) => {
+      setHistoryAvailability((previous) =>
+        previous.canUndo === availability.canUndo && previous.canRedo === availability.canRedo
+          ? previous
+          : availability,
+      );
+    },
+    [],
+  );
+  const undo = useCallback(() => historyActionsRef.current?.undo(), []);
+  const redo = useCallback(() => historyActionsRef.current?.redo(), []);
 
   return (
     <div className="flex h-screen min-h-[640px] flex-col overflow-hidden bg-folio-workspace text-folio-ink">
-      <AppMenuBar
-        sidebarExpanded={shellUi.sidebarExpanded}
-        onToggleSidebar={shellUi.toggleSidebar}
-        onSelectTool={editorWorkspace.selectTool}
+      <SketchbookTopBar
+        canUndo={historyAvailability.canUndo}
+        canRedo={historyAvailability.canRedo}
+        onUndo={undo}
+        onRedo={redo}
       />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar
-          expanded={shellUi.sidebarExpanded}
-          activeSection={shellUi.activeSection}
-          onToggle={shellUi.toggleSidebar}
-          onSelectSection={shellUi.selectSection}
+      <main
+        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-folio-workspace"
+        data-testid="sketchbook-workspace"
+        data-workspace-presentation="focused-canvas"
+      >
+        <EditorWorkspace
+          activeTool={editorWorkspace.activeTool}
+          activeShape={editorWorkspace.activeShape}
+          armedShape={editorWorkspace.armedShape}
+          activeFloatingWidget={editorWorkspace.activeFloatingWidget}
+          onSelectTool={editorWorkspace.selectTool}
+          onSelectShape={editorWorkspace.selectShape}
+          drawingStyle={editorWorkspace.drawingStyle}
+          toolOptions={editorWorkspace.toolOptions}
+          colors={editorWorkspace.colors}
+          onChangeDrawingColor={editorWorkspace.setDrawingColor}
+          onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
+          onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
+          onChangeShapeStyle={editorWorkspace.updateShapeStyle}
+          onDrawingColorUsed={editorWorkspace.rememberColorUsage}
+          onDismissFloatingWidget={editorWorkspace.dismissFloatingWidget}
+          onHistoryActionsReady={handleHistoryActionsReady}
+          onHistoryAvailabilityChange={handleHistoryAvailabilityChange}
+          viewportSnapshot={viewport.snapshot}
+          onViewportActionsReady={viewport.handleActionsReady}
+          onViewportChange={viewport.handleViewportChange}
+          onViewportNavigationLearned={learnViewportNavigation}
         />
-        <main className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-folio-workspace">
-          <EditorWorkspace
-            workspaceName="Studio Notes"
-            locationLabel={shellUi.activeSection}
-            activeTool={editorWorkspace.activeTool}
-            activeShape={editorWorkspace.activeShape}
-            activeFloatingWidget={editorWorkspace.activeFloatingWidget}
-            onSelectTool={editorWorkspace.selectTool}
-            onSelectShape={editorWorkspace.selectShape}
-            drawingStyle={editorWorkspace.drawingStyle}
-            toolOptions={editorWorkspace.toolOptions}
-            colors={editorWorkspace.colors}
-            onChangeDrawingColor={editorWorkspace.setDrawingColor}
-            onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
-            onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
-            onChangeShapeStyle={editorWorkspace.updateShapeStyle}
-            onDrawingColorUsed={editorWorkspace.rememberColorUsage}
-            onDismissFloatingWidget={editorWorkspace.dismissFloatingWidget}
-            viewportSnapshot={viewport.snapshot}
-            onViewportActionsReady={viewport.handleActionsReady}
-            onViewportChange={viewport.handleViewportChange}
-            onViewportNavigationLearned={learnViewportNavigation}
-          />
-        </main>
-      </div>
-      <StatusBar
-        activeTool={editorWorkspace.activeTool}
-        activeShape={editorWorkspace.activeShape}
-        viewport={viewport.snapshot}
-        onZoomOut={viewport.zoomOut}
-        onZoomIn={viewport.zoomIn}
-        onSetZoom={viewport.setZoom}
-        onResetZoom={viewport.resetZoom}
-        onFitPage={viewport.fitPage}
-        onFitWidth={viewport.fitWidth}
-        navigationTeachingAvailable={!navigationTeachingLearned}
-      />
+        <WorkspaceContextHint
+          activeTool={editorWorkspace.activeTool}
+          armedShape={editorWorkspace.armedShape}
+          navigationTeachingAvailable={!navigationTeachingLearned}
+        />
+        <WorkspaceViewportControl
+          viewport={viewport.snapshot}
+          onZoomOut={viewport.zoomOut}
+          onZoomIn={viewport.zoomIn}
+          onSetZoom={viewport.setZoom}
+          onResetZoom={viewport.resetZoom}
+          onFitPage={viewport.fitPage}
+          onFitWidth={viewport.fitWidth}
+        />
+        <div
+          className="pointer-events-none absolute right-0 top-0 h-full w-0"
+          data-future-utility-rail-boundary="reserved"
+          aria-hidden="true"
+        />
+      </main>
     </div>
   );
 }

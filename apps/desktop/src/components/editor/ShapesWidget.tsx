@@ -27,7 +27,7 @@ export function ShapesWidget({ open, activeShape, onSelectShape, onDismiss }: Sh
   const reducedMotion = useReducedMotion() === true;
   const boundaryRef = useFloatingWidgetDismissal(open, onDismiss);
   return (
-    <div className="pointer-events-none absolute left-[76px] top-[calc(50%+20px)] z-20 -translate-y-1/2">
+    <div className="pointer-events-none absolute left-[76px] top-[calc(50%+85px)] z-20 -translate-y-1/2">
       <AnimatePresence initial={false}>
         {open ? (
           <motion.section
@@ -55,8 +55,9 @@ export function ShapesWidget({ open, activeShape, onSelectShape, onDismiss }: Sh
                   key={id}
                   type="button"
                   className={cn(
-                    "group relative flex size-9 items-center justify-center rounded-[10px] text-[var(--folio-icon-neutral)] transition-[background-color,color] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
-                    active && "bg-folio-accent text-white hover:bg-folio-accent hover:text-white",
+                    "group relative flex size-9 items-center justify-center rounded-lg text-[var(--folio-icon-neutral)] transition-[background-color,color] duration-100 ease-out hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+                    active &&
+                      "bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft hover:text-folio-accent",
                   )}
                   aria-label={label}
                   aria-pressed={active}
