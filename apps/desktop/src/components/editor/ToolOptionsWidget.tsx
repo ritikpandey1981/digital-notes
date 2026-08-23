@@ -5,6 +5,7 @@ import type { ChangeEvent, FocusEvent, ReactNode } from "react";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { StrokePreviewCanvas } from "./StrokePreviewCanvas";
 import type { ToolOptionPropertyDescriptor, ToolOptionsDescriptor } from "./tool-options-registry";
+import { useFrameCoalescedCallback } from "./useFrameCoalescedCallback";
 import {
   INTERACTION_MOTION,
   motionSeconds,
@@ -151,6 +152,7 @@ function ColorOptions({
 }) {
   const reducedMotion = useReducedMotion() === true;
   const activeColor = requireString(descriptor.value, "Stroke color");
+  const queueColorChange = useFrameCoalescedCallback(onChange);
   const commitHex = (event: FocusEvent<HTMLInputElement>): void => {
     try {
       onChange(event.currentTarget.value);
@@ -229,7 +231,9 @@ function ColorOptions({
           className="size-7 shrink-0 cursor-pointer rounded-lg border border-folio-border bg-transparent p-0.5 transition-[transform,box-shadow] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
           value={activeColor}
           aria-label="Custom stroke color"
-          onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.currentTarget.value)}
+          onChange={(event: ChangeEvent<HTMLInputElement>) =>
+            queueColorChange(event.currentTarget.value)
+          }
         />
         <input
           key={activeColor}

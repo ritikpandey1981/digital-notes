@@ -148,6 +148,20 @@ test("keeps a content-sized Tool Dock and persistent professional Context Palett
       await selectedColor.evaluate((button) => getComputedStyle(button).transitionProperty),
     ).toContain("box-shadow");
     await expectRecentlyUsedColor(window, "#2563eb", false);
+    const customColor = window.getByLabel("Custom stroke color");
+    await customColor.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (setValue === undefined) throw new Error("Native color value setter is unavailable.");
+      for (const color of ["#ef4444", "#22c55e", "#0ea5e9", "#8b5cf6"]) {
+        setValue.call(input, color);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    await expect(surface).toHaveAttribute("data-drawing-color", "#8b5cf6");
+    await expect(window.getByText("#8b5cf6", { exact: true })).toBeVisible();
+    await chooseColor(window, "#2563eb");
+    await expect(surface).toHaveAttribute("data-drawing-color", "#2563eb");
     await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "5.8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "63");
     await expect(surface).toHaveAttribute("data-drawing-width", "5.8");

@@ -151,15 +151,17 @@ export class VectorInteractionOverlayRenderer {
     context.rotate(transform.rotation);
     context.scale(transform.scale, transform.scale);
     context.translate(-pivotX, -pivotY);
-    context.strokeStyle = state === "hover" ? "rgba(113, 131, 206, 0.42)" : "#7183ce";
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    const emphasisPixels = state === "candidate" ? 2.25 : state === "selected" ? 1.75 : 1.5;
-    context.lineWidth =
-      object.style.strokeWidth / transform.scale + emphasisPixels / zoom / transform.scale;
-    context.beginPath();
-    appendVectorGeometryPath(context, object.type, object.geometry);
-    context.stroke();
+    if (state !== "selected") {
+      context.strokeStyle = state === "hover" ? "rgba(113, 131, 206, 0.42)" : "#7183ce";
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      const emphasisPixels = state === "candidate" ? 2.25 : 1.5;
+      context.lineWidth =
+        object.style.strokeWidth / transform.scale + emphasisPixels / zoom / transform.scale;
+      context.beginPath();
+      appendVectorGeometryPath(context, object.type, object.geometry);
+      context.stroke();
+    }
     if (state === "selected" && object.type === "line") {
       this.#drawLineHandles(object.geometry, zoom, transform.scale, activeLineHandle);
     }

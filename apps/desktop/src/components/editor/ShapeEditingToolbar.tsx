@@ -17,6 +17,7 @@ import {
   type ShapeEditingToolbarSize,
 } from "./shape-editing-toolbar-position";
 import type { ToolOptionPropertyDescriptor } from "./tool-options-registry";
+import { useFrameCoalescedCallback } from "./useFrameCoalescedCallback";
 
 interface ShapeEditingToolbarProps {
   readonly snapshot: ShapeEditingSnapshot | null;
@@ -39,6 +40,9 @@ export function ShapeEditingToolbar({
     height: 0,
   });
   const [expandedSection, setExpandedSection] = useState<ExpandedSection | null>(null);
+  const queueStrokeColorChange = useFrameCoalescedCallback((strokeColor: string) =>
+    onUpdateStyle({ strokeColor }),
+  );
   const visible = snapshot !== null;
   const activeExpandedSection =
     expandedSection !== null && snapshot?.objectId === expandedSection.objectId
@@ -146,7 +150,7 @@ export function ShapeEditingToolbar({
           value={snapshot?.strokeColor ?? "#111111"}
           tabIndex={visible ? 0 : -1}
           disabled={!visible}
-          onChange={(event) => onUpdateStyle({ strokeColor: event.currentTarget.value })}
+          onChange={(event) => queueStrokeColorChange(event.currentTarget.value)}
         />
       </label>
       <span className="h-6 w-px shrink-0 bg-folio-border" aria-hidden="true" />

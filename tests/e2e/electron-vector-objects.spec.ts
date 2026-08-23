@@ -224,8 +224,16 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect(surface).toHaveAttribute("data-selected-object-type", "ellipse");
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
     const historyBeforeStyle = Number(await surface.getAttribute("data-history-undo-depth"));
-    await shapeToolbar.getByLabel("Shape stroke color").fill("#2563eb");
-    await window.waitForTimeout(180);
+    await emitRapidColorInputs(shapeToolbar.getByLabel("Shape stroke color"), [
+      "#2563eb",
+      "#16a34a",
+      "#9333ea",
+      "#dc2626",
+    ]);
+    await expect
+      .poll(async () => (await vectorStyles(surface)).find(({ type }) => type === "ellipse")?.color)
+      .toBe("#dc2626");
+    await expect.poll(() => nonTransparentPixelCount(vectorInteractionCanvas)).toBe(0);
     const toolbarBeforeExpansion = await shapeToolbar.boundingBox();
     await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-expanded-section", "strokeWidth");
@@ -271,7 +279,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expectToolbarGeometry(shapeToolbar, toolbarAfterExpansion);
     await expect
       .poll(async () => (await vectorStyles(surface)).find(({ type }) => type === "ellipse"))
-      .toMatchObject({ color: "#2563eb", width: 8.3, opacity: 0.5 });
+      .toMatchObject({ color: "#dc2626", width: 8.3, opacity: 0.5 });
     await expect(surface).toHaveAttribute(
       "data-history-undo-depth",
       String(historyBeforeStyle + 6),
@@ -493,6 +501,32 @@ async function livePageToScreen(surface: Locator, canvas: Locator, point: Point)
       bounds.y +
       (metrics.pageY + point.y * metrics.zoom) * (bounds.height / metrics.viewportHeight),
   };
+}
+
+async function emitRapidColorInputs(locator: Locator, colors: readonly string[]): Promise<void> {
+  await locator.evaluate((element, values) => {
+    const input = element as HTMLInputElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (setValue === undefined) throw new Error("Native color value setter is unavailable.");
+    for (const color of values) {
+      setValue.call(input, color);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }, colors);
+}
+
+async function nonTransparentPixelCount(canvas: Locator): Promise<number> {
+  return canvas.evaluate((element) => {
+    const target = element as HTMLCanvasElement;
+    const context = target.getContext("2d");
+    if (context === null) throw new Error("Vector interaction context is unavailable.");
+    const pixels = context.getImageData(0, 0, target.width, target.height).data;
+    let count = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if ((pixels[index] ?? 0) !== 0) count += 1;
+    }
+    return count;
+  });
 }
 
 async function expectToolbarInsideWorkspace(toolbar: Locator, host: Locator): Promise<void> {

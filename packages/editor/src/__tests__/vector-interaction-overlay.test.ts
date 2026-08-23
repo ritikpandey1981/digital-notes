@@ -64,7 +64,7 @@ function harness() {
 const factory = new ObjectFactory({ now: () => "2026-07-31T08:00:00.000Z" });
 
 describe("VectorInteractionOverlayRenderer", () => {
-  it("renders selected lines as an emphasized line with endpoint and midpoint handles", () => {
+  it("keeps selected line color visible while drawing endpoint and midpoint handles", () => {
     const test = harness();
     const line = factory.createLineObject({
       id: "selected-line",
@@ -74,12 +74,28 @@ describe("VectorInteractionOverlayRenderer", () => {
     test.renderer.setSelection(line);
     test.flush();
 
-    expect(test.context.lineTo).toHaveBeenCalledWith(180, 90);
+    expect(test.context.lineTo).not.toHaveBeenCalled();
     expect(test.context.arc).toHaveBeenCalledTimes(3);
     expect(test.context.strokeStyle).toBe("#7183ce");
     expect(test.context.lineWidth).toBe(1.25);
     expect(test.canvas.dataset.vectorSelectionStyle).toBe("line-handles");
     expect(test.canvas.dataset.vectorSelectionPresentation).toBe("soft");
+    test.renderer.destroy();
+  });
+
+  it("leaves selected rectangle geometry transparent for the bounds-and-handles overlay", () => {
+    const test = harness();
+    const rectangle = factory.createRectangleObject({
+      id: "selected-rectangle",
+      geometry: { x: 20, y: 30, width: 100, height: 60 },
+    });
+
+    test.renderer.setSelection(rectangle);
+    test.flush();
+
+    expect(test.context.rect).not.toHaveBeenCalledWith(20, 30, 100, 60);
+    expect(test.context.stroke).not.toHaveBeenCalled();
+    expect(test.canvas.dataset.vectorSelectionStyle).toBe("outline-emphasis");
     test.renderer.destroy();
   });
 
