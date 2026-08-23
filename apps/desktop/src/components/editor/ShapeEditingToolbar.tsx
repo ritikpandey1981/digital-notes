@@ -12,6 +12,10 @@ import {
 import { ContinuousSlider } from "./ContinuousSlider";
 import { ExpandableToolbarSection } from "./ExpandableToolbarSection";
 import { ToolTooltip } from "./ToolTooltip";
+import {
+  resolveShapeEditingToolbarPlacement,
+  type ShapeEditingToolbarSize,
+} from "./shape-editing-toolbar-position";
 import type { ToolOptionPropertyDescriptor } from "./tool-options-registry";
 
 interface ShapeEditingToolbarProps {
@@ -21,10 +25,7 @@ interface ShapeEditingToolbarProps {
   readonly onDelete: () => void;
 }
 
-const TOOLBAR_HEIGHT = 48;
 const TOOLBAR_MARGIN = 12;
-const TOOLBAR_GAP = 12;
-const TOOLBAR_FALLBACK_WIDTH = 326;
 
 export function ShapeEditingToolbar({
   snapshot,
@@ -33,7 +34,10 @@ export function ShapeEditingToolbar({
   onDelete,
 }: ShapeEditingToolbarProps) {
   const toolbarRef = useRef<HTMLElement | null>(null);
-  const [toolbarWidth, setToolbarWidth] = useState(0);
+  const [toolbarSize, setToolbarSize] = useState<ShapeEditingToolbarSize>({
+    width: 0,
+    height: 0,
+  });
   const [expandedSection, setExpandedSection] = useState<ExpandedSection | null>(null);
   const visible = snapshot !== null;
   const activeExpandedSection =
@@ -48,12 +52,42 @@ export function ShapeEditingToolbar({
     () => shapeOpacityDescriptor(snapshot?.opacity ?? 1),
     [snapshot?.opacity],
   );
-  const position = toolbarPosition(snapshot, toolbarWidth);
+  const placement =
+    snapshot === null ? null : resolveShapeEditingToolbarPlacement(snapshot, toolbarSize);
+  const maximumToolbarWidth =
+    snapshot === null
+      ? `calc(100% - ${TOOLBAR_MARGIN * 2}px)`
+      : snapshot.viewportSize.width - TOOLBAR_MARGIN * 2;
+  const position: CSSProperties =
+    placement === null
+      ? {
+          left: TOOLBAR_MARGIN,
+          top: TOOLBAR_MARGIN,
+          opacity: 0,
+          visibility: "hidden",
+          transform: "translateY(4px)",
+          maxWidth: maximumToolbarWidth,
+        }
+      : {
+          left: placement.left,
+          top: placement.top,
+          opacity: 1,
+          visibility: "visible",
+          transform: "translateY(0)",
+          maxWidth: maximumToolbarWidth,
+        };
 
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     if (toolbar === null) return;
-    const measure = (): void => setToolbarWidth(toolbar.getBoundingClientRect().width);
+    const measure = (): void => {
+      const bounds = toolbar.getBoundingClientRect();
+      setToolbarSize((previous) =>
+        previous.width === bounds.width && previous.height === bounds.height
+          ? previous
+          : { width: bounds.width, height: bounds.height },
+      );
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(toolbar);
@@ -92,6 +126,8 @@ export function ShapeEditingToolbar({
       data-toolbar-mounted="true"
       data-toolbar-state={visible ? "visible" : "hidden"}
       data-toolbar-sizing="content"
+      data-toolbar-placement={placement?.side ?? "hidden"}
+      data-toolbar-collision-policy="selection-controls"
       data-toolbar-expanded-section={activeExpandedSection ?? ""}
       data-selected-shape-type={snapshot?.objectType ?? ""}
       data-floating-surface="folio"
@@ -205,50 +241,6 @@ function ToolbarButton({
   );
 }
 
-function toolbarPosition(
-  snapshot: ShapeEditingSnapshot | null,
-  measuredWidth: number,
-): CSSProperties {
-  if (snapshot === null) {
-    return {
-      left: TOOLBAR_MARGIN,
-      top: TOOLBAR_MARGIN,
-      opacity: 0,
-      visibility: "hidden",
-      transform: "translateY(4px)",
-      maxWidth: `calc(100% - ${TOOLBAR_MARGIN * 2}px)`,
-    };
-  }
-  const width = Math.min(
-    measuredWidth || TOOLBAR_FALLBACK_WIDTH,
-    Math.max(0, snapshot.viewportSize.width - TOOLBAR_MARGIN * 2),
-  );
-  const preferredLeft = snapshot.viewportBounds.x + snapshot.viewportBounds.width / 2 - width / 2;
-  const left = clamp(
-    preferredLeft,
-    TOOLBAR_MARGIN,
-    snapshot.viewportSize.width - width - TOOLBAR_MARGIN,
-  );
-  const above = snapshot.viewportBounds.y - TOOLBAR_HEIGHT - TOOLBAR_GAP;
-  const preferredTop =
-    above >= TOOLBAR_MARGIN
-      ? above
-      : snapshot.viewportBounds.y + snapshot.viewportBounds.height + TOOLBAR_GAP;
-  const top = clamp(
-    preferredTop,
-    TOOLBAR_MARGIN,
-    snapshot.viewportSize.height - TOOLBAR_HEIGHT - TOOLBAR_MARGIN,
-  );
-  return {
-    left,
-    top,
-    opacity: 1,
-    visibility: "visible",
-    transform: "translateY(0)",
-    maxWidth: snapshot.viewportSize.width - TOOLBAR_MARGIN * 2,
-  };
-}
-
 function shapeWidthDescriptor(value: number): ToolOptionPropertyDescriptor {
   return Object.freeze({
     key: "strokeWidth",
@@ -292,8 +284,4 @@ function shapeOpacityDescriptor(value: number): ToolOptionPropertyDescriptor {
 
 function formatWidth(value: number): string {
   return value.toFixed(1).replace(/\.0$/u, "");
-}
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
 }

@@ -108,6 +108,41 @@ describe("TransformPreviewRenderer", () => {
     );
   });
 
+  it("fully clears the transient overlay before every coalesced active preview frame", () => {
+    const { renderer, flush, frames, context } = harness();
+    const draw = vi.fn();
+    const base = {
+      objectId: "thick-preview",
+      bounds: { x: 80, y: 60, width: 420, height: 260 },
+      visual: { draw },
+    };
+    renderer.setPreview({
+      ...base,
+      transform: { translation: { x: 0, y: 0 }, rotation: 0, scale: 1.5 },
+    });
+    flush();
+
+    vi.mocked(context.clearRect).mockClear();
+    draw.mockClear();
+    renderer.setPreview({
+      ...base,
+      transform: { translation: { x: 70, y: 45 }, rotation: 0.2, scale: 0.35 },
+    });
+    renderer.setPreview({
+      ...base,
+      transform: { translation: { x: 95, y: 65 }, rotation: 0.35, scale: 0.1 },
+    });
+
+    expect(frames.size).toBe(1);
+    flush();
+    expect(context.clearRect).toHaveBeenCalledOnce();
+    expect(context.clearRect).toHaveBeenCalledWith(0, 0, 1_000, 800);
+    expect(draw).toHaveBeenCalledOnce();
+    expect(vi.mocked(context.clearRect).mock.invocationCallOrder[0]).toBeLessThan(
+      draw.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
   it("rejects invalid transform previews", () => {
     const { renderer } = harness();
     expect(() =>

@@ -1532,7 +1532,7 @@ export function CanvasSurface({
           return;
         }
         event.preventDefault();
-        event.stopImmediatePropagation();
+        if (phase !== "down") event.stopImmediatePropagation();
         if (mode === "select") {
           let route = selectPointerRoutes.get(event.pointerId);
           if (phase === "down") {
@@ -2084,7 +2084,6 @@ export function CanvasSurface({
           );
           if (position === null) return;
           event.preventDefault();
-          event.stopImmediatePropagation();
           const start = clampToPage(position);
           const draft = createVectorShapeDraft(
             kind,
@@ -2259,7 +2258,6 @@ export function CanvasSurface({
         pointerDown: (event) => {
           if (!event.isPrimary || event.button !== 0 || eraserPointerId !== null) return;
           event.preventDefault();
-          event.stopImmediatePropagation();
           eraserPointerId = event.pointerId;
           eraserDeletedObject = false;
           eraserObjectIds = new Set<string>();

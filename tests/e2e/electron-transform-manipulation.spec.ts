@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
-test("rotates and scales one selected object through History", async () => {
+test("keeps active transform previews clean while preserving History", async () => {
   const repositoryRoot = process.cwd();
   const electronApp = await electron.launch({
     args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
@@ -53,6 +53,9 @@ test("rotates and scales one selected object through History", async () => {
     const strokeStart = pageToScreen(strokeStartPage.x, strokeStartPage.y);
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "30");
+    await window.keyboard.press("Escape");
+    await expect(window.getByTestId("context-tool-palette")).toBeHidden();
     await window.mouse.move(strokeStart.x, strokeStart.y);
     await window.mouse.down();
     await window.mouse.move(strokeStart.x + 100, strokeStart.y + 100, { steps: 8 });
@@ -123,17 +126,45 @@ test("rotates and scales one selected object through History", async () => {
       y: scaleStartPage.y - rotatedCenter.y,
     };
     const scaleStart = pageToScreen(scaleStartPage.x, scaleStartPage.y);
+    const scaleLarge = pageToScreen(
+      rotatedCenter.x + scaleVector.x * 1.35,
+      rotatedCenter.y + scaleVector.y * 1.35,
+    );
     const scaleEnd = pageToScreen(
       rotatedCenter.x + scaleVector.x * 0.2,
       rotatedCenter.y + scaleVector.y * 0.2,
     );
+    const previewRenderBeforeScale = Number(
+      await previewCanvas.getAttribute("data-manipulation-render-count"),
+    );
 
     await hoverForCursor(window, inkCanvas, scaleStart, "nwse-resize");
     await window.mouse.down();
-    await window.mouse.move(scaleEnd.x, scaleEnd.y, { steps: 8 });
+    await window.mouse.move(scaleLarge.x, scaleLarge.y, { steps: 4 });
     await expect(surface).toHaveAttribute("data-manipulation-kind", "scale");
     await expect(previewCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
-    await expect.poll(() => nonTransparentPixelCount(previewCanvas)).toBeGreaterThan(0);
+    await expect
+      .poll(async () => Number(await previewCanvas.getAttribute("data-manipulation-render-count")))
+      .toBeGreaterThan(previewRenderBeforeScale);
+    const largePreview = await nonTransparentPixelBounds(previewCanvas);
+    expect(largePreview.count).toBeGreaterThan(0);
+    const largePreviewRenderCount = Number(
+      await previewCanvas.getAttribute("data-manipulation-render-count"),
+    );
+
+    await window.mouse.move(scaleEnd.x, scaleEnd.y, { steps: 8 });
+    await expect
+      .poll(async () => Number(await previewCanvas.getAttribute("data-manipulation-render-count")))
+      .toBeGreaterThan(largePreviewRenderCount);
+    const smallPreview = await nonTransparentPixelBounds(previewCanvas);
+    expect(smallPreview.count).toBeGreaterThan(0);
+    expect(smallPreview.width).toBeLessThan(largePreview.width * 0.6);
+    expect(smallPreview.height).toBeLessThan(largePreview.height * 0.6);
+    if (process.env.FOLIO_FOLLOWUP_VISUAL_QA === "1") {
+      await window.screenshot({
+        path: path.join(repositoryRoot, "test-results", "followup-live-transform-preview.png"),
+      });
+    }
     await window.mouse.up();
     await expect(surface).toHaveAttribute("data-history-undo-depth", "3");
     await expect(surface).not.toHaveAttribute("data-selected-object-scale", "1");
@@ -173,15 +204,50 @@ async function hoverForCursor(
 }
 
 async function nonTransparentPixelCount(canvas: Locator): Promise<number> {
+  return (await nonTransparentPixelBounds(canvas)).count;
+}
+
+async function nonTransparentPixelBounds(canvas: Locator): Promise<PixelBounds> {
   return canvas.evaluate((element) => {
     const target = element as HTMLCanvasElement;
     const context = target.getContext("2d");
     if (context === null) throw new Error("Preview canvas context is unavailable.");
     const pixels = context.getImageData(0, 0, target.width, target.height).data;
     let count = 0;
+    let minimumX = target.width;
+    let minimumY = target.height;
+    let maximumX = -1;
+    let maximumY = -1;
     for (let index = 3; index < pixels.length; index += 4) {
-      if ((pixels[index] ?? 0) !== 0) count += 1;
+      if ((pixels[index] ?? 0) === 0) continue;
+      const pixelIndex = (index - 3) / 4;
+      const x = pixelIndex % target.width;
+      const y = Math.floor(pixelIndex / target.width);
+      count += 1;
+      minimumX = Math.min(minimumX, x);
+      minimumY = Math.min(minimumY, y);
+      maximumX = Math.max(maximumX, x);
+      maximumY = Math.max(maximumY, y);
     }
-    return count;
+    return {
+      count,
+      x: count === 0 ? 0 : minimumX,
+      y: count === 0 ? 0 : minimumY,
+      width: count === 0 ? 0 : maximumX - minimumX + 1,
+      height: count === 0 ? 0 : maximumY - minimumY + 1,
+    };
   });
+}
+
+async function setNumericValue(locator: Locator, value: string): Promise<void> {
+  await locator.fill(value);
+  await locator.press("Enter");
+}
+
+interface PixelBounds {
+  readonly count: number;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
 }

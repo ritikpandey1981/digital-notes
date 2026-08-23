@@ -73,7 +73,7 @@ describe("TranslationPreviewRenderer", () => {
     expect(renderer.snapshot().translation).toBe(translation);
   });
 
-  it("coalesces frames and de-duplicates previous/current preview bounds", () => {
+  it("coalesces frames into one full transient-overlay clear", () => {
     const { renderer, flush, context, frames } = harness();
     const visual = { draw: vi.fn() };
     const base = { objectId: "object", bounds: { x: 0, y: 0, width: 20, height: 10 }, visual };
@@ -81,7 +81,8 @@ describe("TranslationPreviewRenderer", () => {
     renderer.setPreview({ ...base, translation: { x: 400, y: 300 } });
     expect(frames.size).toBe(1);
     flush();
-    expect(context.clearRect).toHaveBeenCalledTimes(2);
+    expect(context.clearRect).toHaveBeenCalledOnce();
+    expect(context.clearRect).toHaveBeenCalledWith(0, 0, 1_000, 800);
     expect(renderer.snapshot().renderCount).toBe(1);
   });
 

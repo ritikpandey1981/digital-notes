@@ -43,7 +43,6 @@ export interface TransformPreviewRendererSnapshot {
 }
 
 const DEFAULT_STYLE: TransformPreviewStyle = Object.freeze({ opacity: 0.68, clearPadding: 3 });
-const MAX_DIRTY_REGIONS = 8;
 
 function resolveStyle(style: Partial<TransformPreviewStyle> = {}): TransformPreviewStyle {
   const resolved = Object.freeze({ ...DEFAULT_STYLE, ...style });
@@ -93,17 +92,6 @@ function freezeTarget(target: TransformPreviewTarget): TransformPreviewTarget {
   });
 }
 
-function transformedBounds(target: TransformPreviewTarget): Rect {
-  const { bounds, transform } = target;
-  const cosine = Math.abs(Math.cos(transform.rotation));
-  const sine = Math.abs(Math.sin(transform.rotation));
-  const width = transform.scale * (bounds.width * cosine + bounds.height * sine);
-  const height = transform.scale * (bounds.width * sine + bounds.height * cosine);
-  const centerX = bounds.x + bounds.width / 2 + transform.translation.x;
-  const centerY = bounds.y + bounds.height / 2 + transform.translation.y;
-  return freezeRect({ x: centerX - width / 2, y: centerY - height / 2, width, height });
-}
-
 function sameTarget(
   first: TransformPreviewTarget | null,
   second: TransformPreviewTarget | null,
@@ -130,7 +118,6 @@ export class TransformPreviewRenderer {
   private readonly canvas: HTMLCanvasElement | undefined;
   private readonly style: TransformPreviewStyle;
   private readonly scheduler: RenderScheduler;
-  private readonly dirtyPageRects: Rect[] = [];
   private target: TransformPreviewTarget | null = null;
   private fullRedraw = false;
   private renderCountValue = 0;
@@ -150,16 +137,8 @@ export class TransformPreviewRenderer {
     this.assertActive();
     const next = target === null ? null : freezeTarget(target);
     if (sameTarget(this.target, next)) return;
-    if (next === null) {
-      this.target = null;
-      this.fullRedraw = true;
-      this.dirtyPageRects.length = 0;
-      this.invalidate();
-      return;
-    }
-    if (this.target !== null) this.addDirtyRect(transformedBounds(this.target));
-    this.addDirtyRect(transformedBounds(next));
     this.target = next;
+    this.fullRedraw = true;
     this.invalidate();
   }
 
@@ -167,13 +146,12 @@ export class TransformPreviewRenderer {
     this.assertActive();
     if (this.fullRedraw) return;
     this.fullRedraw = true;
-    this.dirtyPageRects.length = 0;
     this.invalidate();
   }
 
   forceRender(): void {
     this.assertActive();
-    if (!this.fullRedraw && this.dirtyPageRects.length === 0) return;
+    if (!this.fullRedraw) return;
     this.scheduler.forceRender();
   }
 
@@ -191,29 +169,8 @@ export class TransformPreviewRenderer {
     if (this.destroyed) return;
     this.scheduler.destroy();
     this.target = null;
-    this.dirtyPageRects.length = 0;
     this.destroyed = true;
     this.updateDiagnostics();
-  }
-
-  private addDirtyRect(rect: Rect): void {
-    if (this.fullRedraw) return;
-    if (
-      this.dirtyPageRects.some(
-        (existing) =>
-          existing.x === rect.x &&
-          existing.y === rect.y &&
-          existing.width === rect.width &&
-          existing.height === rect.height,
-      )
-    ) {
-      return;
-    }
-    this.dirtyPageRects.push(rect);
-    if (this.dirtyPageRects.length > MAX_DIRTY_REGIONS) {
-      this.dirtyPageRects.length = 0;
-      this.fullRedraw = true;
-    }
   }
 
   private invalidate(): void {
@@ -223,28 +180,15 @@ export class TransformPreviewRenderer {
   }
 
   private renderFrame(): void {
-    if (this.destroyed || (!this.fullRedraw && this.dirtyPageRects.length === 0)) return;
+    if (this.destroyed || !this.fullRedraw) return;
     const snapshot = this.viewport.snapshot();
     const context = this.context;
     context.save();
     context.setTransform(snapshot.devicePixelRatio, 0, 0, snapshot.devicePixelRatio, 0, 0);
-    if (this.fullRedraw) {
-      context.clearRect(0, 0, snapshot.size.width, snapshot.size.height);
-    } else {
-      for (const rect of this.dirtyPageRects) {
-        const viewportRect = this.pageRectToViewport(rect);
-        context.clearRect(
-          viewportRect.x - this.style.clearPadding,
-          viewportRect.y - this.style.clearPadding,
-          viewportRect.width + this.style.clearPadding * 2,
-          viewportRect.height + this.style.clearPadding * 2,
-        );
-      }
-    }
+    context.clearRect(0, 0, snapshot.size.width, snapshot.size.height);
     context.restore();
     if (this.target !== null) this.drawTarget(this.target);
     this.fullRedraw = false;
-    this.dirtyPageRects.length = 0;
     this.renderCountValue += 1;
     this.updateDiagnostics();
   }
@@ -275,20 +219,6 @@ export class TransformPreviewRenderer {
     }
     target.visual.draw(context);
     context.restore();
-  }
-
-  private pageRectToViewport(rect: Rect): Rect {
-    const snapshot = this.viewport.snapshot();
-    const topLeft = this.viewport.worldToViewport({
-      x: snapshot.pageRect.x + rect.x,
-      y: snapshot.pageRect.y + rect.y,
-    });
-    return {
-      x: topLeft.x,
-      y: topLeft.y,
-      width: rect.width * snapshot.camera.zoom,
-      height: rect.height * snapshot.camera.zoom,
-    };
   }
 
   private updateDiagnostics(): void {

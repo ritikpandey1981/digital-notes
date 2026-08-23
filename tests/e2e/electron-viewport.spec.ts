@@ -27,14 +27,47 @@ test("provides live zoom controls, anchored zoom, transient pan, and mode-aware 
     );
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
 
-    await window.getByRole("button", { name: /^Zoom options,/ }).click();
+    const zoomMenuTrigger = window.getByRole("button", { name: /^Zoom options,/ });
+    await zoomMenuTrigger.click();
     const navigationShortcuts = window.getByTestId("viewport-navigation-shortcuts");
     await expect(navigationShortcuts).toContainText("Move canvas");
     await expect(navigationShortcuts).toContainText("Space + Drag");
-    await expect(navigationShortcuts).toContainText("Middle Drag");
+    await expect(navigationShortcuts).not.toContainText("Middle Drag");
     await expect(navigationShortcuts).toContainText("Ctrl + Wheel");
     await expect(navigationShortcuts).toContainText("Wheel / Trackpad");
+    if (process.env.FOLIO_FOLLOWUP_VISUAL_QA === "1") {
+      await window.screenshot({
+        path: path.join(process.cwd(), "test-results", "followup-viewport-menu.png"),
+      });
+    }
     await window.keyboard.press("Escape");
+    await expect(window.getByRole("menu")).toHaveCount(0);
+    await expect(zoomMenuTrigger).toBeFocused();
+    await zoomMenuTrigger.click();
+    await expect(window.getByRole("menu")).toBeVisible();
+    await zoomMenuTrigger.click();
+    await expect(window.getByRole("menu")).toHaveCount(0);
+
+    const initialInkBounds = await inkCanvas.boundingBox();
+    if (initialInkBounds === null) throw new Error("Ink canvas has no visible bounds.");
+    await zoomMenuTrigger.press("Enter");
+    await expect(window.getByRole("menu")).toBeVisible();
+    await window.mouse.click(initialInkBounds.x + 20, initialInkBounds.y + 20);
+    await expect(window.getByRole("menu")).toHaveCount(0);
+
+    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    const pageDismissPoint = await pageToScreen(surface, inkCanvas, { x: 100, y: 100 });
+    await zoomMenuTrigger.click();
+    await expect(window.getByRole("menu")).toBeVisible();
+    await window.mouse.move(pageDismissPoint.x, pageDismissPoint.y);
+    await window.mouse.down();
+    await expect(window.getByRole("menu")).toHaveCount(0);
+    await window.mouse.move(pageDismissPoint.x + 35, pageDismissPoint.y + 20, { steps: 3 });
+    await window.mouse.up();
+    await expect(surface).toHaveAttribute("data-document-object-count", "1");
+    await window.keyboard.press("Control+Z");
+    await expect(surface).toHaveAttribute("data-document-object-count", "0");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
 
     const zoomBeforePlus = await attributeNumber(surface, "data-viewport-zoom");
     await window.getByRole("button", { name: "Zoom in" }).click();
@@ -288,6 +321,7 @@ async function launchFolio(): Promise<{ electronApp: ElectronApplication; window
 async function selectZoomMenuItem(window: Page, name: string): Promise<void> {
   await window.getByRole("button", { name: /Zoom options/u }).click();
   await window.getByRole("menuitem", { name, exact: true }).click();
+  await expect(window.getByRole("menu")).toHaveCount(0);
 }
 
 async function worldAtScreenPoint(surface: Locator, canvas: Locator, point: Point): Promise<Point> {

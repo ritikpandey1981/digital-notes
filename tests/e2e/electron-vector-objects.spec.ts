@@ -303,6 +303,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     const initialTranslationY = Number(
       await surface.getAttribute("data-selected-object-translation-y"),
     );
+    const toolbarBeforeMove = await shapeToolbar.boundingBox();
     const center = pageToScreen(240, 450);
     await window.mouse.click(center.x, center.y);
     await expect(surface).toHaveAttribute("data-selected-object-type", "ellipse");
@@ -316,6 +317,13 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     expect(
       Number(await surface.getAttribute("data-selected-object-translation-y")),
     ).toBeGreaterThan(initialTranslationY);
+    await expect
+      .poll(async () => {
+        const after = await shapeToolbar.boundingBox();
+        if (after === null || toolbarBeforeMove === null) return false;
+        return after.x !== toolbarBeforeMove.x || after.y !== toolbarBeforeMove.y;
+      })
+      .toBe(true);
 
     await window.keyboard.press("Control+C");
     await window.keyboard.press("Control+V");
@@ -328,6 +336,9 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     const historyBeforeRapidCreation = Number(
       await surface.getAttribute("data-history-undo-depth"),
     );
+    await window.getByRole("button", { name: "Select", exact: true }).click();
+    await window.mouse.click(...pointTuple(pageToScreen(700, 700)));
+    await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "hidden");
     await window.getByRole("button", { name: "Shapes", exact: true }).click();
     await shapesWidget.getByRole("button", { name: "Line", exact: true }).click();
     for (let index = 0; index < 3; index += 1) {
@@ -359,6 +370,86 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
   }
 });
 
+test("keeps a tall ellipse toolbar clear of its usable rotation handle", async () => {
+  test.setTimeout(45_000);
+  const repositoryRoot = process.cwd();
+  const electronApp = await electron.launch({
+    args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
+    executablePath: path.join(
+      repositoryRoot,
+      "apps/desktop/node_modules/electron/dist/electron.exe",
+    ),
+  });
+
+  try {
+    const window = await electronApp.firstWindow();
+    await window.setViewportSize({ width: 1440, height: 900 });
+    const host = window.getByTestId("canvas-host");
+    const surface = window.getByTestId("canvas-surface");
+    const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
+    const previewCanvas = host.locator("canvas[data-folio-layer='manipulation-preview']");
+    const toolbar = window.getByTestId("shape-editing-toolbar");
+    await expect(surface).toHaveAttribute("data-shape-creation-capability", "ready");
+
+    await window.getByRole("button", { name: "Shapes", exact: true }).click();
+    await window
+      .getByTestId("shapes-widget")
+      .getByRole("button", { name: "Ellipse", exact: true })
+      .click();
+    const start = await livePageToScreen(surface, inkCanvas, { x: 360, y: 60 });
+    const end = await livePageToScreen(surface, inkCanvas, { x: 410, y: 500 });
+    await window.mouse.move(start.x, start.y);
+    await window.mouse.down();
+    await window.mouse.move(end.x, end.y, { steps: 8 });
+    await window.mouse.up();
+
+    await expect(surface).toHaveAttribute("data-selected-object-type", "ellipse");
+    await expect(toolbar).toHaveAttribute("data-toolbar-state", "visible");
+    await expect(toolbar).toHaveAttribute("data-toolbar-placement", /^(?:above|below)$/u);
+    await expect(toolbar).toHaveAttribute("data-toolbar-collision-policy", "selection-controls");
+    await expectToolbarInsideWorkspace(toolbar, host);
+    await window.getByRole("button", { name: "Select", exact: true }).click();
+
+    const zoom = Number(await surface.getAttribute("data-viewport-zoom"));
+    const bounds = {
+      x: Number(await surface.getAttribute("data-selected-object-bounds-x")),
+      y: Number(await surface.getAttribute("data-selected-object-bounds-y")),
+      width: Number(await surface.getAttribute("data-selected-object-bounds-width")),
+    };
+    const rotationHandle = await livePageToScreen(surface, inkCanvas, {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y - 32 / zoom,
+    });
+    const toolbarBounds = await toolbar.boundingBox();
+    if (toolbarBounds === null) throw new Error("Shape toolbar bounds unavailable.");
+    expect(
+      pointIntersectsRect(rotationHandle, 12, toolbarBounds),
+      "rotation hit region must remain clear of the toolbar",
+    ).toBe(false);
+    if (process.env.FOLIO_FOLLOWUP_VISUAL_QA === "1") {
+      await window.screenshot({
+        path: path.join(repositoryRoot, "test-results", "followup-shape-toolbar.png"),
+      });
+    }
+
+    await expect
+      .poll(async () => {
+        await window.mouse.move(rotationHandle.x + 0.5, rotationHandle.y);
+        await window.mouse.move(rotationHandle.x, rotationHandle.y);
+        return inkCanvas.getAttribute("data-manipulation-cursor");
+      })
+      .toBe("rotation");
+    await window.mouse.down();
+    await expect(surface).toHaveAttribute("data-manipulation-kind", "rotation");
+    await window.mouse.move(rotationHandle.x + 3, rotationHandle.y + 2, { steps: 2 });
+    await expect(previewCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
+    await window.mouse.up();
+    await expect(previewCanvas).toHaveAttribute("data-manipulation-preview-state", "empty");
+  } finally {
+    await electronApp.close();
+  }
+});
+
 async function pageCoordinateMapper(
   baseCanvas: Locator,
   inkCanvas: Locator,
@@ -381,6 +472,27 @@ async function pageCoordinateMapper(
     x: bounds.x + (metrics.pageX + x * zoom) * (bounds.width / metrics.logicalWidth),
     y: bounds.y + (metrics.pageY + y * zoom) * (bounds.height / metrics.logicalHeight),
   });
+}
+
+async function livePageToScreen(surface: Locator, canvas: Locator, point: Point): Promise<Point> {
+  const bounds = await canvas.boundingBox();
+  if (bounds === null) throw new Error("Canvas has no visible bounds.");
+  const metrics = await surface.evaluate((element) => {
+    const dataset = (element as HTMLElement).dataset;
+    return {
+      viewportWidth: Number(dataset.viewportWidth),
+      viewportHeight: Number(dataset.viewportHeight),
+      pageX: Number(dataset.viewportPageX),
+      pageY: Number(dataset.viewportPageY),
+      zoom: Number(dataset.viewportZoom),
+    };
+  });
+  return {
+    x: bounds.x + (metrics.pageX + point.x * metrics.zoom) * (bounds.width / metrics.viewportWidth),
+    y:
+      bounds.y +
+      (metrics.pageY + point.y * metrics.zoom) * (bounds.height / metrics.viewportHeight),
+  };
 }
 
 async function expectToolbarInsideWorkspace(toolbar: Locator, host: Locator): Promise<void> {
@@ -525,6 +637,19 @@ interface ToolbarMetrics {
   readonly width: number;
   readonly leadingGap: number;
   readonly trailingGap: number;
+}
+
+function pointIntersectsRect(
+  point: Point,
+  radius: number,
+  rect: Readonly<{ x: number; y: number; width: number; height: number }>,
+): boolean {
+  return !(
+    point.x + radius <= rect.x ||
+    point.x - radius >= rect.x + rect.width ||
+    point.y + radius <= rect.y ||
+    point.y - radius >= rect.y + rect.height
+  );
 }
 
 async function floatingSurfaceStyle(locator: Locator): Promise<FloatingSurfaceStyle> {

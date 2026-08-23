@@ -113,7 +113,7 @@ export function StatusBar({
           >
             <Minus className="size-3" aria-hidden="true" />
           </button>
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
@@ -172,7 +172,6 @@ export function StatusBar({
               >
                 {[
                   ["Move canvas", "Space + Drag"],
-                  ["Pan", "Middle Drag"],
                   ["Zoom", "Ctrl + Wheel"],
                   ["Scroll", "Wheel / Trackpad"],
                 ].map(([action, shortcut]) => (
