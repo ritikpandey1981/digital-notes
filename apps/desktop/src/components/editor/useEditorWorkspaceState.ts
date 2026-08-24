@@ -29,8 +29,22 @@ export function useEditorWorkspaceState() {
   const [toolOptionsRegistry] = React.useState(() => createDefaultToolOptionsDescriptorRegistry());
   const [floatingWidgetRegistry] = React.useState(() => createFloatingToolWidgetRegistry());
 
-  const drawingKind: DrawingToolKind = activeTool === "Highlighter" ? "highlighter" : "pen";
+  const drawingKind = drawingKindForTool(activeTool);
   const resolvedBrush = brushStore.resolvedBrush(drawingKind);
+  const presetSelection = Object.freeze({
+    activeId: brushStore.activeState(drawingKind).presetId,
+    options: Object.freeze(
+      brushStore.presetsFor(drawingKind).map((preset) =>
+        Object.freeze({
+          id: preset.id,
+          name: preset.name,
+          defaultSize: preset.defaults.size,
+          defaultOpacity: preset.defaults.opacity,
+          defaultSmoothing: preset.defaults.smoothing.amount,
+        }),
+      ),
+    ),
+  });
   const penDrawingStyle: CanvasDrawingStyle = React.useMemo(
     () =>
       Object.freeze({
@@ -47,9 +61,9 @@ export function useEditorWorkspaceState() {
   const toolOptions = React.useMemo(
     () =>
       activeFloatingWidget === "drawing-options"
-        ? toolOptionsRegistry.describe(activeTool, resolvedBrush)
+        ? toolOptionsRegistry.describe(activeTool, resolvedBrush, presetSelection)
         : null,
-    [activeFloatingWidget, activeTool, resolvedBrush, toolOptionsRegistry],
+    [activeFloatingWidget, activeTool, presetSelection, resolvedBrush, toolOptionsRegistry],
   );
   const selectTool = React.useCallback(
     (tool: EditorTool): void => {
@@ -91,6 +105,13 @@ export function useEditorWorkspaceState() {
     (color: string): void => updatePreset({ color }),
     [updatePreset],
   );
+  const selectDrawingPreset = React.useCallback(
+    (presetId: string): void => {
+      brushStore.selectPreset(drawingKind, presetId);
+      refresh();
+    },
+    [brushStore, drawingKind, refresh],
+  );
   const setDrawingWidth = React.useCallback(
     (strokeWidth: number): void => updatePreset({ size: strokeWidth }),
     [updatePreset],
@@ -99,6 +120,11 @@ export function useEditorWorkspaceState() {
     (opacity: number): void =>
       updatePreset({ opacity: constrainOpacityForTool(activeTool, opacity) }),
     [activeTool, updatePreset],
+  );
+  const setDrawingSmoothing = React.useCallback(
+    (amount: number): void =>
+      updatePreset({ smoothing: { mode: amount === 0 ? "none" : "average", amount } }),
+    [updatePreset],
   );
   const rememberColorUsage = React.useCallback(
     (color: string): void => {
@@ -119,10 +145,25 @@ export function useEditorWorkspaceState() {
     toolOptions,
     colors: colorSystem.snapshot(),
     setDrawingColor,
+    selectDrawingPreset,
     setDrawingWidth,
     setDrawingOpacity,
+    setDrawingSmoothing,
     updateShapeStyle,
     rememberColorUsage,
     dismissFloatingWidget,
   };
+}
+
+function drawingKindForTool(tool: EditorTool): DrawingToolKind {
+  switch (tool) {
+    case "Pencil":
+      return "pencil";
+    case "Marker":
+      return "marker";
+    case "Highlighter":
+      return "highlighter";
+    default:
+      return "pen";
+  }
 }

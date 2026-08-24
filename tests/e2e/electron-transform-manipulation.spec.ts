@@ -54,7 +54,7 @@ test("keeps active transform previews clean while preserving History", async () 
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "30");
+    await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "30");
     await window.keyboard.press("Escape");
     await expect(window.getByTestId("context-tool-palette")).toBeHidden();
     await window.mouse.move(strokeStart.x, strokeStart.y);

@@ -27,7 +27,7 @@ export function ShapesWidget({ open, activeShape, onSelectShape, onDismiss }: Sh
   const reducedMotion = useReducedMotion() === true;
   const boundaryRef = useFloatingWidgetDismissal(open, onDismiss);
   return (
-    <div className="pointer-events-none absolute left-[76px] top-[calc(50%+85px)] z-20 -translate-y-1/2">
+    <div className="pointer-events-none absolute left-[76px] top-[calc(50%+125px)] z-20 -translate-y-1/2">
       <AnimatePresence initial={false}>
         {open ? (
           <motion.section

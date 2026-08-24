@@ -70,9 +70,11 @@ function ApplicationShellContent() {
           drawingStyle={editorWorkspace.drawingStyle}
           toolOptions={editorWorkspace.toolOptions}
           colors={editorWorkspace.colors}
+          onSelectDrawingPreset={editorWorkspace.selectDrawingPreset}
           onChangeDrawingColor={editorWorkspace.setDrawingColor}
           onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
           onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
+          onChangeDrawingSmoothing={editorWorkspace.setDrawingSmoothing}
           onChangeShapeStyle={editorWorkspace.updateShapeStyle}
           onDrawingColorUsed={editorWorkspace.rememberColorUsage}
           onDismissFloatingWidget={editorWorkspace.dismissFloatingWidget}

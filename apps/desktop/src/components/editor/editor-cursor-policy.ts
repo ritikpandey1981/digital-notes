@@ -6,19 +6,30 @@ export interface EditorCursorPresentation {
   readonly adaptiveCss?: string;
 }
 
-const penCursor = createSvgCursor(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M5 19l1.2-4.5L16.7 4a2 2 0 012.8 2.8L9 17.3 5 19z" fill="white" stroke="#111827" stroke-width="1.6" stroke-linejoin="round"/><path d="M14.8 5.9l3.3 3.3" stroke="#4f46e5" stroke-width="1.6"/></svg>',
-  5,
-  19,
-  "crosshair",
-);
+export const MINIMUM_BRUSH_CURSOR_DIAMETER = 7;
 
-const highlighterCursor = createSvgCursor(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M5 18l2-5L16.5 3.5l4 4L11 17l-6 1z" fill="#fde047" stroke="#111827" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 13l4 4M15 5l4 4" stroke="#ca8a04" stroke-width="1.5"/></svg>',
-  5,
-  18,
-  "crosshair",
-);
+export function usesImperativeBrushCursor(tool: EditorTool): boolean {
+  return tool === "Pencil" || tool === "Pen" || tool === "Marker" || tool === "Highlighter";
+}
+
+export function brushCursorDiameter(nominalSize: number, zoom: number): number {
+  if (!Number.isFinite(nominalSize) || nominalSize <= 0 || !Number.isFinite(zoom) || zoom <= 0) {
+    throw new RangeError("Brush cursor size and zoom must be positive and finite.");
+  }
+  return Math.max(MINIMUM_BRUSH_CURSOR_DIAMETER, nominalSize * zoom);
+}
+
+export function pointIsWithinBrushPage(
+  point: Readonly<{ x: number; y: number }>,
+  page: Readonly<{ x: number; y: number; width: number; height: number }>,
+): boolean {
+  return (
+    point.x >= page.x &&
+    point.x <= page.x + page.width &&
+    point.y >= page.y &&
+    point.y <= page.y + page.height
+  );
+}
 
 const eraserCursor = createSvgCursor(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M5.2 14.8l8.9-8.9a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8l-8 8H7.3l-2.1-2.1a1.4 1.4 0 010-2z" fill="#f9a8d4" stroke="#111827" stroke-width="1.5" stroke-linejoin="round"/><path d="M11.2 18.9l-4.7-4.7M11.2 18.9h7.3" stroke="#111827" stroke-width="1.5" stroke-linecap="round"/></svg>',
@@ -39,8 +50,10 @@ const cursorByTool: Readonly<Record<EditorTool, EditorCursorPresentation>> = Obj
   Move: Object.freeze({ id: "move", css: null }),
   Rotate: Object.freeze({ id: "rotate", css: null }),
   Scale: Object.freeze({ id: "scale", css: null }),
-  Pen: Object.freeze({ id: "pen", css: penCursor }),
-  Highlighter: Object.freeze({ id: "highlighter", css: highlighterCursor }),
+  Pencil: Object.freeze({ id: "pencil", css: "none" }),
+  Pen: Object.freeze({ id: "pen", css: "none" }),
+  Marker: Object.freeze({ id: "marker", css: "none" }),
+  Highlighter: Object.freeze({ id: "highlighter", css: "none" }),
   Eraser: Object.freeze({ id: "eraser", css: eraserCursor }),
   Shapes: Object.freeze({
     id: "shapes",

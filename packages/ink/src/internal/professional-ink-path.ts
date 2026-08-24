@@ -1,3 +1,4 @@
+import type { BrushSmoothing } from "../brush-model";
 import type { StrokePoint } from "../types";
 
 const EPSILON = 0.000_001;
@@ -57,11 +58,13 @@ export interface ProfessionalInkPath {
 /** Performs one adaptive filtering and error-tolerance fitting pass at stroke completion. */
 export function createProfessionalInkPath(
   sourcePoints: readonly StrokePoint[],
+  smoothing: BrushSmoothing = Object.freeze({ mode: "none", amount: 0 }),
 ): ProfessionalInkPath {
   const frozenSourcePoints = freezeReferences(sourcePoints);
   const sourceProgress = createSourceProgress(frozenSourcePoints);
-  const points = filterAdaptiveStrokePoints(frozenSourcePoints);
-  const filteredProgress = mapFilteredProgress(frozenSourcePoints, sourceProgress, points);
+  const geometryPoints = smoothGeometryPoints(frozenSourcePoints, smoothing);
+  const points = filterAdaptiveStrokePoints(geometryPoints);
+  const filteredProgress = mapFilteredProgress(geometryPoints, sourceProgress, points);
   const segments = fitAdaptiveCubicSegments(points, filteredProgress);
   return Object.freeze({
     sourcePointCount: frozenSourcePoints.length,
@@ -70,6 +73,44 @@ export function createProfessionalInkPath(
     points,
     segments,
   });
+}
+
+/** Smooths only geometry coordinates; authoritative source samples and device metadata stay raw. */
+export function smoothGeometryPoints(
+  sourcePoints: readonly StrokePoint[],
+  smoothing: BrushSmoothing,
+): readonly StrokePoint[] {
+  if (smoothing.mode === "none" || smoothing.amount <= 0 || sourcePoints.length < 3) {
+    return freezeReferences(sourcePoints);
+  }
+  const amount = clamp(smoothing.amount, 0, 1);
+  const radius = 1 + Math.floor(amount * 3);
+  return Object.freeze(
+    sourcePoints.map((point, index) => {
+      if (index === 0 || index === sourcePoints.length - 1) return point;
+      const first = Math.max(0, index - radius);
+      const last = Math.min(sourcePoints.length - 1, index + radius);
+      let totalWeight = 0;
+      let averageX = 0;
+      let averageY = 0;
+      for (let sampleIndex = first; sampleIndex <= last; sampleIndex += 1) {
+        const sample = requiredPoint(sourcePoints, sampleIndex);
+        const weight = radius + 1 - Math.abs(sampleIndex - index);
+        totalWeight += weight;
+        averageX += sample.x * weight;
+        averageY += sample.y * weight;
+      }
+      const previous = requiredPoint(sourcePoints, index - 1);
+      const next = requiredPoint(sourcePoints, index + 1);
+      const cornerRetention = smoothStep(0.45, 1.35, turnAngle(previous, point, next));
+      const blend = amount * (1 - cornerRetention * 0.9);
+      return Object.freeze({
+        ...point,
+        x: point.x + (averageX / totalWeight - point.x) * blend,
+        y: point.y + (averageY / totalWeight - point.y) * blend,
+      });
+    }),
+  );
 }
 
 /** Retains meaningful curvature while reducing velocity-dependent redundant samples. */

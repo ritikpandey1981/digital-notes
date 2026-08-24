@@ -6,6 +6,8 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Paintbrush,
+  Pencil,
   PenLine,
   Save,
   Settings2,
@@ -150,8 +152,14 @@ export function AppMenuBar({ sidebarExpanded, onToggleSidebar, onSelectTool }: A
               <MenuTrigger label="Draw" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
+              <DropdownMenuItem onSelect={() => onSelectTool("Pencil")}>
+                <Pencil className="size-4" aria-hidden="true" /> Pencil
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onSelectTool("Pen")}>
                 <PenLine className="size-4" aria-hidden="true" /> Pen
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onSelectTool("Marker")}>
+                <Paintbrush className="size-4" aria-hidden="true" /> Marker
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onSelectTool("Highlighter")}>
                 Highlighter

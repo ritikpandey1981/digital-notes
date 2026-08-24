@@ -21,7 +21,7 @@ const NONE = Object.freeze({ mode: "none" as const, amount: 0 });
 
 function brush(
   kind: BrushRendererKind = "outline",
-  options: Partial<Pick<ResolvedBrushSnapshot, "size" | "opacity" | "family">> = {},
+  options: Partial<Pick<ResolvedBrushSnapshot, "size" | "opacity" | "family" | "smoothing">> = {},
 ): ResolvedBrushSnapshot {
   const family = options.family ?? (kind === "outline" ? "pen" : "highlighter");
   const pressureEnabled = family === "pen";
@@ -33,7 +33,7 @@ function brush(
     color: family === "highlighter" ? "#facc15" : "#111111",
     size: options.size ?? 10,
     opacity: options.opacity ?? (family === "highlighter" ? 0.34 : 1),
-    smoothing: NONE,
+    smoothing: options.smoothing ?? NONE,
     dynamics: Object.freeze({
       pressureSize: Object.freeze({
         enabled: pressureEnabled,
@@ -140,6 +140,28 @@ function context(): CanvasRenderingContext2D {
 }
 
 describe("Phase 17B brush rendering", () => {
+  it("uses identical smoothed geometry for live and committed centerline strokes", () => {
+    const resolved = brush("centerline", {
+      family: "marker",
+      smoothing: { mode: "average", amount: 0.8 },
+    });
+    const stroke = strokeFromPressures(
+      Array.from({ length: 50 }, () => 0.5),
+      resolved,
+      (index) => ({ x: index * 2, y: Math.sin(index / 5) * 8 + (index % 2 ? 1 : -1) }),
+      "smoothed-live-final",
+    );
+
+    const live = createBrushRenderGeometry(stroke.points, stroke.brush);
+    const committed = resolveStrokeRenderGeometry(stroke);
+
+    expect(live.kind).toBe("centerline");
+    expect(committed.kind).toBe("centerline");
+    expect(live.path.points).toEqual(committed.path.points);
+    expect(live.path.segments).toEqual(committed.path.segments);
+    expect(live.path.sourcePoints).toEqual(stroke.points);
+  });
+
   it.each([
     ["constant", [0.5, 0.5, 0.5]],
     ["increasing", [0.1, 0.3, 0.6, 1]],

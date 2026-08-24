@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createBrushPreset,
   evaluatePressureResponse,
+  resolveBrushForPointerType,
   resolveBrushPreset,
   type BrushPreset,
 } from "../brush-model";
@@ -118,6 +119,25 @@ describe("Brush model", () => {
     ).toBe(0.75);
     expect(evaluatePressureResponse(presetInput().dynamics.pressureOpacity, 0.2)).toBe(1);
   });
+
+  it.each(["pencil", "pen"] as const)(
+    "uses centerline mouse fallback but preserves stylus outline capability for %s",
+    (family) => {
+      const expressive = resolveBrushPreset(
+        createBrushPreset({
+          ...presetInput(),
+          id: `expressive-${family}`,
+          family,
+          renderer: { version: 1, kind: "outline" },
+        }),
+      );
+
+      expect(resolveBrushForPointerType(expressive, "mouse").renderer.kind).toBe("centerline");
+      expect(resolveBrushForPointerType(expressive, "pen").renderer.kind).toBe("outline");
+      expect(resolveBrushForPointerType(expressive, "touch").renderer.kind).toBe("outline");
+      expect(expressive.renderer.kind).toBe("outline");
+    },
+  );
 });
 
 function containsNonJsonValue(value: unknown): boolean {

@@ -9,7 +9,7 @@ import {
 export type ToolOptionControl = "color" | "continuous-number";
 
 export interface ToolOptionPropertyDescriptor extends EditablePropertyDescriptor<string | number> {
-  readonly key: "strokeColor" | "strokeWidth" | "opacity";
+  readonly key: "strokeColor" | "strokeWidth" | "opacity" | "smoothing";
   readonly control: ToolOptionControl;
   readonly defaultValue: string | number;
   readonly largeStep?: number;
@@ -23,6 +23,7 @@ export interface ToolOptionsDescriptor {
   readonly id: string;
   readonly tool: EditorTool;
   readonly displayName: string;
+  readonly preset: ToolPresetSelection | null;
   readonly properties: readonly ToolOptionPropertyDescriptor[];
   readonly preview: Readonly<{
     color: string;
@@ -32,24 +33,39 @@ export interface ToolOptionsDescriptor {
   }>;
 }
 
+export interface ToolPresetOption {
+  readonly id: string;
+  readonly name: string;
+  readonly defaultSize: number;
+  readonly defaultOpacity: number;
+  readonly defaultSmoothing: number;
+}
+
+export interface ToolPresetSelection {
+  readonly activeId: string;
+  readonly options: readonly ToolPresetOption[];
+}
+
 interface ToolOptionsProvider {
   readonly tool: EditorTool;
-  readonly describe: (brush: ResolvedDrawingBrush) => ToolOptionsDescriptor;
+  readonly describe: (
+    brush: ResolvedDrawingBrush,
+    presetSelection: ToolPresetSelection,
+  ) => ToolOptionsDescriptor;
 }
 
 export interface ToolOptionsDescriptorRegistry {
   readonly describe: (
     tool: EditorTool,
     brush: ResolvedDrawingBrush,
+    presetSelection?: ToolPresetSelection,
   ) => ToolOptionsDescriptor | null;
   readonly registeredTools: () => readonly EditorTool[];
 }
 
 interface DrawingToolOptionsConfiguration {
-  readonly tool: "Pen" | "Highlighter";
-  readonly presetKind: "pen" | "highlighter";
-  readonly defaultWidth: number;
-  readonly defaultOpacity: number;
+  readonly tool: "Pencil" | "Pen" | "Marker" | "Highlighter";
+  readonly presetKind: "pencil" | "pen" | "marker" | "highlighter";
   readonly widthConstraints: Readonly<{
     minimum: number;
     maximum: number;
@@ -75,8 +91,26 @@ class ToolOptionsDescriptorRegistryImplementation implements ToolOptionsDescript
     this.#providers = new Map(providers.map((provider) => [provider.tool, provider]));
   }
 
-  describe(tool: EditorTool, brush: ResolvedDrawingBrush): ToolOptionsDescriptor | null {
-    return this.#providers.get(tool)?.describe(brush) ?? null;
+  describe(
+    tool: EditorTool,
+    brush: ResolvedDrawingBrush,
+    presetSelection?: ToolPresetSelection,
+  ): ToolOptionsDescriptor | null {
+    const selection =
+      presetSelection ??
+      Object.freeze({
+        activeId: brush.presetId,
+        options: Object.freeze([
+          Object.freeze({
+            id: brush.presetId,
+            name: brush.presetId,
+            defaultSize: brush.size,
+            defaultOpacity: brush.opacity,
+            defaultSmoothing: brush.smoothing.amount,
+          }),
+        ]),
+      });
+    return this.#providers.get(tool)?.describe(brush, selection) ?? null;
   }
 
   registeredTools(): readonly EditorTool[] {
@@ -87,17 +121,23 @@ class ToolOptionsDescriptorRegistryImplementation implements ToolOptionsDescript
 export function createDefaultToolOptionsDescriptorRegistry(): ToolOptionsDescriptorRegistry {
   return new ToolOptionsDescriptorRegistryImplementation([
     createDrawingToolOptionsProvider({
+      tool: "Pencil",
+      presetKind: "pencil",
+      widthConstraints: DRAWING_WIDTH_CONSTRAINTS,
+    }),
+    createDrawingToolOptionsProvider({
       tool: "Pen",
       presetKind: "pen",
-      defaultWidth: 2,
-      defaultOpacity: 1,
+      widthConstraints: DRAWING_WIDTH_CONSTRAINTS,
+    }),
+    createDrawingToolOptionsProvider({
+      tool: "Marker",
+      presetKind: "marker",
       widthConstraints: DRAWING_WIDTH_CONSTRAINTS,
     }),
     createDrawingToolOptionsProvider({
       tool: "Highlighter",
       presetKind: "highlighter",
-      defaultWidth: 12,
-      defaultOpacity: 0.34,
       widthConstraints: DRAWING_WIDTH_CONSTRAINTS,
     }),
   ]);
@@ -108,43 +148,71 @@ function createDrawingToolOptionsProvider(
 ): ToolOptionsProvider {
   return Object.freeze({
     tool: configuration.tool,
-    describe: (brush: ResolvedDrawingBrush): ToolOptionsDescriptor => {
+    describe: (
+      brush: ResolvedDrawingBrush,
+      presetSelection: ToolPresetSelection,
+    ): ToolOptionsDescriptor => {
       if (brush.family !== configuration.presetKind) {
         throw new TypeError(`${configuration.tool} options require a matching drawing preset.`);
       }
       const color = brush.color;
       const width = brush.size;
       const opacity = brush.opacity;
+      const activePreset = presetSelection.options.find(
+        ({ id }) => id === presetSelection.activeId,
+      );
+      if (activePreset === undefined) {
+        throw new TypeError(`${configuration.tool} options require the active preset definition.`);
+      }
+      const properties: ToolOptionPropertyDescriptor[] = [
+        colorProperty(color),
+        numberProperty({
+          key: "strokeWidth",
+          displayName: "Size",
+          value: width,
+          ...configuration.widthConstraints,
+          defaultValue: activePreset.defaultSize,
+          precision: 1,
+          unit: "px",
+        }),
+        numberProperty({
+          key: "opacity",
+          displayName: "Opacity",
+          value: displayOpacityForTool(configuration.tool, opacity),
+          minimum: MIN_DRAWING_OPACITY,
+          maximum: 1,
+          step: 0.01,
+          largeStep: 0.05,
+          defaultValue: displayOpacityForTool(configuration.tool, activePreset.defaultOpacity),
+          displayScale: 100,
+          precision: 0,
+          unit: "%",
+          toModelValue: (value) => modelOpacityForTool(configuration.tool, value),
+        }),
+      ];
+      if (configuration.tool !== "Highlighter") {
+        properties.push(
+          numberProperty({
+            key: "smoothing",
+            displayName: "Smoothing",
+            value: brush.smoothing.amount,
+            minimum: 0,
+            maximum: 1,
+            step: 0.01,
+            largeStep: 0.05,
+            defaultValue: activePreset.defaultSmoothing,
+            displayScale: 100,
+            precision: 0,
+            unit: "%",
+          }),
+        );
+      }
       return Object.freeze({
         id: `${configuration.tool.toLowerCase()}-options`,
         tool: configuration.tool,
         displayName: configuration.tool,
-        properties: Object.freeze([
-          colorProperty(color),
-          numberProperty({
-            key: "strokeWidth",
-            displayName: "Width",
-            value: width,
-            ...configuration.widthConstraints,
-            defaultValue: configuration.defaultWidth,
-            precision: 1,
-            unit: "px",
-          }),
-          numberProperty({
-            key: "opacity",
-            displayName: "Opacity",
-            value: displayOpacityForTool(configuration.tool, opacity),
-            minimum: MIN_DRAWING_OPACITY,
-            maximum: 1,
-            step: 0.01,
-            largeStep: 0.05,
-            defaultValue: displayOpacityForTool(configuration.tool, configuration.defaultOpacity),
-            displayScale: 100,
-            precision: 0,
-            unit: "%",
-            toModelValue: (value) => modelOpacityForTool(configuration.tool, value),
-          }),
-        ]),
+        preset: presetSelection.options.length > 1 ? presetSelection : null,
+        properties: Object.freeze(properties),
         preview: Object.freeze({
           color,
           width,
@@ -171,7 +239,7 @@ function colorProperty(value: string): ToolOptionPropertyDescriptor {
 }
 
 function numberProperty(input: {
-  readonly key: "strokeWidth" | "opacity";
+  readonly key: "strokeWidth" | "opacity" | "smoothing";
   readonly displayName: string;
   readonly value: number;
   readonly minimum: number;

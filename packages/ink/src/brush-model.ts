@@ -111,13 +111,9 @@ export function resolveBrushForPointerType(
   pointerType: InkPointerType,
 ): ResolvedBrushSnapshot {
   const snapshot = createResolvedBrushSnapshot(brush);
-  // Mouse pressure is intentionally synthetic and fixed at 0.5, so current Pen strokes use the
-  // constant-width centerline strategy. Pen and touch retain the preset capability unchanged.
-  if (
-    pointerType !== "mouse" ||
-    snapshot.family !== "pen" ||
-    snapshot.renderer.kind !== "outline"
-  ) {
+  // Mouse pressure is intentionally synthetic and fixed at 0.5, so expressive outline brushes
+  // use the constant-width centerline strategy. Pen and touch retain the preset capability.
+  if (pointerType !== "mouse" || snapshot.renderer.kind !== "outline") {
     return snapshot;
   }
   return createResolvedBrushSnapshot({

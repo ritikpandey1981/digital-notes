@@ -8,7 +8,7 @@ import type {
   EditorViewportSnapshot,
   ViewportActions,
 } from "@folio/editor";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
@@ -30,8 +30,10 @@ interface EditorWorkspaceProps {
   toolOptions: ToolOptionsDescriptor | null;
   colors: EditorColorSystemSnapshot;
   onChangeDrawingColor: (color: string) => void;
+  onSelectDrawingPreset: (presetId: string) => void;
   onChangeDrawingWidth: (width: number) => void;
   onChangeDrawingOpacity: (opacity: number) => void;
+  onChangeDrawingSmoothing: (amount: number) => void;
   onChangeShapeStyle: (patch: ShapeStylePatch) => void;
   onDrawingColorUsed: (color: string) => void;
   onDismissFloatingWidget: () => void;
@@ -54,8 +56,10 @@ export function EditorWorkspace({
   toolOptions,
   colors,
   onChangeDrawingColor,
+  onSelectDrawingPreset,
   onChangeDrawingWidth,
   onChangeDrawingOpacity,
+  onChangeDrawingSmoothing,
   onChangeShapeStyle,
   onDrawingColorUsed,
   onDismissFloatingWidget,
@@ -66,6 +70,14 @@ export function EditorWorkspace({
   onViewportChange,
   onViewportNavigationLearned,
 }: EditorWorkspaceProps) {
+  const workspaceRef = useRef<HTMLElement | null>(null);
+  const renderCountRef = useRef(0);
+  useLayoutEffect(() => {
+    renderCountRef.current += 1;
+    if (workspaceRef.current !== null) {
+      workspaceRef.current.dataset.renderCount = String(renderCountRef.current);
+    }
+  });
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
   const shapeEditingActionsRef = useRef<ShapeEditingActions | null>(null);
   const [shapeEditingSnapshot, setShapeEditingSnapshot] = useState<ShapeEditingSnapshot | null>(
@@ -98,13 +110,16 @@ export function EditorWorkspace({
   );
   return (
     <section
+      ref={workspaceRef}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
       aria-label="Notebook workspace"
+      data-testid="editor-workspace"
     >
       <CanvasHost
         activeTool={activeTool}
         armedShape={armedShape}
         drawingStyle={drawingStyle}
+        viewportSnapshot={viewportSnapshot}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
         onShapeEditingActionsReady={handleShapeEditingActionsReady}
         onShapeEditingChange={handleShapeEditingChange}
@@ -131,9 +146,11 @@ export function EditorWorkspace({
       <ToolOptionsWidget
         descriptor={toolOptions}
         colors={colors}
+        onSelectPreset={onSelectDrawingPreset}
         onChangeColor={onChangeDrawingColor}
         onChangeWidth={onChangeDrawingWidth}
         onChangeOpacity={onChangeDrawingOpacity}
+        onChangeSmoothing={onChangeDrawingSmoothing}
         onDismiss={onDismissFloatingWidget}
         previewScale={viewportSnapshot.zoom}
       />

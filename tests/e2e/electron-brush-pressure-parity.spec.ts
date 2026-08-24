@@ -27,7 +27,8 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "20");
+    await window.getByRole("combobox", { name: "Pen preset" }).selectOption("pen-brush");
+    await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "20");
     await window.keyboard.press("Escape");
 
     const pressureSamples = [

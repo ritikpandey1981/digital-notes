@@ -14,6 +14,8 @@ import { createStrokeVisual, type Stroke, type StrokeVisual } from "@folio/ink";
 import type { OverlayRenderHook, TransformPreviewVisual } from "@folio/rendering";
 import type { VectorShapeDraft } from "./VectorShapeCreation";
 
+const MAX_STROKE_VISUAL_SCALE_CACHE_ENTRIES = 8;
+
 interface VectorRenderable {
   readonly type: VectorObjectType;
   readonly geometry: VectorGeometry;
@@ -108,6 +110,10 @@ function resolveStrokeVisual(
   let visual = byScale.get(object.transform.scale);
   if (visual === undefined) {
     visual = createStrokeVisual(object.stroke, object.transform.scale);
+    if (byScale.size >= MAX_STROKE_VISUAL_SCALE_CACHE_ENTRIES) {
+      const oldestScale = byScale.keys().next().value as number | undefined;
+      if (oldestScale !== undefined) byScale.delete(oldestScale);
+    }
     byScale.set(object.transform.scale, visual);
   }
   return visual;

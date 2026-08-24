@@ -1,5 +1,15 @@
 import { cn } from "@folio/ui";
-import { Eraser, Highlighter, MousePointer2, PenLine, Shapes, type LucideIcon } from "lucide-react";
+import {
+  Eraser,
+  Highlighter,
+  MousePointer2,
+  Paintbrush,
+  Pencil,
+  PenLine,
+  Shapes,
+  type LucideIcon,
+} from "lucide-react";
+import { useLayoutEffect, useRef } from "react";
 import type { EditorTool } from "./editor-types";
 import { ToolTooltip } from "./ToolTooltip";
 
@@ -19,7 +29,9 @@ const selectionTools = [
 ] satisfies readonly ToolDefinition[];
 
 const drawingTools = [
+  { label: "Pencil", icon: Pencil },
   { label: "Pen", icon: PenLine },
+  { label: "Marker", icon: Paintbrush },
   { label: "Highlighter", icon: Highlighter },
   { label: "Eraser", icon: Eraser },
 ] satisfies readonly ToolDefinition[];
@@ -30,9 +42,18 @@ const dockButtonClassName =
   "group relative flex size-9 shrink-0 items-center justify-center rounded-[9px] text-[var(--folio-icon-neutral)] transition-[background-color,color,box-shadow] duration-100 ease-out hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent disabled:pointer-events-none disabled:opacity-40";
 
 export function ToolDock({ activeTool, onSelectTool }: ToolDockProps) {
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  const renderCountRef = useRef(0);
+  useLayoutEffect(() => {
+    renderCountRef.current += 1;
+    if (dockRef.current !== null) {
+      dockRef.current.dataset.renderCount = String(renderCountRef.current);
+    }
+  });
   return (
     <div className="pointer-events-none absolute left-4 top-1/2 z-20 -translate-y-1/2">
       <div
+        ref={dockRef}
         className="folio-floating-surface pointer-events-auto flex w-12 flex-col items-center p-1"
         role="toolbar"
         aria-label="Notebook tool dock"

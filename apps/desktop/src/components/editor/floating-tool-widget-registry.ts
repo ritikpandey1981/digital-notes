@@ -13,7 +13,9 @@ interface FloatingToolWidgetRegistration {
 }
 
 const defaultRegistrations: readonly FloatingToolWidgetRegistration[] = Object.freeze([
+  Object.freeze({ tool: "Pencil", widget: "drawing-options" }),
   Object.freeze({ tool: "Pen", widget: "drawing-options" }),
+  Object.freeze({ tool: "Marker", widget: "drawing-options" }),
   Object.freeze({ tool: "Highlighter", widget: "drawing-options" }),
   Object.freeze({ tool: "Shapes", widget: "shapes" }),
 ]);

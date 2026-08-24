@@ -25,7 +25,15 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
         0,
       );
     }
-    for (const retainedTool of ["Select", "Pen", "Highlighter", "Eraser", "Shapes"] as const) {
+    for (const retainedTool of [
+      "Select",
+      "Pencil",
+      "Pen",
+      "Marker",
+      "Highlighter",
+      "Eraser",
+      "Shapes",
+    ] as const) {
       await expect(toolDock.getByRole("button", { name: retainedTool, exact: true })).toBeVisible();
     }
     for (const individualShape of ["Line", "Rectangle", "Ellipse"] as const) {
@@ -40,8 +48,6 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       await expect(shapesWidget.getByRole("button", { name: shape, exact: true })).toBeVisible();
     }
     for (const futureTool of [
-      "Pencil",
-      "Marker",
       "Layers",
       "Reference",
       "AI",

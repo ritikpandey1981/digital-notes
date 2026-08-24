@@ -2,6 +2,7 @@ import type { EditorColorSystemSnapshot } from "@folio/editor";
 import { cn } from "@folio/ui";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { ChangeEvent, FocusEvent, ReactNode } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { StrokePreviewCanvas } from "./StrokePreviewCanvas";
 import type { ToolOptionPropertyDescriptor, ToolOptionsDescriptor } from "./tool-options-registry";
@@ -16,9 +17,11 @@ import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
 interface ToolOptionsWidgetProps {
   readonly descriptor: ToolOptionsDescriptor | null;
   readonly colors: EditorColorSystemSnapshot;
+  readonly onSelectPreset: (presetId: string) => void;
   readonly onChangeColor: (color: string) => void;
   readonly onChangeWidth: (width: number) => void;
   readonly onChangeOpacity: (opacity: number) => void;
+  readonly onChangeSmoothing: (amount: number) => void;
   readonly onDismiss: () => void;
   readonly previewScale: number;
 }
@@ -50,25 +53,38 @@ const propertyControlRenderers: Readonly<Record<string, PropertyControlRenderer>
       onChange={(value) => context.onChange(descriptor.toModelValue?.(value) ?? value)}
     />
   ),
+  smoothing: (descriptor, context) => (
+    <ContinuousSlider descriptor={descriptor} onChange={(value) => context.onChange(value)} />
+  ),
 });
 
 export function ToolOptionsWidget({
   descriptor,
   colors,
+  onSelectPreset,
   onChangeColor,
   onChangeWidth,
   onChangeOpacity,
+  onChangeSmoothing,
   onDismiss,
   previewScale,
 }: ToolOptionsWidgetProps) {
+  const renderCountRef = useRef(0);
   const reducedMotion = useReducedMotion() === true;
   const paletteVisible = descriptor !== null;
   const paletteRef = useFloatingWidgetDismissal(paletteVisible, onDismiss);
+  useLayoutEffect(() => {
+    renderCountRef.current += 1;
+    if (paletteRef.current !== null) {
+      paletteRef.current.dataset.renderCount = String(renderCountRef.current);
+    }
+  });
 
   const propertyActions: Readonly<Record<string, (value: string | number) => void>> = {
     strokeColor: (value) => onChangeColor(requireString(value, "Stroke color")),
     strokeWidth: (value) => onChangeWidth(requireNumber(value, "Stroke width")),
     opacity: (value) => onChangeOpacity(requireNumber(value, "Opacity")),
+    smoothing: (value) => onChangeSmoothing(requireNumber(value, "Smoothing")),
   };
 
   return (
@@ -123,6 +139,25 @@ export function ToolOptionsWidget({
                   Live
                 </span>
               </div>
+              {descriptor.preset === null ? null : (
+                <label className="mb-1 flex items-center gap-2 rounded-xl px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted transition-colors duration-100 hover:bg-folio-hover">
+                  <span className="shrink-0">Preset</span>
+                  <select
+                    className="h-7 min-w-0 flex-1 cursor-pointer rounded-lg border border-folio-border bg-folio-surface px-2 text-[11px] font-medium normal-case tracking-normal text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                    value={descriptor.preset.activeId}
+                    aria-label={`${descriptor.displayName} preset`}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                      onSelectPreset(event.currentTarget.value)
+                    }
+                  >
+                    {descriptor.preset.options.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <StrokePreviewCanvas descriptor={descriptor} renderScale={previewScale} />
               <span className="my-1 h-px w-full bg-folio-border" aria-hidden="true" />
               {descriptor.properties.map((property) => {

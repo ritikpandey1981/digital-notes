@@ -47,7 +47,7 @@ export function createBrushRenderGeometry(
   renderedScale = 1,
 ): BrushRenderGeometry {
   assertScale(renderedScale);
-  const path = createProfessionalInkPath(points);
+  const path = createProfessionalInkPath(points, brush.smoothing);
   return createGeometry(path, brush, renderedScale);
 }
 
@@ -59,7 +59,7 @@ export function resolveStrokeRenderGeometry(
   assertScale(renderedScale);
   let cache = strokeCaches.get(stroke);
   if (cache === undefined) {
-    const path = createProfessionalInkPath(stroke.points);
+    const path = createProfessionalInkPath(stroke.points, stroke.brush.smoothing);
     const centerline = createCenterlineGeometry(path, stroke.brush, 1);
     cache = { path, centerline, outlines: new Map(), outlineBuildCount: 0 };
     strokeCaches.set(stroke, cache);

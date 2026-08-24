@@ -8,19 +8,30 @@ describe("floating tool widget registry", () => {
   it("maps every current floating tool into one shared widget lifecycle", () => {
     const registry = createFloatingToolWidgetRegistry();
 
-    expect(registry.registeredTools()).toEqual(["Pen", "Highlighter", "Shapes"]);
+    expect(registry.registeredTools()).toEqual([
+      "Pencil",
+      "Pen",
+      "Marker",
+      "Highlighter",
+      "Shapes",
+    ]);
+    expect(registry.widgetFor("Pencil")).toBe("drawing-options");
     expect(registry.widgetFor("Pen")).toBe("drawing-options");
     expect(registry.widgetFor("Highlighter")).toBe("drawing-options");
+    expect(registry.widgetFor("Marker")).toBe("drawing-options");
     expect(registry.widgetFor("Shapes")).toBe("shapes");
     expect(registry.widgetFor("Select")).toBeNull();
   });
 
-  it("activates an inactive Pen or Highlighter without opening settings", () => {
+  it("activates an inactive brush without opening settings", () => {
     const registry = createFloatingToolWidgetRegistry();
 
     expect(resolveFloatingWidgetAfterToolSelection("Select", "Pen", null, registry)).toBeNull();
     expect(
       resolveFloatingWidgetAfterToolSelection("Pen", "Highlighter", "drawing-options", registry),
+    ).toBeNull();
+    expect(
+      resolveFloatingWidgetAfterToolSelection("Highlighter", "Marker", "drawing-options", registry),
     ).toBeNull();
   });
 

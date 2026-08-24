@@ -54,7 +54,14 @@ function createHarness(
   brush?: ResolvedBrushSnapshot,
 ) {
   const context = createContext();
-  const canvas = { dataset: {} as DOMStringMap } as HTMLCanvasElement;
+  let datasetWrites = 0;
+  const dataset = new Proxy({} as DOMStringMap, {
+    set(target, property, value) {
+      datasetWrites += 1;
+      return Reflect.set(target, property, value);
+    },
+  });
+  const canvas = { dataset } as HTMLCanvasElement;
   const viewport = new Viewport({
     size: { width: 1_000, height: 800 },
     pageRect: { x: 0, y: 0, width: 600, height: 700 },
@@ -99,7 +106,18 @@ function createHarness(
     if (update === null) throw new Error("Expected a distinct point.");
     return update;
   };
-  return { context, canvas, viewport, renderer, builder, frames, invalidations, flush, add };
+  return {
+    context,
+    canvas,
+    viewport,
+    renderer,
+    builder,
+    frames,
+    invalidations,
+    flush,
+    add,
+    datasetWrites: () => datasetWrites,
+  };
 }
 
 function createOutlineBrush(): ResolvedBrushSnapshot {
@@ -154,6 +172,23 @@ function createDenseStroke(id = "dense-stroke", pointCount = 400) {
 }
 
 describe("StrokeRenderer", () => {
+  it("publishes diagnostics once per rendered frame instead of once per accepted sample", () => {
+    const harness = createHarness();
+    harness.renderer.beginStroke(harness.add(point(10, 10, 0)));
+    for (let index = 1; index <= 240; index += 1) {
+      harness.renderer.updateStroke(harness.add(point(10 + index, 10, index)));
+    }
+
+    expect(harness.renderer.snapshot()).toMatchObject({
+      livePointCount: 241,
+      renderCount: 0,
+      invalidationCount: 241,
+    });
+    expect(harness.datasetWrites()).toBe(0);
+    harness.flush();
+    expect(harness.datasetWrites()).toBe(15);
+  });
+
   it("coalesces live updates and draws only invalidated page regions", () => {
     const harness = createHarness();
     harness.renderer.beginStroke(harness.add(point(10, 10, 0)));

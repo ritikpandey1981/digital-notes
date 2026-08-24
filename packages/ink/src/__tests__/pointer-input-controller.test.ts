@@ -11,9 +11,21 @@ import { StrokeSmoother } from "../stroke-smoother";
 
 function createTarget() {
   const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  const viewListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   const captured = new Set<number>();
   let failCapture = false;
+  const view = {
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+      const group = viewListeners.get(type) ?? new Set();
+      group.add(listener);
+      viewListeners.set(type, group);
+    },
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+      viewListeners.get(type)?.delete(listener);
+    },
+  } as unknown as Window;
   const target = {
+    ownerDocument: { defaultView: view },
     addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
       const group = listeners.get(type) ?? new Set();
       group.add(listener);
@@ -36,7 +48,14 @@ function createTarget() {
   return {
     target,
     listeners,
+    viewListeners,
     captured,
+    dispatchWindowBlur() {
+      for (const listener of viewListeners.get("blur") ?? []) {
+        if (typeof listener === "function") listener(new Event("blur"));
+        else listener.handleEvent(new Event("blur"));
+      }
+    },
     setCaptureFailure(value: boolean) {
       failCapture = value;
     },
@@ -96,9 +115,10 @@ function createHarness(
   const onStrokeFinalized = vi.fn();
   const onStrokeCancelled = vi.fn();
   const onError = vi.fn();
+  const getCanvasBounds = vi.fn(() => bounds);
   const controller = new PointerInputController({
     coordinateConverter: new CoordinateConverter(viewport),
-    getCanvasBounds: () => bounds,
+    getCanvasBounds,
     ...(useDefaultSmoother ? {} : { smoother: new StrokeSmoother({ mode: "none" }) }),
     ...(resolveBrush === undefined ? {} : { resolveBrush }),
     createId: () => "pointer-stroke",
@@ -117,6 +137,7 @@ function createHarness(
     onStrokeFinalized,
     onStrokeCancelled,
     onError,
+    getCanvasBounds,
   };
 }
 
@@ -186,6 +207,30 @@ describe("PointerInputController", () => {
     );
     expect(harness.onStrokeUpdate).toHaveBeenCalledTimes(4);
     expect(harness.onStrokeFinalized.mock.calls[0]?.[0].pointCount).toBe(5);
+  });
+
+  it("reads layout once for a coalesced event batch and refreshes it for the next event", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent());
+    harness.controller.handlePointerMove(
+      pointerEvent({
+        pointerType: "pen",
+        coalesced: Array.from({ length: 240 }, (_, index) =>
+          pointerEvent({
+            x: 501 + index,
+            timestamp: 101 + index,
+            pointerType: "pen",
+            pressure: 0.4,
+          }),
+        ),
+      }),
+    );
+    harness.controller.handlePointerMove(
+      pointerEvent({ pointerType: "pen", x: 750, timestamp: 350, pressure: 0.5 }),
+    );
+
+    expect(harness.onStrokeUpdate).toHaveBeenCalledTimes(241);
+    expect(harness.getCanvasBounds).toHaveBeenCalledTimes(3);
   });
 
   it("retains meaningful coalesced stationary process samples without duplicate geometry", () => {
@@ -338,6 +383,19 @@ describe("PointerInputController", () => {
     mouse.controller.handlePointerMove(pointerEvent({ buttons: 0, timestamp: 110 }));
     expect(mouse.onError).toHaveBeenCalledWith(expect.objectContaining({ code: "LOST_POINTER" }));
     expect(mouse.controller.hasActivePointer).toBe(false);
+  });
+
+  it("cancels active buffers on window blur and removes the listener on destroy", () => {
+    const harness = createHarness();
+    harness.controller.handlePointerDown(pointerEvent({ pointerType: "pen" }));
+    harness.dispatchWindowBlur();
+
+    expect(harness.controller.hasActivePointer).toBe(false);
+    expect(harness.onStrokeCancelled).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "lost-capture" }),
+    );
+    harness.controller.destroy();
+    expect(harness.viewListeners.get("blur")?.size ?? 0).toBe(0);
   });
 
   it("rejects unsupported, non-primary, simultaneous, and non-primary-button pointers", () => {

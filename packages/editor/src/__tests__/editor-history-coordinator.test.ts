@@ -217,6 +217,46 @@ describe("EditorHistoryCoordinator", () => {
     coordinator.destroy();
   });
 
+  it("restores 100 immutable brush snapshots through repeated Undo and Redo", () => {
+    let objectIndex = 0;
+    const session = new InkDocumentSession({
+      createId: () => `stress-object-${++objectIndex}`,
+      now: () => OBJECT_TIMESTAMP,
+    });
+    const coordinator = createEditorHistoryCoordinator({
+      documentSession: session,
+      onDocumentChange: () => undefined,
+    });
+    const objects = Array.from({ length: 100 }, (_, index) =>
+      session.createStrokeObject(createStroke(`stress-stroke-${index}`)),
+    );
+
+    for (const object of objects) coordinator.executeStroke(object);
+    expect(session.collection.size).toBe(100);
+    expect(coordinator.controller.getHistoryState()).toMatchObject({
+      undoDepth: 100,
+      redoDepth: 0,
+    });
+
+    for (let index = 0; index < objects.length; index += 1) coordinator.undo();
+    expect(session.collection.size).toBe(0);
+    for (let index = 0; index < objects.length; index += 1) coordinator.redo();
+
+    expect(session.collection.objects).toHaveLength(100);
+    for (const original of objects) {
+      const restored = session.collection.lookup(original.id);
+      expect(restored).toBeInstanceOf(InkObject);
+      expect((restored as InkObject).stroke).toBe(original.stroke);
+      expect((restored as InkObject).stroke.brush).toBe(original.stroke.brush);
+    }
+    expect(coordinator.controller.getHistoryState()).toMatchObject({
+      undoDepth: 100,
+      redoDepth: 0,
+      executionCounter: 300,
+    });
+    coordinator.destroy();
+  });
+
   it("groups duplicate creation and its deterministic offset into one undo step", () => {
     const session = createDocumentSession();
     const source = expectInkObject(session);

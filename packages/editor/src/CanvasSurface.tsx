@@ -320,7 +320,14 @@ export function CanvasSurface({
   onViewportNavigationLearned,
   onError,
 }: CanvasSurfaceProps) {
+  const renderCountRef = useRef(0);
   const hostRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    renderCountRef.current += 1;
+    if (hostRef.current !== null) {
+      hostRef.current.dataset.renderCount = String(renderCountRef.current);
+    }
+  });
   const [contextMenu, setContextMenu] = useState<EditorContextMenuState | null>(null);
   const interactionModeRef = useRef(interactionMode);
   const drawingStyleRef = useRef(drawingStyle);
@@ -616,6 +623,7 @@ export function CanvasSurface({
             pointerType: object.stroke.sourceSamples[0]?.pointerType ?? "mouse",
             size: object.stroke.brush.size,
             opacity: object.stroke.brush.opacity,
+            smoothing: object.stroke.brush.smoothing.amount,
           }));
         const vectorStyles = documentSession.collection.objects
           .filter(isVectorObject)
@@ -2363,6 +2371,9 @@ export function CanvasSurface({
         host.dataset.drawingWidth = String(style.width);
         host.dataset.drawingOpacity = String(style.opacity);
         host.dataset.drawingPressure = String(style.pressureEnabled);
+        host.dataset.drawingBrushFamily = style.brush?.family ?? "";
+        host.dataset.drawingPresetId = style.brush?.presetId ?? "";
+        host.dataset.drawingSmoothing = String(style.brush?.smoothing.amount ?? 0);
       };
       toolRegistryRef.current = activeToolRegistry;
       updateToolDiagnosticsRef.current = updateToolDiagnostics;

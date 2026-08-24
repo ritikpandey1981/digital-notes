@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { EditorTool } from "./editor-types";
-import { cursorPresentationForTool } from "./editor-cursor-policy";
+import {
+  brushCursorDiameter,
+  cursorPresentationForTool,
+  pointIsWithinBrushPage,
+  usesImperativeBrushCursor,
+} from "./editor-cursor-policy";
 
 describe("desktop editor cursor policy", () => {
-  it("gives pen, highlighter, and eraser distinct custom cursors", () => {
-    const pen = cursorPresentationForTool("Pen");
-    const highlighter = cursorPresentationForTool("Highlighter");
+  it("delegates brush tools to the imperative ring while retaining the eraser cursor", () => {
+    const brushes = ["Pencil", "Pen", "Marker", "Highlighter"] as const;
     const eraser = cursorPresentationForTool("Eraser");
 
-    expect(pen.id).toBe("pen");
-    expect(highlighter.id).toBe("highlighter");
+    expect(brushes.map((tool) => cursorPresentationForTool(tool).css)).toEqual([
+      "none",
+      "none",
+      "none",
+      "none",
+    ]);
     expect(eraser.id).toBe("eraser");
-    expect(pen.css).toContain("data:image/svg+xml");
-    expect(new Set([pen.css, highlighter.css, eraser.css])).toHaveLength(3);
+    expect(eraser.css).toContain("data:image/svg+xml");
   });
 
   it("defines a cursor presentation for every desktop tool", () => {
@@ -21,7 +28,9 @@ describe("desktop editor cursor policy", () => {
       "Move",
       "Rotate",
       "Scale",
+      "Pencil",
       "Pen",
+      "Marker",
       "Highlighter",
       "Eraser",
       "Shapes",
@@ -36,7 +45,9 @@ describe("desktop editor cursor policy", () => {
       "move",
       "rotate",
       "scale",
+      "pencil",
       "pen",
+      "marker",
       "highlighter",
       "eraser",
       "shapes",
@@ -62,5 +73,25 @@ describe("desktop editor cursor policy", () => {
     expect(cursorPresentationForTool("Move").css).toBeNull();
     expect(cursorPresentationForTool("Rotate").css).toBeNull();
     expect(cursorPresentationForTool("Scale").css).toBeNull();
+  });
+
+  it("scales nominal brush size with zoom while enforcing the CSS visibility minimum", () => {
+    expect(brushCursorDiameter(1, 0.5)).toBe(7);
+    expect(brushCursorDiameter(12, 1)).toBe(12);
+    expect(brushCursorDiameter(12, 2)).toBe(24);
+    expect(() => brushCursorDiameter(0, 1)).toThrow(RangeError);
+  });
+
+  it("limits the ring to brush tools and the visible page hit region", () => {
+    expect(
+      ["Pencil", "Pen", "Marker", "Highlighter"].every((tool) =>
+        usesImperativeBrushCursor(tool as EditorTool),
+      ),
+    ).toBe(true);
+    expect(usesImperativeBrushCursor("Eraser")).toBe(false);
+    const page = { x: 100, y: 80, width: 600, height: 800 };
+    expect(pointIsWithinBrushPage({ x: 100, y: 80 }, page)).toBe(true);
+    expect(pointIsWithinBrushPage({ x: 700, y: 880 }, page)).toBe(true);
+    expect(pointIsWithinBrushPage({ x: 99, y: 80 }, page)).toBe(false);
   });
 });

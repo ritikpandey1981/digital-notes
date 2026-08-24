@@ -46,7 +46,7 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");
     expect(await stackingLevel(tooltipLayer)).toBeGreaterThan(await parentStackingLevel(palette));
     await window.getByRole("button", { name: "Use color #2563eb" }).click();
-    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "8");
+    await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
 

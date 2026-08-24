@@ -24,8 +24,8 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     const baseCanvas = host.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
     await expect(surface).toHaveAttribute("data-tool-registry-size", "11");
-    await expect(window.getByRole("button", { name: "Pencil", exact: true })).toHaveCount(0);
-    await expect(window.getByRole("button", { name: "Marker", exact: true })).toHaveCount(0);
+    await expect(window.getByRole("button", { name: "Pencil", exact: true })).toBeVisible();
+    await expect(window.getByRole("button", { name: "Marker", exact: true })).toBeVisible();
     await inkCanvas.evaluate((canvas) => {
       canvas.dataset.phase14LifecycleToken = "mounted-once";
     });
@@ -43,7 +43,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Use color #2563eb" }).click();
-    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "8");
+    await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
     await drawPath(window, pageToScreen, [
       { x: 120, y: 180 },
@@ -52,11 +52,11 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     ]);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     expect(await strokeStyles(surface)).toMatchObject([
-      { color: "#2563eb", width: 8, opacity: 0.8, pressureEnabled: true },
+      { color: "#2563eb", width: 8, opacity: 0.8, pressureEnabled: false },
     ]);
     expect(await strokeBrushes(surface)).toMatchObject([
       {
-        presetId: "pen-black",
+        presetId: "pen-fineliner",
         presetVersion: 1,
         family: "pen",
         rendererKind: "centerline",
@@ -68,7 +68,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
-    await setNumericValue(window.getByRole("spinbutton", { name: "Width value" }), "4");
+    await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "4");
     await drawPath(window, pageToScreen, [
       { x: 120, y: 260 },
       { x: 190, y: 270 },
@@ -79,8 +79,8 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     expect(penStyles[0]).toMatchObject({ color: "#2563eb", width: 8, opacity: 0.8 });
     expect(penStyles[1]).toMatchObject({ color: "#dc2626", width: 4, opacity: 0.8 });
     expect(await strokeBrushes(surface)).toMatchObject([
-      { presetId: "pen-black", family: "pen", size: 8, opacity: 0.8 },
-      { presetId: "pen-black", family: "pen", size: 4, opacity: 0.8 },
+      { presetId: "pen-fineliner", family: "pen", size: 8, opacity: 0.8 },
+      { presetId: "pen-fineliner", family: "pen", size: 4, opacity: 0.8 },
     ]);
 
     await window.getByRole("button", { name: "Highlighter", exact: true }).click();
@@ -100,7 +100,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       pressureEnabled: false,
     });
     expect((await strokeBrushes(surface))[2]).toMatchObject({
-      presetId: "highlighter-yellow",
+      presetId: "highlighter-default",
       presetVersion: 1,
       family: "highlighter",
       rendererKind: "centerline",
@@ -211,7 +211,7 @@ interface StrokeStyleDiagnostic {
 interface StrokeBrushDiagnostic {
   readonly presetId: string;
   readonly presetVersion: number;
-  readonly family: "pen" | "highlighter";
+  readonly family: "pencil" | "pen" | "marker" | "highlighter";
   readonly rendererKind: "centerline" | "outline";
   readonly size: number;
   readonly opacity: number;

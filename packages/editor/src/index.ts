@@ -8,6 +8,7 @@ export {
 } from "./foundation/color-system";
 export {
   DEFAULT_BRUSH_PRESETS,
+  DEFAULT_BRUSH_PRESET_IDS,
   DEFAULT_PEN_PRESETS,
   EDITOR_STROKE_WIDTHS,
   createBrushToolStateStore,

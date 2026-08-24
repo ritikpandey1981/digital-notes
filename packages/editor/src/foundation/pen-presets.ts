@@ -4,11 +4,12 @@ import {
   resolveBrushPreset,
   type BrushFamily,
   type BrushPreset,
+  type BrushRendererKind,
   type BrushSmoothing,
   type ResolvedBrushSnapshot,
 } from "@folio/ink";
 
-export type DrawingToolKind = Extract<BrushFamily, "pen" | "highlighter">;
+export type DrawingToolKind = BrushFamily;
 export type ResolvedDrawingBrush = ResolvedBrushSnapshot;
 
 export interface ActiveToolState {
@@ -57,13 +58,118 @@ export interface BrushToolStateStore {
 
 export const EDITOR_STROKE_WIDTHS: readonly number[] = Object.freeze([1, 2, 4, 6, 8, 12, 16]);
 
+export const DEFAULT_BRUSH_PRESET_IDS: Readonly<Record<DrawingToolKind, string>> = Object.freeze({
+  pencil: "pencil-hb",
+  pen: "pen-fineliner",
+  marker: "marker-felt",
+  highlighter: "highlighter-default",
+});
+
 export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
-  createCurrentPreset("pen-black", "Black", "pen", "#111111", 2, 1, true),
-  createCurrentPreset("pen-blue", "Blue", "pen", "#2563eb", 4, 1, true),
-  createCurrentPreset("pen-red", "Red", "pen", "#dc2626", 6, 1, true),
-  createCurrentPreset("highlighter-yellow", "Yellow", "highlighter", "#facc15", 12, 0.34, false),
-  createCurrentPreset("highlighter-green", "Green", "highlighter", "#4ade80", 12, 0.3, false),
-  createCurrentPreset("highlighter-pink", "Pink", "highlighter", "#f472b6", 16, 0.3, false),
+  createCatalogPreset({
+    id: "pencil-hb",
+    name: "HB",
+    family: "pencil",
+    color: "#343434",
+    size: 2,
+    opacity: 0.78,
+    smoothing: 0.2,
+    pressureRange: [0.65, 1.25],
+    renderer: "outline",
+  }),
+  createCatalogPreset({
+    id: "pencil-2b",
+    name: "2B",
+    family: "pencil",
+    color: "#343434",
+    size: 3,
+    opacity: 0.86,
+    smoothing: 0.18,
+    pressureRange: [0.55, 1.35],
+    renderer: "outline",
+  }),
+  createCatalogPreset({
+    id: "pencil-4b",
+    name: "4B",
+    family: "pencil",
+    color: "#343434",
+    size: 5,
+    opacity: 0.9,
+    smoothing: 0.16,
+    pressureRange: [0.45, 1.5],
+    renderer: "outline",
+  }),
+  createCatalogPreset({
+    id: "pencil-mechanical",
+    name: "Mechanical Pencil",
+    family: "pencil",
+    color: "#343434",
+    size: 1.2,
+    opacity: 0.85,
+    smoothing: 0.12,
+    renderer: "centerline",
+  }),
+  createCatalogPreset({
+    id: "pen-fineliner",
+    name: "Fineliner",
+    family: "pen",
+    color: "#111111",
+    size: 2,
+    opacity: 1,
+    smoothing: 0.2,
+    renderer: "centerline",
+  }),
+  createCatalogPreset({
+    id: "pen-technical",
+    name: "Technical Pen",
+    family: "pen",
+    color: "#111111",
+    size: 1.5,
+    opacity: 1,
+    smoothing: 0.3,
+    renderer: "centerline",
+  }),
+  createCatalogPreset({
+    id: "pen-brush",
+    name: "Brush Pen",
+    family: "pen",
+    color: "#111111",
+    size: 6,
+    opacity: 1,
+    smoothing: 0.18,
+    pressureRange: [0.35, 1.65],
+    renderer: "outline",
+  }),
+  createCatalogPreset({
+    id: "marker-felt",
+    name: "Felt Marker",
+    family: "marker",
+    color: "#1f2937",
+    size: 8,
+    opacity: 0.9,
+    smoothing: 0.22,
+    renderer: "centerline",
+  }),
+  createCatalogPreset({
+    id: "marker-broad",
+    name: "Broad Marker",
+    family: "marker",
+    color: "#1f2937",
+    size: 16,
+    opacity: 0.82,
+    smoothing: 0.25,
+    renderer: "centerline",
+  }),
+  createCatalogPreset({
+    id: "highlighter-default",
+    name: "Default Highlighter",
+    family: "highlighter",
+    color: "#facc15",
+    size: 12,
+    opacity: 0.34,
+    smoothing: 0,
+    renderer: "centerline",
+  }),
 ]);
 
 class BrushToolStateStoreImplementation implements BrushToolStateStore {
@@ -73,18 +179,21 @@ class BrushToolStateStoreImplementation implements BrushToolStateStore {
 
   constructor(presets: readonly BrushPreset[]) {
     this.#presets = Object.freeze(presets.map(createBrushPreset));
-    const pen = this.#presets.find(({ family }) => family === "pen");
-    const highlighter = this.#presets.find(({ family }) => family === "highlighter");
-    if (pen === undefined || highlighter === undefined) {
-      throw new TypeError("Brush presets require at least one pen and one highlighter.");
-    }
     if (new Set(this.#presets.map(({ id }) => id)).size !== this.#presets.length) {
       throw new TypeError("Brush preset identities must be unique.");
     }
-    this.#activeStates = Object.freeze({
-      pen: createActiveState(pen),
-      highlighter: createActiveState(highlighter),
-    });
+    const defaults = Object.fromEntries(
+      (Object.keys(DEFAULT_BRUSH_PRESET_IDS) as DrawingToolKind[]).map((family) => {
+        const preset = this.#presets.find(({ id }) => id === DEFAULT_BRUSH_PRESET_IDS[family]);
+        const fallback = this.#presets.find((candidate) => candidate.family === family);
+        const selected = preset?.family === family ? preset : fallback;
+        if (selected === undefined) {
+          throw new TypeError(`Brush presets require at least one ${family} definition.`);
+        }
+        return [family, createActiveState(selected)];
+      }),
+    ) as Record<DrawingToolKind, ActiveToolState>;
+    this.#activeStates = Object.freeze(defaults);
   }
 
   snapshot(): BrushToolStateStoreSnapshot {
@@ -92,7 +201,9 @@ class BrushToolStateStoreImplementation implements BrushToolStateStore {
       presets: this.#presets,
       activeStates: this.#activeStates,
       activePresetIds: Object.freeze({
+        pencil: this.#activeStates.pencil.presetId,
         pen: this.#activeStates.pen.presetId,
+        marker: this.#activeStates.marker.presetId,
         highlighter: this.#activeStates.highlighter.presetId,
       }),
       version: this.#version,
@@ -131,8 +242,9 @@ class BrushToolStateStoreImplementation implements BrushToolStateStore {
     if (preset === undefined || preset.family !== family) {
       throw new TypeError(`Preset '${presetId}' is not registered for ${family}.`);
     }
-    if (this.#activeStates[family].presetId === presetId) return this.snapshot();
-    this.installState(family, createActiveState(preset));
+    const active = this.#activeStates[family];
+    if (active.presetId === presetId) return this.snapshot();
+    this.installState(family, createActiveState(preset, active.color));
     return this.snapshot();
   }
 
@@ -183,31 +295,39 @@ export function createBrushToolStateStore(
   return new BrushToolStateStoreImplementation(presets);
 }
 
-function createCurrentPreset(
-  id: string,
-  name: string,
-  family: DrawingToolKind,
-  color: string,
-  size: number,
-  opacity: number,
-  pressureEnabled: boolean,
-): BrushPreset {
+interface CatalogPresetInput {
+  readonly id: string;
+  readonly name: string;
+  readonly family: DrawingToolKind;
+  readonly color: string;
+  readonly size: number;
+  readonly opacity: number;
+  readonly smoothing: number;
+  readonly pressureRange?: readonly [number, number];
+  readonly renderer: BrushRendererKind;
+}
+
+function createCatalogPreset(input: CatalogPresetInput): BrushPreset {
+  const pressureEnabled = input.pressureRange !== undefined;
   return createBrushPreset({
-    id,
+    id: input.id,
     version: 1,
-    name,
-    family,
+    name: input.name,
+    family: input.family,
     defaults: Object.freeze({
-      color,
-      size,
-      opacity,
-      smoothing: Object.freeze({ mode: "none", amount: 0 }),
+      color: input.color,
+      size: input.size,
+      opacity: input.opacity,
+      smoothing: Object.freeze({
+        mode: input.smoothing === 0 ? "none" : "average",
+        amount: input.smoothing,
+      }),
     }),
     dynamics: Object.freeze({
       pressureSize: Object.freeze({
         enabled: pressureEnabled,
-        minimumFactor: pressureEnabled ? 0.5 : 1,
-        maximumFactor: pressureEnabled ? 1.5 : 1,
+        minimumFactor: input.pressureRange?.[0] ?? 1,
+        maximumFactor: input.pressureRange?.[1] ?? 1,
         curve: Object.freeze({ kind: "linear", exponent: 1 }),
       }),
       pressureOpacity: Object.freeze({
@@ -217,21 +337,18 @@ function createCurrentPreset(
         curve: Object.freeze({ kind: "linear", exponent: 1 }),
       }),
     }),
-    renderer: Object.freeze({
-      version: 1,
-      kind: family === "pen" ? "outline" : "centerline",
-    }),
+    renderer: Object.freeze({ version: 1, kind: input.renderer }),
   });
 }
 
-function createActiveState(preset: BrushPreset): ActiveToolState {
-  if (preset.family !== "pen" && preset.family !== "highlighter") {
-    throw new TypeError("Only implemented drawing families can have active editor state.");
-  }
+function createActiveState(preset: BrushPreset, retainedColor?: EditableColor): ActiveToolState {
   return freezeActiveState({
     family: preset.family,
     presetId: preset.id,
-    color: createEditableColor({ hex: preset.defaults.color, opacity: preset.defaults.opacity }),
+    color: createEditableColor({
+      hex: retainedColor?.hex ?? preset.defaults.color,
+      opacity: preset.defaults.opacity,
+    }),
     size: preset.defaults.size,
     opacity: preset.defaults.opacity,
     smoothing: preset.defaults.smoothing,

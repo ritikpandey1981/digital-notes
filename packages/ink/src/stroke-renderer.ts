@@ -341,12 +341,11 @@ export class StrokeRenderer {
     this.invalidationCountValue += 1;
     this.lastDirtyRectValue = freezeRect(dirtyRect);
     this.onInvalidate?.(this.lastDirtyRectValue);
-    this.updateCanvasDiagnostics();
   }
 
   private renderIncrementalFrame(): void {
     if (this.destroyed || this.liveStroke === null || this.pendingDirtyRect === null) return;
-    if (this.liveStroke.brush.renderer.kind === "outline") {
+    if (requiresFullGeometry(this.liveStroke.brush)) {
       const geometry = createBrushRenderGeometry(this.liveStroke.points, this.liveStroke.brush);
       const affected = unionRects(this.liveStroke.dirtyRect, inflateRect(geometry.bounds, 2));
       this.liveStroke.dirtyRect = affected;
@@ -433,7 +432,7 @@ export class StrokeRenderer {
 
   private drawLiveStroke(state: LiveStrokeState): void {
     if (state.points.length === 0) return;
-    if (state.brush.renderer.kind === "centerline") {
+    if (!requiresFullGeometry(state.brush)) {
       this.drawPoints(state.points, state.brush, 0);
       return;
     }
@@ -524,6 +523,13 @@ export class StrokeRenderer {
       throw new InkError("RENDERER_DESTROYED", "The stroke renderer has been destroyed.");
     }
   }
+}
+
+function requiresFullGeometry(brush: import("./brush-model").ResolvedBrushSnapshot): boolean {
+  return (
+    brush.renderer.kind === "outline" ||
+    (brush.smoothing.mode !== "none" && brush.smoothing.amount > 0)
+  );
 }
 
 function inflateRect(rect: Rect, amount: number): Rect {

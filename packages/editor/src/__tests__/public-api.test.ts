@@ -15,6 +15,7 @@ describe("@folio/editor public API", () => {
     expect(Object.keys(editor).sort()).toEqual([
       "CanvasSurface",
       "DEFAULT_BRUSH_PRESETS",
+      "DEFAULT_BRUSH_PRESET_IDS",
       "DEFAULT_EDITOR_VIEWPORT_SNAPSHOT",
       "DEFAULT_PEN_PRESETS",
       "EDITOR_PRESET_COLORS",

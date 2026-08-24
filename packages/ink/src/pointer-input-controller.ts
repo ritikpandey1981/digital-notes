@@ -22,6 +22,7 @@ export class PointerInputController {
   private readonly inputSmoother: StrokeSmoother;
   private readonly supportedPointerTypes: ReadonlySet<InkPointerType>;
   private target: HTMLElement | null = null;
+  private targetView: Window | null = null;
   private activePointerId: number | null = null;
   private activeBuilder: StrokeBuilder | null = null;
   private destroyed = false;
@@ -46,12 +47,14 @@ export class PointerInputController {
     if (this.target === target) return;
     this.detach();
     this.target = target;
+    this.targetView = target.ownerDocument?.defaultView ?? null;
     target.addEventListener("pointerdown", this.handlePointerDown);
     target.addEventListener("pointermove", this.handlePointerMove);
     target.addEventListener("pointerup", this.handlePointerUp);
     target.addEventListener("pointercancel", this.handlePointerCancel);
     target.addEventListener("pointerleave", this.handlePointerLeave);
     target.addEventListener("lostpointercapture", this.handleLostPointerCapture);
+    this.targetView?.addEventListener("blur", this.handleWindowBlur);
   }
 
   detach(): void {
@@ -63,7 +66,9 @@ export class PointerInputController {
     this.target.removeEventListener("pointercancel", this.handlePointerCancel);
     this.target.removeEventListener("pointerleave", this.handlePointerLeave);
     this.target.removeEventListener("lostpointercapture", this.handleLostPointerCapture);
+    this.targetView?.removeEventListener("blur", this.handleWindowBlur);
     this.target = null;
+    this.targetView = null;
   }
 
   destroy(): void {
@@ -164,7 +169,8 @@ export class PointerInputController {
     event.preventDefault();
     const coalesced = event.getCoalescedEvents?.() ?? [];
     const samples = coalesced.length === 0 ? [event] : coalesced;
-    for (const sample of samples) this.appendEvent(sample);
+    const bounds = this.options.getCanvasBounds();
+    for (const sample of samples) this.appendEvent(sample, "continue", bounds);
   };
 
   readonly handlePointerUp = (event: PointerEvent): void => {
@@ -226,10 +232,19 @@ export class PointerInputController {
     this.cancelActive("lost-capture");
   };
 
-  private appendEvent(event: PointerEvent, phase: "continue" | "terminal" = "continue"): void {
+  readonly handleWindowBlur = (): void => {
+    if (this.activeBuilder === null) return;
+    this.cancelActive("lost-capture");
+  };
+
+  private appendEvent(
+    event: PointerEvent,
+    phase: "continue" | "terminal" = "continue",
+    bounds?: CanvasBounds,
+  ): void {
     if (this.activeBuilder === null) return;
     try {
-      const update = this.activeBuilder.addPoint(this.normalizeEvent(event), { phase });
+      const update = this.activeBuilder.addPoint(this.normalizeEvent(event, bounds), { phase });
       if (update !== null) this.options.onStrokeUpdate?.(update);
     } catch (cause) {
       this.report(
@@ -245,9 +260,9 @@ export class PointerInputController {
     }
   }
 
-  private normalizeEvent(event: PointerEvent): StrokePointInput {
+  private normalizeEvent(event: PointerEvent, eventBatchBounds?: CanvasBounds): StrokePointInput {
     const pointerType = isPointerType(event.pointerType) ? event.pointerType : "mouse";
-    const bounds: CanvasBounds = this.options.getCanvasBounds();
+    const bounds = eventBatchBounds ?? this.options.getCanvasBounds();
     let position;
     try {
       position = this.options.coordinateConverter.screenToPage(

@@ -181,6 +181,64 @@ describe("professional finalized ink paths", () => {
     expect(path.segments[0]?.start).toBe(source[0]);
     expect(path.segments.at(-1)?.end).toBe(source.at(-1));
   });
+
+  it("keeps zero-percent smoothing identical to the accepted Phase 17B path", () => {
+    const source = createPoints(
+      Array.from({ length: 80 }, (_, index) => [index * 1.2, Math.sin(index / 5) * 8]),
+      4,
+    );
+    const baseline = createProfessionalInkPath(source);
+    const zero = createProfessionalInkPath(source, { mode: "average", amount: 0 });
+
+    expect(zero.points).toEqual(baseline.points);
+    expect(zero.segments).toEqual(baseline.segments);
+    expect(zero.sourceProgress).toEqual(baseline.sourceProgress);
+    zero.sourcePoints.forEach((point, index) => expect(point).toBe(source[index]));
+  });
+
+  it("makes low and high smoothing visibly distinct without mutating source samples", () => {
+    const source = createPoints(
+      Array.from({ length: 121 }, (_, index) => [
+        index,
+        Math.sin(index / 10) * 10 + (index % 2 === 0 ? 1.8 : -1.8),
+      ]),
+      4,
+    );
+    const before = JSON.stringify(source);
+    const low = createProfessionalInkPath(source, { mode: "average", amount: 0.15 });
+    const high = createProfessionalInkPath(source, { mode: "average", amount: 0.9 });
+
+    expect(high.points).not.toEqual(low.points);
+    expect(polylineRoughness(high.points)).toBeLessThan(polylineRoughness(low.points));
+    expect(JSON.stringify(source)).toBe(before);
+    expect(high.sourcePoints).toHaveLength(source.length);
+    high.sourcePoints.forEach((point, index) => expect(point).toBe(source[index]));
+  });
+
+  it("is deterministic, endpoint-safe, and corner-aware at high smoothing", () => {
+    const geometry = [
+      ...lineSamples([0, 0], [30, 0], 20, false),
+      ...lineSamples([30, 0], [30, 30], 20, true),
+    ];
+    const source = createPoints(geometry, 4);
+    const smoothing = { mode: "average" as const, amount: 1 };
+    const first = createProfessionalInkPath(source, smoothing);
+    const second = createProfessionalInkPath(source, smoothing);
+    const corner = source[20];
+    if (corner === undefined) throw new Error("Corner sample is unavailable.");
+    const nearestCorner = first.points.reduce((nearest, point) =>
+      Math.hypot(point.x - corner.x, point.y - corner.y) <
+      Math.hypot(nearest.x - corner.x, nearest.y - corner.y)
+        ? point
+        : nearest,
+    );
+
+    expect(first.segments).toEqual(second.segments);
+    expect(first.points[0]).toBe(source[0]);
+    expect(first.points.at(-1)).toBe(source.at(-1));
+    expect(Math.hypot(nearestCorner.x - corner.x, nearestCorner.y - corner.y)).toBeLessThan(1);
+    expect(pathSelfIntersects(first)).toBe(false);
+  });
 });
 
 function createPoints(
@@ -335,4 +393,16 @@ function cross(
   second: Readonly<{ x: number; y: number }>,
 ): number {
   return first.x * second.y - first.y * second.x;
+}
+
+function polylineRoughness(points: readonly StrokePoint[]): number {
+  let total = 0;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    if (previous === undefined || current === undefined || next === undefined) continue;
+    total += Math.abs(next.y - current.y * 2 + previous.y);
+  }
+  return total;
 }
