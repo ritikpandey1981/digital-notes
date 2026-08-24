@@ -91,7 +91,8 @@ describe("ObjectFactory", () => {
       version: 1,
     });
     expect(object.stroke).toBe(stroke);
-    expect(object.bounds).toBe(stroke.inflatedBounds);
+    expect(object.bounds).toEqual({ x: 7, y: 17, width: 26, height: 26 });
+    expect(object.bounds.width).toBeLessThan(stroke.inflatedBounds.width);
     expect(object.metrics).toBe(stroke.metrics);
     expect(object.statistics).toBe(stroke.statistics);
     expect(object.style).toBe(stroke.style);
@@ -198,8 +199,9 @@ describe("ObjectFactory", () => {
     expect(rotated.bounds.width).toBeCloseTo(source.bounds.height);
     expect(rotated.bounds.height).toBeCloseTo(source.bounds.width);
     expect(scaled.transform.scale).toBe(2);
-    expect(scaled.bounds.width).toBeCloseTo(source.bounds.width * 2);
-    expect(scaled.bounds.height).toBeCloseTo(source.bounds.height * 2);
+    expect(scaled.bounds.width).toBeCloseTo(stroke.bounds.width * 2 + 6);
+    expect(scaled.bounds.height).toBeCloseTo(stroke.bounds.height * 2 + 6);
+    expect(scaled.bounds.width).toBeLessThan(source.bounds.width * 2);
     expect(source.transform).toEqual(Transform.identity());
   });
 });

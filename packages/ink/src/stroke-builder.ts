@@ -13,7 +13,8 @@ import {
   freezeRect,
   inflateBounds,
 } from "./internal/geometry";
-import { createStrokeStyle, strokeWidth } from "./internal/style";
+import { brushSizeAtPressure } from "./internal/brush-dynamics";
+import { createStrokeStyle } from "./internal/style";
 import { Stroke } from "./stroke";
 import { StrokeSmoother } from "./stroke-smoother";
 import type {
@@ -168,7 +169,7 @@ export class StrokeBuilder {
     this.strokePoints.push(point);
     this.updateMetrics(point, previous, segmentLength);
 
-    const radius = strokeWidth(this.style, point.pressure) / 2 + 2;
+    const radius = brushSizeAtPressure(this.brush, point.pressure) / 2 + 2;
     const segmentMinX = Math.min(previous?.x ?? point.x, point.x) - radius;
     const segmentMinY = Math.min(previous?.y ?? point.y, point.y) - radius;
     const segmentMaxX = Math.max(previous?.x ?? point.x, point.x) + radius;
@@ -272,8 +273,8 @@ export class StrokeBuilder {
   private createMetrics(): StrokeMetrics {
     const bounds = this.currentBounds();
     const maximumWidth = this.strokePoints.reduce(
-      (current, point) => Math.max(current, strokeWidth(this.style, point.pressure)),
-      this.style.width,
+      (current, point) => Math.max(current, brushSizeAtPressure(this.brush, point.pressure)),
+      this.brush.size,
     );
     const inflatedBounds = inflateBounds(bounds, maximumWidth / 2 + 2);
     const first = this.sourceSamples[0];

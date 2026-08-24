@@ -48,7 +48,9 @@ describe("Phase 17A brush tool state", () => {
       opacity: 0.25,
     });
     expect(store.resolvedBrush("pen").dynamics.pressureSize.enabled).toBe(true);
+    expect(store.resolvedBrush("pen").renderer.kind).toBe("outline");
     expect(store.resolvedBrush("highlighter").dynamics.pressureSize.enabled).toBe(false);
+    expect(store.resolvedBrush("highlighter").renderer.kind).toBe("centerline");
   });
 
   it("selects immutable defaults into active state without modifying the catalog", () => {
@@ -100,7 +102,12 @@ describe("Phase 17A brush tool state", () => {
     store.updateActiveToolState("pen", { color: "#dc2626", size: 12, opacity: 0.5 });
 
     expect(stroke.brush).toEqual(initialSnapshot);
-    expect(stroke.brush).toMatchObject({ color: "#111111", size: 2, opacity: 1 });
+    expect(stroke.brush).toMatchObject({
+      color: "#111111",
+      size: 2,
+      opacity: 1,
+      renderer: { kind: "outline" },
+    });
     expect(store.resolvedBrush("pen")).toMatchObject({
       color: "#dc2626",
       size: 12,

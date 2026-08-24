@@ -1,4 +1,5 @@
 import type { CanvasBounds } from "@folio/rendering";
+import { resolveBrushForPointerType } from "./brush-model";
 import { InkError } from "./errors";
 import { StrokeBuilder } from "./stroke-builder";
 import { StrokeSmoother } from "./stroke-smoother";
@@ -114,7 +115,9 @@ export class PointerInputController {
       builder = new StrokeBuilder({
         timestamp: point.timestamp,
         ...(this.options.style === undefined ? {} : { style: this.options.style }),
-        ...(this.options.resolveBrush === undefined ? {} : { brush: this.options.resolveBrush() }),
+        ...(this.options.resolveBrush === undefined
+          ? {}
+          : { brush: resolveBrushForPointerType(this.options.resolveBrush(), point.pointerType) }),
         smoother: this.inputSmoother,
         ...(this.options.createId === undefined ? {} : { createId: this.options.createId }),
         ...(this.options.now === undefined ? {} : { now: this.options.now }),

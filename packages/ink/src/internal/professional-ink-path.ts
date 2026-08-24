@@ -12,6 +12,8 @@ interface Vector {
 }
 
 interface CubicCurve {
+  readonly first: number;
+  readonly last: number;
   readonly start: StrokePoint;
   readonly control1: Vector;
   readonly control2: Vector;
@@ -38,11 +40,16 @@ export interface ProfessionalInkSegment {
   readonly control2X: number;
   readonly control2Y: number;
   readonly end: StrokePoint;
+  /** Monotonic source-stroke progression retained for pressure interpolation. */
+  readonly startProgress: number;
+  readonly endProgress: number;
 }
 
 /** Renderer-private, immutable high-quality representation of one stroke. */
 export interface ProfessionalInkPath {
   readonly sourcePointCount: number;
+  readonly sourcePoints: readonly StrokePoint[];
+  readonly sourceProgress: readonly number[];
   readonly points: readonly StrokePoint[];
   readonly segments: readonly ProfessionalInkSegment[];
 }
@@ -51,9 +58,18 @@ export interface ProfessionalInkPath {
 export function createProfessionalInkPath(
   sourcePoints: readonly StrokePoint[],
 ): ProfessionalInkPath {
-  const points = filterAdaptiveStrokePoints(sourcePoints);
-  const segments = fitAdaptiveCubicSegments(points);
-  return Object.freeze({ sourcePointCount: sourcePoints.length, points, segments });
+  const frozenSourcePoints = freezeReferences(sourcePoints);
+  const sourceProgress = createSourceProgress(frozenSourcePoints);
+  const points = filterAdaptiveStrokePoints(frozenSourcePoints);
+  const filteredProgress = mapFilteredProgress(frozenSourcePoints, sourceProgress, points);
+  const segments = fitAdaptiveCubicSegments(points, filteredProgress);
+  return Object.freeze({
+    sourcePointCount: frozenSourcePoints.length,
+    sourcePoints: frozenSourcePoints,
+    sourceProgress,
+    points,
+    segments,
+  });
 }
 
 /** Retains meaningful curvature while reducing velocity-dependent redundant samples. */
@@ -106,6 +122,7 @@ export function filterAdaptiveStrokePoints(
 /** Fits the fewest practical cubics that satisfy adaptive geometric error limits. */
 function fitAdaptiveCubicSegments(
   points: readonly StrokePoint[],
+  pointProgress: readonly number[],
 ): readonly ProfessionalInkSegment[] {
   if (points.length < 2) return Object.freeze([]);
   const tolerance = fittingTolerance(points);
@@ -115,13 +132,14 @@ function fitAdaptiveCubicSegments(
     const first = boundaries[boundaryIndex];
     const last = boundaries[boundaryIndex + 1];
     if (first === undefined || last === undefined || first >= last) continue;
-    segments.push(...fitRange(points, first, last, tolerance));
+    segments.push(...fitRange(points, pointProgress, first, last, tolerance));
   }
   return Object.freeze(segments);
 }
 
 function fitRange(
   points: readonly StrokePoint[],
+  pointProgress: readonly number[],
   first: number,
   last: number,
   tolerance: number,
@@ -136,13 +154,13 @@ function fitRange(
     const task = tasks.pop();
     if (task === undefined) continue;
     if (task.last - task.first === 1) {
-      segments.push(freezeSegment(twoPointCurve(points, task)));
+      segments.push(freezeSegment(twoPointCurve(points, task), pointProgress));
       continue;
     }
 
     const fitted = fitTask(points, task, tolerance, squaredTolerance);
     if (fitted.curve !== null) {
-      segments.push(freezeSegment(fitted.curve));
+      segments.push(freezeSegment(fitted.curve, pointProgress));
       continue;
     }
 
@@ -233,6 +251,8 @@ function generateCurve(
   alpha1 = Math.min(alpha1, maximumHandles.start);
   alpha2 = Math.min(alpha2, maximumHandles.end);
   return {
+    first: task.first,
+    last: task.last,
     start,
     control1: add(start, scale(task.leftTangent, alpha1)),
     control2: add(end, scale(task.rightTangent, alpha2)),
@@ -403,6 +423,8 @@ function twoPointCurve(points: readonly StrokePoint[], task: FitTask): CubicCurv
   const end = requiredPoint(points, task.last);
   const handle = distance(start, end) / 3;
   return {
+    first: task.first,
+    last: task.last,
     start,
     control1: add(start, scale(task.leftTangent, handle)),
     control2: add(end, scale(task.rightTangent, handle)),
@@ -410,7 +432,10 @@ function twoPointCurve(points: readonly StrokePoint[], task: FitTask): CubicCurv
   };
 }
 
-function freezeSegment(curve: CubicCurve): ProfessionalInkSegment {
+function freezeSegment(
+  curve: CubicCurve,
+  pointProgress: readonly number[],
+): ProfessionalInkSegment {
   return Object.freeze({
     start: curve.start,
     control1X: curve.control1.x,
@@ -418,6 +443,8 @@ function freezeSegment(curve: CubicCurve): ProfessionalInkSegment {
     control2X: curve.control2.x,
     control2Y: curve.control2.y,
     end: curve.end,
+    startProgress: pointProgress[curve.first] ?? 0,
+    endProgress: pointProgress[curve.last] ?? 1,
   });
 }
 
@@ -581,6 +608,39 @@ function strokeDiagonal(points: readonly StrokePoint[]): number {
     maximumY = Math.max(maximumY, point.y);
   }
   return points.length === 0 ? 0 : Math.hypot(maximumX - minimumX, maximumY - minimumY);
+}
+
+function createSourceProgress(points: readonly StrokePoint[]): readonly number[] {
+  if (points.length === 0) return Object.freeze([]);
+  const progress = [0];
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    total += distance(requiredPoint(points, index - 1), requiredPoint(points, index));
+    progress.push(total);
+  }
+  if (total <= EPSILON) {
+    return Object.freeze(progress.map((_, index) => index / Math.max(points.length - 1, 1)));
+  }
+  return Object.freeze(progress.map((value) => value / total));
+}
+
+function mapFilteredProgress(
+  sourcePoints: readonly StrokePoint[],
+  sourceProgress: readonly number[],
+  filteredPoints: readonly StrokePoint[],
+): readonly number[] {
+  const result: number[] = [];
+  let sourceIndex = 0;
+  for (const point of filteredPoints) {
+    while (sourceIndex < sourcePoints.length && sourcePoints[sourceIndex] !== point) {
+      sourceIndex += 1;
+    }
+    if (sourceIndex >= sourcePoints.length) {
+      throw new RangeError("Filtered stroke point is not part of the source progression.");
+    }
+    result.push(sourceProgress[sourceIndex] ?? 0);
+  }
+  return Object.freeze(result);
 }
 
 function turnAngle(first: StrokePoint, middle: StrokePoint, last: StrokePoint): number {

@@ -1,4 +1,10 @@
-import type { Stroke, StrokeMetrics, StrokeStatistics, StrokeStyle } from "@folio/ink";
+import {
+  getStrokeRenderedBounds,
+  type Stroke,
+  type StrokeMetrics,
+  type StrokeStatistics,
+  type StrokeStyle,
+} from "@folio/ink";
 import { freezeJsonObject } from "./internal/json";
 import { Transform } from "./transform";
 import type {
@@ -36,9 +42,7 @@ export class InkObject implements InkObjectView {
     this.transform = data.transform;
     this.stroke = data.stroke;
     this.renderingHints = freezeJsonObject(data.renderingHints, "$.renderingHints");
-    this.boundsValue = this.transform.isIdentity
-      ? this.stroke.inflatedBounds
-      : this.transform.transformBounds(this.stroke.inflatedBounds);
+    this.boundsValue = getStrokeRenderedBounds(this.stroke, this.transform);
     assertValidObject(this);
     Object.freeze(this);
   }

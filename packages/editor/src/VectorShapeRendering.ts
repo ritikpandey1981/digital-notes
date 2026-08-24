@@ -119,9 +119,8 @@ function drawInkObject(
   visual: StrokeVisual,
 ): void {
   const { transform } = object;
-  const bounds = object.stroke.inflatedBounds;
-  const pivotX = bounds.x + bounds.width / 2;
-  const pivotY = bounds.y + bounds.height / 2;
+  const pivotX = object.stroke.bounds.center.x;
+  const pivotY = object.stroke.bounds.center.y;
   context.save();
   context.translate(transform.translation.x, transform.translation.y);
   if (transform.rotation !== 0 || transform.scale !== 1) {

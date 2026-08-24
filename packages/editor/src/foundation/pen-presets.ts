@@ -217,7 +217,10 @@ function createCurrentPreset(
         curve: Object.freeze({ kind: "linear", exponent: 1 }),
       }),
     }),
-    renderer: Object.freeze({ version: 1, kind: "centerline" }),
+    renderer: Object.freeze({
+      version: 1,
+      kind: family === "pen" ? "outline" : "centerline",
+    }),
   });
 }
 

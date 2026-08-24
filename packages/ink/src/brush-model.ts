@@ -1,4 +1,4 @@
-import type { StrokeSmoothingMode, StrokeStyle } from "./types";
+import type { InkPointerType, StrokeSmoothingMode, StrokeStyle } from "./types";
 
 export type BrushFamily = "pencil" | "pen" | "marker" | "highlighter";
 export type BrushRendererKind = "centerline" | "outline";
@@ -102,6 +102,27 @@ export function resolveBrushPreset(
     smoothing: overrides.smoothing ?? definition.defaults.smoothing,
     dynamics: definition.dynamics,
     renderer: definition.renderer,
+  });
+}
+
+/** Resolves a preset-capable brush to the actual renderer frozen into a new stroke. */
+export function resolveBrushForPointerType(
+  brush: ResolvedBrushSnapshot,
+  pointerType: InkPointerType,
+): ResolvedBrushSnapshot {
+  const snapshot = createResolvedBrushSnapshot(brush);
+  // Mouse pressure is intentionally synthetic and fixed at 0.5, so current Pen strokes use the
+  // constant-width centerline strategy. Pen and touch retain the preset capability unchanged.
+  if (
+    pointerType !== "mouse" ||
+    snapshot.family !== "pen" ||
+    snapshot.renderer.kind !== "outline"
+  ) {
+    return snapshot;
+  }
+  return createResolvedBrushSnapshot({
+    ...snapshot,
+    renderer: Object.freeze({ version: 1, kind: "centerline" }),
   });
 }
 

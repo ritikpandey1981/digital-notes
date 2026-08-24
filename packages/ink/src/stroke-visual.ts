@@ -1,8 +1,11 @@
 import type { Rect, TranslationPreviewVisual } from "@folio/rendering";
-import { drawSmoothStrokeSegments } from "./internal/draw-stroke";
-import { createProfessionalInkPath } from "./internal/professional-ink-path";
+import {
+  drawBrushRenderGeometry,
+  resolveStrokeRenderGeometry,
+  type BrushRenderGeometry,
+} from "./internal/brush-render-strategy";
+import { getStrokeLocalRenderBounds } from "./rendered-stroke-bounds";
 import type { Stroke } from "./stroke";
-import type { StrokeStyle } from "./types";
 
 /** Immutable, geometry-reusing visual adapter for renderer-owned overlays. */
 export interface StrokeVisual extends TranslationPreviewVisual {
@@ -11,24 +14,19 @@ export interface StrokeVisual extends TranslationPreviewVisual {
 
 class StrokeVisualImplementation implements StrokeVisual {
   readonly bounds: Rect;
-  readonly #renderedStyle: StrokeStyle;
-  readonly #path: ReturnType<typeof createProfessionalInkPath>;
+  readonly #geometry: BrushRenderGeometry;
 
   constructor(
     private readonly stroke: Stroke,
     renderedScale: number,
   ) {
-    this.bounds = stroke.inflatedBounds;
-    this.#renderedStyle =
-      renderedScale === 1
-        ? stroke.style
-        : Object.freeze({ ...stroke.style, width: stroke.style.width / renderedScale });
-    this.#path = createProfessionalInkPath(stroke.points);
+    this.bounds = getStrokeLocalRenderBounds(stroke, renderedScale);
+    this.#geometry = resolveStrokeRenderGeometry(stroke, renderedScale);
     Object.freeze(this);
   }
 
   draw(context: CanvasRenderingContext2D): void {
-    drawSmoothStrokeSegments(context, this.#path.points, this.#path.segments, this.#renderedStyle);
+    drawBrushRenderGeometry(context, this.#geometry, this.stroke.brush);
   }
 }
 

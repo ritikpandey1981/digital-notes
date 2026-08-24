@@ -18,6 +18,7 @@ export {
   type ResolvedBrushSnapshot,
 } from "./brush-model";
 export { PointerInputController } from "./pointer-input-controller";
+export { getStrokeLocalRenderBounds, getStrokeRenderedBounds } from "./rendered-stroke-bounds";
 export { Stroke, type StrokeData } from "./stroke";
 export { StrokeBuilder } from "./stroke-builder";
 export { StrokeRenderer } from "./stroke-renderer";

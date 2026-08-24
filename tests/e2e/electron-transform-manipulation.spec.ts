@@ -63,6 +63,14 @@ test("keeps active transform previews clean while preserving History", async () 
     await window.mouse.up();
     await expect(inkCanvas).toHaveAttribute("data-ink-stroke-count", "1");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
+    expect(
+      (
+        JSON.parse((await surface.getAttribute("data-document-stroke-brushes")) ?? "[]") as Array<{
+          rendererKind?: string;
+          pointerType?: string;
+        }>
+      )[0],
+    ).toMatchObject({ rendererKind: "centerline", pointerType: "mouse" });
 
     await window.getByRole("button", { name: "Select", exact: true }).click();
     await window.mouse.click(strokeStart.x + 75, strokeStart.y + 20);

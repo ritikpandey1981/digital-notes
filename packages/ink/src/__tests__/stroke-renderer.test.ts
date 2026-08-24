@@ -1,5 +1,6 @@
 import { Viewport, type AnimationFrameAdapter } from "@folio/rendering";
 import { describe, expect, it, vi } from "vitest";
+import { createResolvedBrushSnapshot, type ResolvedBrushSnapshot } from "../brush-model";
 import { StrokeBuilder } from "../stroke-builder";
 import { StrokeRenderer } from "../stroke-renderer";
 import { StrokeSmoother } from "../stroke-smoother";
@@ -50,6 +51,7 @@ function point(x: number, y: number, timestamp: number, pressure = 0.5): StrokeP
 function createHarness(
   style: Partial<StrokeStyle> = {},
   finalizedPresentation: "retained" | "external" = "retained",
+  brush?: ResolvedBrushSnapshot,
 ) {
   const context = createContext();
   const canvas = { dataset: {} as DOMStringMap } as HTMLCanvasElement;
@@ -84,6 +86,7 @@ function createHarness(
     id: "renderer-stroke",
     timestamp: 0,
     style,
+    ...(brush === undefined ? {} : { brush }),
     smoother: new StrokeSmoother({ mode: "none" }),
   });
   const flush = (timestamp = 16) => {
@@ -97,6 +100,34 @@ function createHarness(
     return update;
   };
   return { context, canvas, viewport, renderer, builder, frames, invalidations, flush, add };
+}
+
+function createOutlineBrush(): ResolvedBrushSnapshot {
+  return createResolvedBrushSnapshot({
+    schemaVersion: 1,
+    presetId: "renderer-outline",
+    presetVersion: 1,
+    family: "pen",
+    color: "#111111",
+    size: 10,
+    opacity: 1,
+    smoothing: { mode: "none", amount: 0 },
+    dynamics: {
+      pressureSize: {
+        enabled: true,
+        minimumFactor: 0.5,
+        maximumFactor: 1.5,
+        curve: { kind: "linear", exponent: 1 },
+      },
+      pressureOpacity: {
+        enabled: false,
+        minimumFactor: 1,
+        maximumFactor: 1,
+        curve: { kind: "linear", exponent: 1 },
+      },
+    },
+    renderer: { version: 1, kind: "outline" },
+  });
 }
 
 function createStroke(id = "shared-stroke") {
@@ -160,6 +191,30 @@ describe("StrokeRenderer", () => {
     harness.renderer.updateStroke(harness.add(point(15, 5, 10, 1)));
     harness.flush();
     expect(harness.context.lineWidth).toBe(10);
+  });
+
+  it("frame-coalesces complete active outlines and commits the identical silhouette", () => {
+    const brush = createOutlineBrush();
+    const harness = createHarness({ width: brush.size, pressureEnabled: true }, "retained", brush);
+    harness.renderer.beginStroke(harness.add(point(5, 5, 0, 0.1)));
+    harness.renderer.updateStroke(harness.add(point(15, 8, 10, 0.5)));
+    harness.renderer.updateStroke(harness.add(point(30, 5, 20, 1)));
+
+    expect(harness.frames.size).toBe(1);
+    harness.flush();
+    const liveBoundary = vi.mocked(harness.context.lineTo).mock.calls.map((call) => [...call]);
+    expect(liveBoundary.length).toBeGreaterThan(10);
+    expect(harness.context.fill).toHaveBeenCalledOnce();
+    expect(harness.context.stroke).not.toHaveBeenCalled();
+    expect(harness.context.clearRect).toHaveBeenCalledOnce();
+
+    vi.mocked(harness.context.lineTo).mockClear();
+    vi.mocked(harness.context.fill).mockClear();
+    harness.renderer.finalizeStroke(harness.builder.finalize());
+
+    expect(vi.mocked(harness.context.lineTo).mock.calls).toEqual(liveBoundary);
+    expect(harness.context.fill).toHaveBeenCalledOnce();
+    expect(harness.frames.size).toBe(0);
   });
 
   it("finalizes session strokes without scheduling a continuous render loop", () => {

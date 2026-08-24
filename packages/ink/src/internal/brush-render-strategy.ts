@@ -1,0 +1,228 @@
+import type { Rect } from "@folio/rendering";
+import type { ResolvedBrushSnapshot } from "../brush-model";
+import type { Stroke } from "../stroke";
+import type { StrokePoint } from "../types";
+import { brushSizeAtPressure } from "./brush-dynamics";
+import { drawSmoothStrokeSegments } from "./draw-stroke";
+import { createOutlineStrokeGeometry, type OutlineStrokeGeometry } from "./outline-geometry";
+import { createProfessionalInkPath, type ProfessionalInkPath } from "./professional-ink-path";
+
+export interface CenterlineRenderGeometry {
+  readonly kind: "centerline";
+  readonly path: ProfessionalInkPath;
+  readonly renderedScale: number;
+  readonly bounds: Rect;
+}
+
+export interface OutlineRenderGeometry {
+  readonly kind: "outline";
+  readonly path: ProfessionalInkPath;
+  readonly outline: OutlineStrokeGeometry;
+  readonly renderedScale: number;
+  readonly bounds: Rect;
+}
+
+export type BrushRenderGeometry = CenterlineRenderGeometry | OutlineRenderGeometry;
+
+interface StrokeRenderCache {
+  readonly path: ProfessionalInkPath;
+  readonly centerline: CenterlineRenderGeometry;
+  readonly outlines: Map<number, OutlineRenderGeometry>;
+  outlineBuildCount: number;
+}
+
+export interface StrokeRenderCacheSnapshot {
+  readonly pathBuildCount: number;
+  readonly outlineBuildCount: number;
+  readonly outlineScaleCount: number;
+}
+
+const strokeCaches = new WeakMap<Stroke, StrokeRenderCache>();
+const MAX_OUTLINE_SCALE_CACHE_ENTRIES = 8;
+
+/** Builds transient geometry for the latest active-stroke points. */
+export function createBrushRenderGeometry(
+  points: readonly StrokePoint[],
+  brush: ResolvedBrushSnapshot,
+  renderedScale = 1,
+): BrushRenderGeometry {
+  assertScale(renderedScale);
+  const path = createProfessionalInkPath(points);
+  return createGeometry(path, brush, renderedScale);
+}
+
+/** Reuses strategy-specific geometry derived only from one immutable Stroke snapshot. */
+export function resolveStrokeRenderGeometry(
+  stroke: Stroke,
+  renderedScale = 1,
+): BrushRenderGeometry {
+  assertScale(renderedScale);
+  let cache = strokeCaches.get(stroke);
+  if (cache === undefined) {
+    const path = createProfessionalInkPath(stroke.points);
+    const centerline = createCenterlineGeometry(path, stroke.brush, 1);
+    cache = { path, centerline, outlines: new Map(), outlineBuildCount: 0 };
+    strokeCaches.set(stroke, cache);
+  }
+  if (stroke.brush.renderer.kind === "centerline") {
+    return renderedScale === 1
+      ? cache.centerline
+      : createCenterlineGeometry(cache.path, stroke.brush, renderedScale);
+  }
+  let outline = cache.outlines.get(renderedScale);
+  if (outline === undefined) {
+    outline = createOutlineGeometry(cache.path, stroke.brush, renderedScale);
+    if (cache.outlines.size >= MAX_OUTLINE_SCALE_CACHE_ENTRIES) {
+      const oldestScale = cache.outlines.keys().next().value as number | undefined;
+      if (oldestScale !== undefined) cache.outlines.delete(oldestScale);
+    }
+    cache.outlines.set(renderedScale, outline);
+    cache.outlineBuildCount += 1;
+  }
+  return outline;
+}
+
+export function drawBrushRenderGeometry(
+  context: CanvasRenderingContext2D,
+  geometry: BrushRenderGeometry,
+  brush: ResolvedBrushSnapshot,
+): void {
+  if (geometry.kind === "centerline") {
+    drawSmoothStrokeSegments(
+      context,
+      geometry.path.points,
+      geometry.path.segments,
+      brush,
+      geometry.renderedScale,
+    );
+    return;
+  }
+  drawOutline(context, geometry.outline, brush);
+}
+
+export function getStrokeRenderCacheSnapshot(stroke: Stroke): StrokeRenderCacheSnapshot {
+  const cache = strokeCaches.get(stroke);
+  return Object.freeze({
+    pathBuildCount: cache === undefined ? 0 : 1,
+    outlineBuildCount: cache?.outlineBuildCount ?? 0,
+    outlineScaleCount: cache?.outlines.size ?? 0,
+  });
+}
+
+function createGeometry(
+  path: ProfessionalInkPath,
+  brush: ResolvedBrushSnapshot,
+  renderedScale: number,
+): BrushRenderGeometry {
+  return brush.renderer.kind === "outline"
+    ? createOutlineGeometry(path, brush, renderedScale)
+    : createCenterlineGeometry(path, brush, renderedScale);
+}
+
+function createCenterlineGeometry(
+  path: ProfessionalInkPath,
+  brush: ResolvedBrushSnapshot,
+  renderedScale: number,
+): CenterlineRenderGeometry {
+  return Object.freeze({
+    kind: "centerline",
+    path,
+    renderedScale,
+    bounds: centerlineBounds(path, brush, renderedScale),
+  });
+}
+
+function createOutlineGeometry(
+  path: ProfessionalInkPath,
+  brush: ResolvedBrushSnapshot,
+  renderedScale: number,
+): OutlineRenderGeometry {
+  const outline = createOutlineStrokeGeometry(path, brush, renderedScale);
+  return Object.freeze({
+    kind: "outline",
+    path,
+    outline,
+    renderedScale,
+    bounds: outline.bounds,
+  });
+}
+
+function drawOutline(
+  context: CanvasRenderingContext2D,
+  geometry: OutlineStrokeGeometry,
+  brush: ResolvedBrushSnapshot,
+): void {
+  if (geometry.centerline.length === 0) return;
+  context.save();
+  context.globalAlpha *= brush.opacity;
+  context.fillStyle = brush.color;
+  context.beginPath();
+  if (geometry.dot !== null) {
+    context.arc(geometry.dot.center.x, geometry.dot.center.y, geometry.dot.radius, 0, Math.PI * 2);
+  } else {
+    const first = geometry.boundary[0];
+    if (first === undefined) {
+      context.restore();
+      return;
+    }
+    context.moveTo(first.x, first.y);
+    for (const point of geometry.boundary.slice(1)) context.lineTo(point.x, point.y);
+  }
+  for (const join of geometry.roundJoins) {
+    context.moveTo(join.center.x + join.radius, join.center.y);
+    context.arc(join.center.x, join.center.y, join.radius, 0, Math.PI * 2);
+  }
+  // One fill applies configured opacity once, including at joins and self-crossings.
+  context.fill();
+  context.restore();
+}
+
+function centerlineBounds(
+  path: ProfessionalInkPath,
+  brush: ResolvedBrushSnapshot,
+  renderedScale: number,
+): Rect {
+  const coordinates: Array<Readonly<{ x: number; y: number }>> = [];
+  for (const segment of path.segments) {
+    coordinates.push(
+      segment.start,
+      { x: segment.control1X, y: segment.control1Y },
+      { x: segment.control2X, y: segment.control2Y },
+      segment.end,
+    );
+  }
+  if (coordinates.length === 0 && path.points[0] !== undefined) coordinates.push(path.points[0]);
+  if (coordinates.length === 0) return freezeRect({ x: 0, y: 0, width: 0, height: 0 });
+  let minimumX = Number.POSITIVE_INFINITY;
+  let minimumY = Number.POSITIVE_INFINITY;
+  let maximumX = Number.NEGATIVE_INFINITY;
+  let maximumY = Number.NEGATIVE_INFINITY;
+  for (const point of coordinates) {
+    minimumX = Math.min(minimumX, point.x);
+    minimumY = Math.min(minimumY, point.y);
+    maximumX = Math.max(maximumX, point.x);
+    maximumY = Math.max(maximumY, point.y);
+  }
+  const averageDiameter =
+    path.sourcePoints.reduce(
+      (total, point) => total + brushSizeAtPressure(brush, point.pressure),
+      0,
+    ) / Math.max(path.sourcePoints.length, 1);
+  const radius = averageDiameter / (renderedScale * 2);
+  return freezeRect({
+    x: minimumX - radius,
+    y: minimumY - radius,
+    width: maximumX - minimumX + radius * 2,
+    height: maximumY - minimumY + radius * 2,
+  });
+}
+
+function freezeRect(rect: Rect): Rect {
+  return Object.freeze({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+}
+
+function assertScale(scale: number): void {
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new RangeError("Brush render scale must be positive and finite.");
+  }
+}

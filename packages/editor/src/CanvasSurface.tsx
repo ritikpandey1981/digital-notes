@@ -613,6 +613,7 @@ export function CanvasSurface({
             presetVersion: object.stroke.brush.presetVersion,
             family: object.stroke.brush.family,
             rendererKind: object.stroke.brush.renderer.kind,
+            pointerType: object.stroke.sourceSamples[0]?.pointerType ?? "mouse",
             size: object.stroke.brush.size,
             opacity: object.stroke.brush.opacity,
           }));
@@ -1909,7 +1910,10 @@ export function CanvasSurface({
                 curve: Object.freeze({ kind: "linear", exponent: 1 }),
               }),
             }),
-            renderer: Object.freeze({ version: 1, kind: "centerline" }),
+            renderer: Object.freeze({
+              version: 1,
+              kind: family === "pen" ? "outline" : "centerline",
+            }),
           });
         },
         onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),

@@ -4,7 +4,8 @@ import {
   createResolvedBrushSnapshot,
   type ResolvedBrushSnapshot,
 } from "./brush-model";
-import { createStrokeStyle, strokeWidth } from "./internal/style";
+import { brushSizeAtPressure } from "./internal/brush-dynamics";
+import { createStrokeStyle } from "./internal/style";
 import type {
   StrokeBounds,
   StrokeMetrics,
@@ -111,7 +112,7 @@ export class Stroke {
 
   /** Returns the rendered stroke width for a normalized pressure sample. */
   widthAtPressure(pressure: number): number {
-    return strokeWidth(this.style, pressure);
+    return brushSizeAtPressure(this.brush, pressure);
   }
 }
 

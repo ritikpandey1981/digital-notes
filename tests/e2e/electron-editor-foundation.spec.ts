@@ -60,6 +60,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
         presetVersion: 1,
         family: "pen",
         rendererKind: "centerline",
+        pointerType: "mouse",
         size: 8,
         opacity: 0.8,
       },

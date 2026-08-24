@@ -1,7 +1,12 @@
 import { CoordinateConverter, Viewport } from "@folio/rendering";
 import { describe, expect, it, vi } from "vitest";
 import { PointerInputController } from "../pointer-input-controller";
-import { createResolvedBrushSnapshot, type ResolvedBrushSnapshot } from "../brush-model";
+import {
+  createResolvedBrushSnapshot,
+  type BrushFamily,
+  type BrushRendererKind,
+  type ResolvedBrushSnapshot,
+} from "../brush-model";
 import { StrokeSmoother } from "../stroke-smoother";
 
 function createTarget() {
@@ -248,6 +253,34 @@ describe("PointerInputController", () => {
     });
   });
 
+  it.each([
+    ["mouse", "pen", "outline", "centerline"],
+    ["pen", "pen", "outline", "outline"],
+    ["touch", "pen", "outline", "outline"],
+    ["mouse", "highlighter", "centerline", "centerline"],
+  ] as const)(
+    "freezes the actual %s %s renderer at pointer-down",
+    (pointerType, family, preferredKind, expectedKind) => {
+      const candidate = brushSnapshot("device-aware", "#111111", 8, family, preferredKind);
+      const harness = createHarness(undefined, false, () => candidate);
+
+      harness.controller.handlePointerDown(pointerEvent({ pointerType, timestamp: 100 }));
+      harness.controller.handlePointerUp(
+        pointerEvent({ pointerType, x: 520, timestamp: 120, buttons: 0 }),
+      );
+
+      expect(harness.onStrokeStart.mock.calls[0]?.[0].brush.renderer.kind).toBe(expectedKind);
+      const stroke = harness.onStrokeFinalized.mock.calls[0]?.[0];
+      expect(stroke).toMatchObject({ brush: { renderer: { kind: expectedKind } } });
+      expect(
+        stroke.sourceSamples.every(
+          (sample: { pointerType: string }) => sample.pointerType === pointerType,
+        ),
+      ).toBe(true);
+      expect(candidate.renderer.kind).toBe(preferredKind);
+    },
+  );
+
   it("compensates for CSS scaling and device-pixel-ratio-independent coordinates", () => {
     const harness = createHarness({ x: 0, y: 0, width: 500, height: 400 });
     harness.controller.handlePointerDown(pointerEvent({ x: 250, y: 200 }));
@@ -349,21 +382,28 @@ describe("PointerInputController", () => {
   });
 });
 
-function brushSnapshot(presetId: string, color: string, size: number): ResolvedBrushSnapshot {
+function brushSnapshot(
+  presetId: string,
+  color: string,
+  size: number,
+  family: BrushFamily = "pen",
+  rendererKind: BrushRendererKind = "outline",
+): ResolvedBrushSnapshot {
+  const pressureEnabled = family === "pen";
   return createResolvedBrushSnapshot({
     schemaVersion: 1,
     presetId,
     presetVersion: 1,
-    family: "pen",
+    family,
     color,
     size,
     opacity: 1,
     smoothing: { mode: "none", amount: 0 },
     dynamics: {
       pressureSize: {
-        enabled: true,
-        minimumFactor: 0.5,
-        maximumFactor: 1.5,
+        enabled: pressureEnabled,
+        minimumFactor: pressureEnabled ? 0.5 : 1,
+        maximumFactor: pressureEnabled ? 1.5 : 1,
         curve: { kind: "linear", exponent: 1 },
       },
       pressureOpacity: {
@@ -373,6 +413,6 @@ function brushSnapshot(presetId: string, color: string, size: number): ResolvedB
         curve: { kind: "linear", exponent: 1 },
       },
     },
-    renderer: { version: 1, kind: "centerline" },
+    renderer: { version: 1, kind: rendererKind },
   });
 }

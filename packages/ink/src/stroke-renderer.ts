@@ -1,25 +1,27 @@
 import { RenderScheduler, type Point, type Rect, type Viewport } from "@folio/rendering";
 import { InkError } from "./errors";
-import { drawSmoothStrokeSegments, drawStrokePoints } from "./internal/draw-stroke";
-import { freezeRect, unionRects } from "./internal/geometry";
 import {
-  createProfessionalInkPath,
-  type ProfessionalInkPath,
-} from "./internal/professional-ink-path";
+  createBrushRenderGeometry,
+  drawBrushRenderGeometry,
+  resolveStrokeRenderGeometry,
+  type BrushRenderGeometry,
+} from "./internal/brush-render-strategy";
+import { drawStrokePoints } from "./internal/draw-stroke";
+import { freezeRect, unionRects } from "./internal/geometry";
+import { getStrokeRenderedBounds } from "./rendered-stroke-bounds";
 import type { Stroke } from "./stroke";
 import type {
   FinalizedStrokeVisual,
   StrokePoint,
   StrokeRendererOptions,
   StrokeRendererSnapshot,
-  StrokeStyle,
   StrokeTransform,
   StrokeUpdate,
 } from "./types";
 
 interface LiveStrokeState {
   readonly id: string;
-  readonly style: StrokeStyle;
+  readonly brush: import("./brush-model").ResolvedBrushSnapshot;
   points: ReadonlyArray<StrokePoint>;
   dirtyRect: Rect;
 }
@@ -28,8 +30,7 @@ interface FinalizedStrokeState {
   readonly id: string;
   readonly stroke: Stroke;
   readonly transform: StrokeTransform;
-  readonly renderedStyle: StrokeStyle;
-  readonly path: ProfessionalInkPath;
+  readonly geometry: BrushRenderGeometry;
   readonly bounds: Rect;
 }
 
@@ -55,36 +56,11 @@ function freezeTransform(transform: StrokeTransform): StrokeTransform {
   return Object.freeze({ translation, rotation: transform.rotation, scale: transform.scale });
 }
 
-function transformedBounds(stroke: Stroke, transform: StrokeTransform): Rect {
-  const bounds = stroke.bounds;
-  const inflatedBounds = stroke.inflatedBounds;
-  const strokePadding = Math.max(
-    bounds.x - inflatedBounds.x,
-    bounds.y - inflatedBounds.y,
-    inflatedBounds.x + inflatedBounds.width - (bounds.x + bounds.width),
-    inflatedBounds.y + inflatedBounds.height - (bounds.y + bounds.height),
-  );
-  const cosine = Math.abs(Math.cos(transform.rotation));
-  const sine = Math.abs(Math.sin(transform.rotation));
-  const width =
-    transform.scale * (bounds.width * cosine + bounds.height * sine) + strokePadding * 2;
-  const height =
-    transform.scale * (bounds.width * sine + bounds.height * cosine) + strokePadding * 2;
-  const centerX = bounds.x + bounds.width / 2 + transform.translation.x;
-  const centerY = bounds.y + bounds.height / 2 + transform.translation.y;
-  return freezeRect({ x: centerX - width / 2, y: centerY - height / 2, width, height });
-}
-
-function compensateStrokeWidth(style: StrokeStyle, scale: number): StrokeStyle {
-  if (scale === 1) return style;
-  return Object.freeze({ ...style, width: style.width / scale });
-}
-
 function createFinalizedStrokeState(
   id: string,
   stroke: Stroke,
   transform: StrokeTransform,
-  path: ProfessionalInkPath,
+  geometry: BrushRenderGeometry,
 ): FinalizedStrokeState {
   if (typeof id !== "string" || id.trim().length === 0 || !Object.isFrozen(stroke)) {
     throw new InkError("INVALID_STROKE", "A retained stroke requires identity and immutability.");
@@ -94,9 +70,8 @@ function createFinalizedStrokeState(
     id,
     stroke,
     transform: frozenTransform,
-    renderedStyle: compensateStrokeWidth(stroke.style, frozenTransform.scale),
-    path,
-    bounds: transformedBounds(stroke, frozenTransform),
+    geometry,
+    bounds: getStrokeRenderedBounds(stroke, frozenTransform),
   });
 }
 
@@ -107,7 +82,7 @@ export class StrokeRenderer {
   private readonly onInvalidate: ((dirtyRect: Rect) => void) | undefined;
   private readonly finalizedPresentation: "retained" | "external";
   private readonly scheduler: RenderScheduler;
-  private readonly pathCache = new WeakMap<Stroke, ProfessionalInkPath>();
+  private readonly diagnosedGeometry = new WeakSet<Stroke>();
   private readonly finalizedStrokes: FinalizedStrokeState[] = [];
   private liveStroke: LiveStrokeState | null = null;
   private pendingDirtyRect: Rect | null = null;
@@ -140,7 +115,7 @@ export class StrokeRenderer {
     }
     this.liveStroke = {
       id: update.strokeId,
-      style: update.style,
+      brush: update.brush,
       points: update.points,
       dirtyRect: update.dirtyRect,
     };
@@ -171,7 +146,7 @@ export class StrokeRenderer {
         visualId,
       });
     }
-    const path = this.resolvePath(stroke);
+    const geometry = this.resolveGeometry(stroke, 1);
     const finalized = createFinalizedStrokeState(
       visualId,
       stroke,
@@ -180,11 +155,11 @@ export class StrokeRenderer {
         rotation: 0,
         scale: 1,
       },
-      path,
+      geometry,
     );
     if (this.liveStroke !== null && this.liveStroke.id === stroke.id) {
       this.finalizedStrokes.push(finalized);
-      this.addPathDiagnostics(path);
+      this.addPathDiagnostics(geometry);
       this.liveStroke = null;
       this.pendingDirtyRect = null;
       this.renderedLivePointCount = 0;
@@ -192,7 +167,7 @@ export class StrokeRenderer {
       this.redraw();
     } else {
       this.finalizedStrokes.push(finalized);
-      this.addPathDiagnostics(path);
+      this.addPathDiagnostics(geometry);
       this.redraw();
     }
     this.updateCanvasDiagnostics();
@@ -231,7 +206,14 @@ export class StrokeRenderer {
     ) {
       return false;
     }
-    const next = createFinalizedStrokeState(current.id, current.stroke, transform, current.path);
+    const next = createFinalizedStrokeState(
+      current.id,
+      current.stroke,
+      transform,
+      current.transform.scale === transform.scale
+        ? current.geometry
+        : this.resolveGeometry(current.stroke, transform.scale),
+    );
     this.finalizedStrokes[index] = next;
     const affected = unionRects(current.bounds, next.bounds);
     this.recordInvalidation(affected);
@@ -255,7 +237,7 @@ export class StrokeRenderer {
         visual.id,
         visual.stroke,
         visual.transform,
-        this.resolvePath(visual.stroke),
+        this.resolveGeometry(visual.stroke, visual.transform.scale),
       );
     });
     const unchanged =
@@ -314,7 +296,7 @@ export class StrokeRenderer {
         for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
       }
       if (this.liveStroke !== null) {
-        this.drawPoints(this.liveStroke.points, this.liveStroke.style, 0);
+        this.drawLiveStroke(this.liveStroke);
         this.renderedLivePointCount = this.liveStroke.points.length;
       }
     });
@@ -364,9 +346,19 @@ export class StrokeRenderer {
 
   private renderIncrementalFrame(): void {
     if (this.destroyed || this.liveStroke === null || this.pendingDirtyRect === null) return;
+    if (this.liveStroke.brush.renderer.kind === "outline") {
+      const geometry = createBrushRenderGeometry(this.liveStroke.points, this.liveStroke.brush);
+      const affected = unionRects(this.liveStroke.dirtyRect, inflateRect(geometry.bounds, 2));
+      this.liveStroke.dirtyRect = affected;
+      this.recordInvalidation(affected);
+      this.pendingDirtyRect = null;
+      this.renderedLivePointCount = this.liveStroke.points.length;
+      this.clearAndRedrawRegion(affected, true, geometry);
+      return;
+    }
     const startIndex = this.renderedLivePointCount === 0 ? 0 : this.renderedLivePointCount - 1;
     this.withPageTransform(this.pendingDirtyRect, () => {
-      this.drawPoints(this.liveStroke?.points ?? [], this.liveStroke?.style, startIndex);
+      this.drawPoints(this.liveStroke?.points ?? [], this.liveStroke?.brush, startIndex);
     });
     this.renderedLivePointCount = this.liveStroke.points.length;
     this.pendingDirtyRect = null;
@@ -374,7 +366,11 @@ export class StrokeRenderer {
     this.updateCanvasDiagnostics();
   }
 
-  private clearAndRedrawRegion(dirtyRect: Rect): void {
+  private clearAndRedrawRegion(
+    dirtyRect: Rect,
+    includeLiveStroke = false,
+    liveGeometry?: BrushRenderGeometry,
+  ): void {
     const viewportRect = this.pageRectToViewport(dirtyRect);
     const context = this.context;
     context.save();
@@ -394,6 +390,10 @@ export class StrokeRenderer {
     this.withPageTransform(dirtyRect, () => {
       if (this.finalizedPresentation === "retained") {
         for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
+      }
+      if (includeLiveStroke && this.liveStroke !== null) {
+        if (liveGeometry === undefined) this.drawLiveStroke(this.liveStroke);
+        else drawBrushRenderGeometry(this.context, liveGeometry, this.liveStroke.brush);
       }
     });
     this.renderCountValue += 1;
@@ -424,17 +424,29 @@ export class StrokeRenderer {
 
   private drawPoints(
     points: readonly StrokePoint[],
-    style: StrokeStyle | undefined,
+    brush: import("./brush-model").ResolvedBrushSnapshot | undefined,
     startIndex: number,
   ): void {
-    if (style === undefined || points.length === 0) return;
-    drawStrokePoints(this.context, points, style, startIndex);
+    if (brush === undefined || points.length === 0) return;
+    drawStrokePoints(this.context, points, brush, startIndex);
+  }
+
+  private drawLiveStroke(state: LiveStrokeState): void {
+    if (state.points.length === 0) return;
+    if (state.brush.renderer.kind === "centerline") {
+      this.drawPoints(state.points, state.brush, 0);
+      return;
+    }
+    drawBrushRenderGeometry(
+      this.context,
+      createBrushRenderGeometry(state.points, state.brush),
+      state.brush,
+    );
   }
 
   private drawFinalizedStroke(state: FinalizedStrokeState): void {
-    const bounds = state.stroke.inflatedBounds;
-    const pivotX = bounds.x + bounds.width / 2;
-    const pivotY = bounds.y + bounds.height / 2;
+    const pivotX = state.stroke.bounds.center.x;
+    const pivotY = state.stroke.bounds.center.y;
     this.context.save();
     this.context.translate(state.transform.translation.x, state.transform.translation.y);
     if (state.transform.rotation !== 0 || state.transform.scale !== 1) {
@@ -445,12 +457,7 @@ export class StrokeRenderer {
       }
       this.context.translate(-pivotX, -pivotY);
     }
-    drawSmoothStrokeSegments(
-      this.context,
-      state.path.points,
-      state.path.segments,
-      state.renderedStyle,
-    );
+    drawBrushRenderGeometry(this.context, state.geometry, state.stroke.brush);
     this.context.restore();
   }
 
@@ -478,6 +485,7 @@ export class StrokeRenderer {
     this.canvas.dataset.inkFilteredPointCount = String(this.finalizedFilteredPointCountValue);
     this.canvas.dataset.inkCurveSegmentCount = String(this.finalizedSegmentCountValue);
     this.canvas.dataset.inkPathBuildCount = String(this.pathBuildCountValue);
+    this.canvas.dataset.inkBrushStrategy = this.liveStroke?.brush.renderer.kind ?? "hybrid";
     this.canvas.dataset.inkLivePointCount = String(this.liveStroke?.points.length ?? 0);
     this.canvas.dataset.inkRenderCount = String(this.renderCountValue);
     this.canvas.dataset.inkInvalidationCount = String(this.invalidationCountValue);
@@ -489,7 +497,8 @@ export class StrokeRenderer {
     }
   }
 
-  private addPathDiagnostics(path: ProfessionalInkPath): void {
+  private addPathDiagnostics(geometry: BrushRenderGeometry): void {
+    const path = geometry.path;
     this.finalizedSourcePointCountValue += path.sourcePointCount;
     this.finalizedFilteredPointCountValue += path.points.length;
     this.finalizedSegmentCountValue += path.segments.length;
@@ -499,16 +508,15 @@ export class StrokeRenderer {
     this.finalizedSourcePointCountValue = 0;
     this.finalizedFilteredPointCountValue = 0;
     this.finalizedSegmentCountValue = 0;
-    for (const { path } of this.finalizedStrokes) this.addPathDiagnostics(path);
+    for (const { geometry } of this.finalizedStrokes) this.addPathDiagnostics(geometry);
   }
 
-  private resolvePath(stroke: Stroke): ProfessionalInkPath {
-    const cached = this.pathCache.get(stroke);
-    if (cached !== undefined) return cached;
-    const path = createProfessionalInkPath(stroke.points);
-    this.pathCache.set(stroke, path);
-    this.pathBuildCountValue += 1;
-    return path;
+  private resolveGeometry(stroke: Stroke, renderedScale: number): BrushRenderGeometry {
+    if (!this.diagnosedGeometry.has(stroke)) {
+      this.diagnosedGeometry.add(stroke);
+      this.pathBuildCountValue += 1;
+    }
+    return resolveStrokeRenderGeometry(stroke, renderedScale);
   }
 
   private assertActive(): void {
@@ -516,4 +524,13 @@ export class StrokeRenderer {
       throw new InkError("RENDERER_DESTROYED", "The stroke renderer has been destroyed.");
     }
   }
+}
+
+function inflateRect(rect: Rect, amount: number): Rect {
+  return freezeRect({
+    x: rect.x - amount,
+    y: rect.y - amount,
+    width: rect.width + amount * 2,
+    height: rect.height + amount * 2,
+  });
 }

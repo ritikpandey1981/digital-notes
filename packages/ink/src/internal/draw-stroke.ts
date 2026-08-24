@@ -1,20 +1,21 @@
-import type { StrokePoint, StrokeStyle } from "../types";
+import type { ResolvedBrushSnapshot } from "../brush-model";
+import type { StrokePoint } from "../types";
+import { brushSizeAtPressure } from "./brush-dynamics";
 import type { ProfessionalInkSegment } from "./professional-ink-path";
-import { strokeWidth } from "./style";
 
 /** Shared low-latency path used by live ink; only newly sampled segments are drawn. */
 export function drawStrokePoints(
   context: CanvasRenderingContext2D,
   points: readonly StrokePoint[],
-  style: StrokeStyle,
+  brush: ResolvedBrushSnapshot,
   startIndex = 0,
 ): void {
   if (points.length === 0) return;
-  prepareContext(context, style);
-  drawStartingDot(context, points, style, startIndex);
+  prepareContext(context, brush);
+  drawStartingDot(context, points, brush, startIndex);
   const firstSegmentIndex = Math.max(1, startIndex + 1);
   for (let index = firstSegmentIndex; index < points.length; index += 1) {
-    drawPointSegment(context, points, index, style);
+    drawPointSegment(context, points, index, brush);
   }
   context.restore();
 }
@@ -24,17 +25,18 @@ export function drawSmoothStrokeSegments(
   context: CanvasRenderingContext2D,
   points: readonly StrokePoint[],
   segments: readonly ProfessionalInkSegment[],
-  style: StrokeStyle,
+  brush: ResolvedBrushSnapshot,
+  renderedScale = 1,
 ): void {
   if (points.length === 0) return;
-  prepareContext(context, style);
+  prepareContext(context, brush);
   const firstSegment = segments[0];
   if (firstSegment === undefined) {
-    drawStartingDot(context, points, style, 0);
+    drawStartingDot(context, points, brush, 0, renderedScale);
     context.restore();
     return;
   }
-  context.lineWidth = averageStrokeWidth(points, style);
+  context.lineWidth = averageStrokeWidth(points, brush) / renderedScale;
   context.beginPath();
   context.moveTo(firstSegment.start.x, firstSegment.start.y);
   for (const segment of segments) {
@@ -51,26 +53,33 @@ export function drawSmoothStrokeSegments(
   context.restore();
 }
 
-function prepareContext(context: CanvasRenderingContext2D, style: StrokeStyle): void {
+function prepareContext(context: CanvasRenderingContext2D, brush: ResolvedBrushSnapshot): void {
   context.save();
-  context.globalAlpha *= style.opacity;
-  context.strokeStyle = style.color;
-  context.fillStyle = style.color;
-  context.lineCap = style.lineCap;
-  context.lineJoin = style.lineJoin;
+  context.globalAlpha *= brush.opacity;
+  context.strokeStyle = brush.color;
+  context.fillStyle = brush.color;
+  context.lineCap = "round";
+  context.lineJoin = "round";
 }
 
 function drawStartingDot(
   context: CanvasRenderingContext2D,
   points: readonly StrokePoint[],
-  style: StrokeStyle,
+  brush: ResolvedBrushSnapshot,
   startIndex: number,
+  renderedScale = 1,
 ): void {
   if (startIndex !== 0) return;
   const first = points[0];
   if (first === undefined) return;
   context.beginPath();
-  context.arc(first.x, first.y, strokeWidth(style, first.pressure) / 2, 0, Math.PI * 2);
+  context.arc(
+    first.x,
+    first.y,
+    brushSizeAtPressure(brush, first.pressure) / (renderedScale * 2),
+    0,
+    Math.PI * 2,
+  );
   context.fill();
 }
 
@@ -78,7 +87,7 @@ function drawPointSegment(
   context: CanvasRenderingContext2D,
   points: readonly StrokePoint[],
   endIndex: number,
-  style: StrokeStyle,
+  brush: ResolvedBrushSnapshot,
 ): void {
   const start = points[endIndex - 1];
   const end = points[endIndex];
@@ -97,13 +106,13 @@ function drawPointSegment(
     clamp(end.x - (after.x - start.x) / 6, minX, maxX),
     clamp(end.y - (after.y - start.y) / 6, minY, maxY),
     end,
-    style,
+    brush,
   );
 }
 
-function averageStrokeWidth(points: readonly StrokePoint[], style: StrokeStyle): number {
+function averageStrokeWidth(points: readonly StrokePoint[], brush: ResolvedBrushSnapshot): number {
   let total = 0;
-  for (const point of points) total += strokeWidth(style, point.pressure);
+  for (const point of points) total += brushSizeAtPressure(brush, point.pressure);
   return total / points.length;
 }
 
@@ -115,9 +124,10 @@ function drawCubicSegment(
   control2X: number,
   control2Y: number,
   end: StrokePoint,
-  style: StrokeStyle,
+  brush: ResolvedBrushSnapshot,
 ): void {
-  context.lineWidth = (strokeWidth(style, start.pressure) + strokeWidth(style, end.pressure)) / 2;
+  context.lineWidth =
+    (brushSizeAtPressure(brush, start.pressure) + brushSizeAtPressure(brush, end.pressure)) / 2;
   context.beginPath();
   context.moveTo(start.x, start.y);
   context.bezierCurveTo(control1X, control1Y, control2X, control2Y, end.x, end.y);
