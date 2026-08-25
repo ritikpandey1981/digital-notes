@@ -19,7 +19,7 @@ import { createDefaultToolOptionsDescriptorRegistry } from "./tool-options-regis
 
 export function useEditorWorkspaceState() {
   const [activeTool, setActiveTool] = React.useState<EditorTool>("Select");
-  const [armedShape, setArmedShape] = React.useState<ShapeToolKind | null>(null);
+  const [armedShape, setArmedShape] = React.useState<ShapeToolKind>("rectangle");
   const [activeFloatingWidget, setActiveFloatingWidget] =
     React.useState<FloatingToolWidgetId | null>(null);
   const [, setFoundationVersion] = React.useState(0);
@@ -70,10 +70,12 @@ export function useEditorWorkspaceState() {
       setActiveFloatingWidget((current) =>
         resolveFloatingWidgetAfterToolSelection(activeTool, tool, current, floatingWidgetRegistry),
       );
-      setArmedShape((current) => (tool === "Shapes" && activeTool === "Shapes" ? current : null));
+      if (tool === "Shapes") {
+        setArmedShape(shapeToolState.snapshot().activeShape);
+      }
       setActiveTool(tool);
     },
-    [activeTool, floatingWidgetRegistry],
+    [activeTool, floatingWidgetRegistry, shapeToolState],
   );
   const dismissFloatingWidget = React.useCallback((): void => setActiveFloatingWidget(null), []);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);

@@ -12,6 +12,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
   brushCursorDiameter,
   cursorPresentationForTool,
+  nativeCursorForBrushRegion,
   pointIsWithinBrushPage,
   usesImperativeBrushCursor,
 } from "./editor-cursor-policy";
@@ -186,6 +187,13 @@ export const CanvasHost = memo(function CanvasHost({
       brushCursor.dataset.visible = String(visible);
       brushCursor.style.opacity = visible ? "1" : "0";
     };
+    const setNativeCursor = (brushCursorEligible: boolean): void => {
+      if ((inkCanvas.dataset.viewportPanState ?? "idle") !== "idle") return;
+      const cursor = nativeCursorForBrushRegion(brushCursorEligible);
+      inkCanvas.style.cursor = cursor;
+      inkCanvas.dataset.desktopCursorCss = cursor;
+      inkCanvas.dataset.brushNativeCursor = cursor;
+    };
     const renderPendingPosition = (): void => {
       cursorFrame = null;
       const position = pendingPosition;
@@ -213,38 +221,52 @@ export const CanvasHost = memo(function CanvasHost({
       );
       if (!overPage) {
         setVisible(false);
+        setNativeCursor(false);
         return;
       }
       positionCursor(x, y);
       setVisible(true);
+      setNativeCursor(true);
     };
     const handlePointerMove = (event: PointerEvent): void => {
       if (!brushActive || event.pointerType === "touch") {
         pendingPosition = null;
         setVisible(false);
+        setNativeCursor(false);
         return;
       }
       pendingPosition = Object.freeze({ clientX: event.clientX, clientY: event.clientY });
       if (cursorFrame === null) cursorFrame = requestAnimationFrame(renderPendingPosition);
     };
-    const hideCursor = (): void => {
+    const hideCursor = (restoreNativeCursor = true): void => {
       pendingPosition = null;
       setVisible(false);
+      if (restoreNativeCursor) setNativeCursor(false);
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.code === "Space") hideCursor();
+      if (event.code === "Space") hideCursor(false);
     };
+    const panStateObserver = new MutationObserver(() => {
+      if ((inkCanvas.dataset.viewportPanState ?? "idle") !== "idle") hideCursor(false);
+    });
+    panStateObserver.observe(inkCanvas, {
+      attributes: true,
+      attributeFilter: ["data-viewport-pan-state"],
+    });
     if (!brushActive) setVisible(false);
     inkCanvas.addEventListener("pointermove", handlePointerMove);
-    inkCanvas.addEventListener("pointerleave", hideCursor);
-    inkCanvas.addEventListener("pointercancel", hideCursor);
-    window.addEventListener("keydown", handleKeyDown);
+    const handlePointerExit = (): void => hideCursor();
+    inkCanvas.addEventListener("pointerleave", handlePointerExit);
+    inkCanvas.addEventListener("pointercancel", handlePointerExit);
+    window.addEventListener("keydown", handleKeyDown, true);
     return () => {
       inkCanvas.removeEventListener("pointermove", handlePointerMove);
-      inkCanvas.removeEventListener("pointerleave", hideCursor);
-      inkCanvas.removeEventListener("pointercancel", hideCursor);
-      window.removeEventListener("keydown", handleKeyDown);
+      inkCanvas.removeEventListener("pointerleave", handlePointerExit);
+      inkCanvas.removeEventListener("pointercancel", handlePointerExit);
+      window.removeEventListener("keydown", handleKeyDown, true);
+      panStateObserver.disconnect();
       if (cursorFrame !== null) cancelAnimationFrame(cursorFrame);
+      if (brushActive && inkCanvas.style.cursor === "none") inkCanvas.style.cursor = "default";
     };
   }, [activeTool, drawingStyle.width, viewportSnapshot.zoom]);
   return (

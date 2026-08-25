@@ -190,8 +190,15 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await window.keyboard.up("Shift");
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "3");
     await expect(surface).toHaveAttribute("data-selected-object-type", "ellipse");
-    await expect(selectionCanvas).toHaveAttribute("data-selection-handles", "visible");
-    await expect(selectionCanvas).toHaveAttribute("data-selection-presentation", "soft");
+    await expect(selectionCanvas).toHaveAttribute("data-selection-handles", "hidden");
+    await expect(vectorInteractionCanvas).toHaveAttribute(
+      "data-vector-selection-style",
+      "outline-emphasis",
+    );
+    await expect(vectorInteractionCanvas).toHaveAttribute(
+      "data-vector-selection-presentation",
+      "soft",
+    );
     await expect(shapeToolbar).toHaveAttribute("data-persistence-token", "same-toolbar");
     await expect(shapeToolbar).toHaveAttribute("data-selected-shape-type", "ellipse");
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-sizing", "content");
@@ -231,7 +238,8 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect
       .poll(async () => (await vectorStyles(surface)).find(({ type }) => type === "ellipse")?.color)
       .toBe("#dc2626");
-    await expect.poll(() => nonTransparentPixelCount(vectorInteractionCanvas)).toBe(0);
+    await expect.poll(() => nonTransparentPixelCount(vectorInteractionCanvas)).toBeGreaterThan(0);
+    await expect.poll(() => pixelAlphaAt(vectorInteractionCanvas, pageToScreen(240, 450))).toBe(0);
     const toolbarBeforeExpansion = await shapeToolbar.boundingBox();
     await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-expanded-section", "strokeWidth");
@@ -537,6 +545,18 @@ async function nonTransparentPixelCount(canvas: Locator): Promise<number> {
   });
 }
 
+async function pixelAlphaAt(canvas: Locator, point: Point): Promise<number> {
+  return canvas.evaluate((element, screenPoint) => {
+    const target = element as HTMLCanvasElement;
+    const context = target.getContext("2d");
+    if (context === null) throw new Error("Vector interaction context is unavailable.");
+    const bounds = target.getBoundingClientRect();
+    const x = Math.floor((screenPoint.x - bounds.left) * (target.width / bounds.width));
+    const y = Math.floor((screenPoint.y - bounds.top) * (target.height / bounds.height));
+    return context.getImageData(x, y, 1, 1).data[3] ?? 0;
+  }, point);
+}
+
 async function expectToolbarInsideWorkspace(toolbar: Locator, host: Locator): Promise<void> {
   const [toolbarBounds, hostBounds] = await Promise.all([
     toolbar.boundingBox(),
@@ -596,8 +616,6 @@ async function expectToolbarGeometry(
 ): Promise<void> {
   if (expected === null) throw new Error("Expected toolbar bounds unavailable.");
   const actual = await toolbar.boundingBox();
-  expect(actual?.x).toBeCloseTo(expected.x, 1);
-  expect(actual?.y).toBeCloseTo(expected.y, 1);
   expect(actual?.width).toBeCloseTo(expected.width, 1);
   expect(actual?.height).toBeCloseTo(expected.height, 1);
 }

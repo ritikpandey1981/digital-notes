@@ -239,8 +239,8 @@ test("keeps drawing, constraints, selection, overlap, overlays, and erasing page
     const overlap = await pageToScreen(surface, inkCanvas, { x: 300, y: 320 });
     await window.mouse.click(overlap.x, overlap.y);
     await expect(surface).toHaveAttribute("data-selected-object-id", secondRectangleId);
-    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
-    await expect(selectionCanvas).toHaveAttribute("data-selection-handles", "visible");
+    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");
+    await expect(vectorCanvas).toHaveAttribute("data-vector-selection-style", "outline-emphasis");
     await window.keyboard.down("Alt");
     await expect(surface).toHaveAttribute("data-overlap-candidate-count", "2");
     await expect(surface).toHaveAttribute("data-overlap-candidate-id", firstRectangleId);
@@ -258,7 +258,7 @@ test("keeps drawing, constraints, selection, overlap, overlays, and erasing page
     await window.mouse.move(selectedCenter.x, selectedCenter.y);
     await window.mouse.wheel(25, -40);
     await expect(surface).toHaveAttribute("data-selected-object-id", firstRectangleId);
-    await expect(selectionCanvas).toHaveAttribute("data-selection-state", "selected");
+    await expect(vectorCanvas).toHaveAttribute("data-vector-selection-style", "outline-emphasis");
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
     expect(await requiredAttribute(surface, "data-selected-object-transforms")).toBe(
       objectStateBeforeViewport,

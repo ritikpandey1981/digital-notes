@@ -99,6 +99,22 @@ describe("shape editing toolbar placement", () => {
       expect(pointInside(placement, point, 22)).toBe(false);
     }
   });
+
+  it("keeps a rotated frame's corners, stem, and rotation handle clear", () => {
+    const selectionFrame = Object.freeze({
+      centerX: 500,
+      centerY: 360,
+      width: 240,
+      height: 80,
+      rotation: Math.PI / 4,
+    });
+    const snapshot = shapeSnapshot({ x: 380, y: 240, width: 240, height: 240 }, { selectionFrame });
+    const placement = resolveShapeEditingToolbarPlacement(snapshot, TOOLBAR_SIZE);
+
+    for (const point of orientedControlPoints(selectionFrame)) {
+      expect(pointInside(placement, point, 12)).toBe(false);
+    }
+  });
 });
 
 function shapeSnapshot(
@@ -139,4 +155,21 @@ function pointInside(
     placement.top + placement.height <= point.y - radius ||
     placement.top >= point.y + radius
   );
+}
+
+function orientedControlPoints(frame: NonNullable<ShapeEditingSnapshot["selectionFrame"]>) {
+  const halfWidth = frame.width / 2 + 4;
+  const halfHeight = frame.height / 2 + 4;
+  const rotate = (x: number, y: number) => ({
+    x: frame.centerX + x * Math.cos(frame.rotation) - y * Math.sin(frame.rotation),
+    y: frame.centerY + x * Math.sin(frame.rotation) + y * Math.cos(frame.rotation),
+  });
+  return [
+    rotate(-halfWidth, -halfHeight),
+    rotate(halfWidth, -halfHeight),
+    rotate(halfWidth, halfHeight),
+    rotate(-halfWidth, halfHeight),
+    rotate(0, -halfHeight),
+    rotate(0, -halfHeight - 28),
+  ];
 }

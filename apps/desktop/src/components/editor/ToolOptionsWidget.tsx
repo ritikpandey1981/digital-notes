@@ -1,6 +1,13 @@
 import type { EditorColorSystemSnapshot } from "@folio/editor";
-import { cn } from "@folio/ui";
+import {
+  cn,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@folio/ui";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Check, ChevronDown } from "lucide-react";
 import type { ChangeEvent, FocusEvent, ReactNode } from "react";
 import { useLayoutEffect, useRef } from "react";
 import { ContinuousSlider } from "./ContinuousSlider";
@@ -140,23 +147,59 @@ export function ToolOptionsWidget({
                 </span>
               </div>
               {descriptor.preset === null ? null : (
-                <label className="mb-1 flex items-center gap-2 rounded-xl px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted transition-colors duration-100 hover:bg-folio-hover">
+                <div className="mb-1 flex items-center gap-2 rounded-xl px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted transition-colors duration-100 hover:bg-folio-hover">
                   <span className="shrink-0">Preset</span>
-                  <select
-                    className="h-7 min-w-0 flex-1 cursor-pointer rounded-lg border border-folio-border bg-folio-surface px-2 text-[11px] font-medium normal-case tracking-normal text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-                    value={descriptor.preset.activeId}
-                    aria-label={`${descriptor.displayName} preset`}
-                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                      onSelectPreset(event.currentTarget.value)
-                    }
-                  >
-                    {descriptor.preset.options.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex h-7 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-folio-border bg-folio-surface px-2 text-[11px] font-medium normal-case tracking-normal text-folio-ink transition-[background-color,border-color,box-shadow] hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                        aria-label={`${descriptor.displayName} preset`}
+                        data-testid="brush-preset-trigger"
+                        data-active-preset-id={descriptor.preset.activeId}
+                      >
+                        <span className="truncate">
+                          {descriptor.preset.options.find(
+                            ({ id }) => id === descriptor.preset?.activeId,
+                          )?.name ?? "Preset"}
+                        </span>
+                        <ChevronDown
+                          className="size-3.5 shrink-0 text-folio-muted"
+                          aria-hidden="true"
+                        />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      side="right"
+                      sideOffset={8}
+                      collisionPadding={10}
+                      className="z-[45] min-w-52"
+                      data-testid="brush-preset-menu"
+                      data-floating-widget-owned-portal="true"
+                    >
+                      {descriptor.preset.options.map((preset) => {
+                        const selected = preset.id === descriptor.preset?.activeId;
+                        return (
+                          <DropdownMenuItem
+                            key={preset.id}
+                            className={cn(
+                              "justify-between",
+                              selected && "bg-folio-accent-soft text-folio-accent",
+                            )}
+                            aria-checked={selected}
+                            role="menuitemradio"
+                            data-preset-id={preset.id}
+                            onSelect={() => onSelectPreset(preset.id)}
+                          >
+                            <span>{preset.name}</span>
+                            {selected ? <Check className="size-4" aria-hidden="true" /> : null}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               )}
               <StrokePreviewCanvas descriptor={descriptor} renderScale={previewScale} />
               <span className="my-1 h-px w-full bg-folio-border" aria-hidden="true" />

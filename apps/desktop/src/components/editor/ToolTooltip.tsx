@@ -5,23 +5,24 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { resolveTooltipPlacement, type TooltipSide } from "./tooltip-position";
 
 interface ToolTooltipProps {
   readonly label: string;
-  readonly side?: "right" | "bottom";
+  readonly side?: TooltipSide;
   readonly hidden?: boolean;
 }
 
 interface TooltipRequest {
   readonly anchor: HTMLElement;
   readonly label: string;
-  readonly side: "right" | "bottom";
+  readonly side: TooltipSide;
   readonly bounds: DOMRect;
 }
 
@@ -42,7 +43,30 @@ export function TooltipLayerProvider({ children }: { readonly children: ReactNod
   const [state, setState] = useState<TooltipLayerState>(() =>
     Object.freeze({ request: null, visible: false }),
   );
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
+  const [tooltipSize, setTooltipSize] = useState<Readonly<{ width: number; height: number }>>(() =>
+    Object.freeze({ width: 0, height: 0 }),
+  );
   const { request, visible } = state;
+  const placement = resolveTooltipPlacement(
+    request?.bounds ?? null,
+    tooltipSize,
+    request?.side ?? "right",
+    typeof window === "undefined"
+      ? { width: 0, height: 0 }
+      : { width: window.innerWidth, height: window.innerHeight },
+  );
+
+  useLayoutEffect(() => {
+    const tooltip = tooltipRef.current;
+    if (tooltip === null || request === null) return;
+    const bounds = tooltip.getBoundingClientRect();
+    setTooltipSize((current) =>
+      current.width === bounds.width && current.height === bounds.height
+        ? current
+        : Object.freeze({ width: bounds.width, height: bounds.height }),
+    );
+  }, [request]);
 
   const show = useCallback((next: Omit<TooltipRequest, "bounds">): void => {
     setState(
@@ -94,18 +118,19 @@ export function TooltipLayerProvider({ children }: { readonly children: ReactNod
       {createPortal(
         <div
           className="pointer-events-none fixed inset-0"
-          style={{ zIndex: 1_000 }}
+          style={{ zIndex: 40 }}
           data-tooltip-layer="global"
           aria-hidden={request === null || !visible}
         >
           <span
+            ref={tooltipRef}
             className={cn(
               "folio-tool-tooltip pointer-events-none fixed whitespace-nowrap px-2.5 py-1.5 text-xs font-medium leading-none text-folio-ink",
               visible && request !== null ? "visible opacity-100" : "invisible opacity-0",
             )}
-            style={tooltipPosition(request)}
+            style={{ left: placement.left, top: placement.top }}
             role="tooltip"
-            data-side={request?.side ?? "right"}
+            data-side={placement.side}
             data-tooltip-motion="fade-120ms"
             data-tooltip-surface="auxiliary-soft"
           >
@@ -183,20 +208,4 @@ export function ToolTooltip({ label, side = "right", hidden = false }: ToolToolt
   }, [hidden, label, layer, side]);
 
   return <span ref={probeRef} className="hidden" aria-hidden="true" />;
-}
-
-function tooltipPosition(request: TooltipRequest | null): CSSProperties {
-  if (request === null) return { left: 0, top: 0 };
-  if (request.side === "bottom") {
-    return {
-      left: request.bounds.left + request.bounds.width / 2,
-      top: request.bounds.bottom + 12,
-      transform: "translateX(-50%)",
-    };
-  }
-  return {
-    left: request.bounds.right + 12,
-    top: request.bounds.top + request.bounds.height / 2,
-    transform: "translateY(-50%)",
-  };
 }

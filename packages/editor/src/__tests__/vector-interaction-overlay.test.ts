@@ -17,10 +17,13 @@ function context(): CanvasRenderingContext2D {
     clip: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
+    closePath: vi.fn(),
     ellipse: vi.fn(),
     arc: vi.fn(),
     fill: vi.fn(),
     stroke: vi.fn(),
+    fillRect: vi.fn(),
+    strokeRect: vi.fn(),
     lineWidth: 1,
     strokeStyle: "",
     fillStyle: "",
@@ -83,7 +86,7 @@ describe("VectorInteractionOverlayRenderer", () => {
     test.renderer.destroy();
   });
 
-  it("leaves selected rectangle geometry transparent for the bounds-and-handles overlay", () => {
+  it("draws an oriented local frame and handles for a selected rectangle", () => {
     const test = harness();
     const rectangle = factory.createRectangleObject({
       id: "selected-rectangle",
@@ -93,9 +96,30 @@ describe("VectorInteractionOverlayRenderer", () => {
     test.renderer.setSelection(rectangle);
     test.flush();
 
-    expect(test.context.rect).not.toHaveBeenCalledWith(20, 30, 100, 60);
-    expect(test.context.stroke).not.toHaveBeenCalled();
+    expect(test.context.fillRect).toHaveBeenCalledTimes(4);
+    expect(test.context.strokeRect).toHaveBeenCalledTimes(4);
+    expect(test.context.arc).toHaveBeenCalledTimes(1);
+    expect(test.context.stroke).toHaveBeenCalledTimes(3);
     expect(test.canvas.dataset.vectorSelectionStyle).toBe("outline-emphasis");
+    test.renderer.destroy();
+  });
+
+  it("rotates the complete selection frame during an immutable manipulation preview", () => {
+    const test = harness();
+    const rectangle = factory.createRectangleObject({
+      id: "rotating-rectangle",
+      geometry: { x: 20, y: 30, width: 100, height: 60 },
+    });
+    const previewTransform = new Transform({ rotation: Math.PI / 4 });
+
+    test.renderer.setSelection(rectangle);
+    test.renderer.setSelectionPreviewTransform(previewTransform);
+    test.flush();
+
+    expect(test.canvas.dataset.vectorSelectionRotation).toBe(String(Math.PI / 4));
+    expect(test.context.moveTo).toHaveBeenCalled();
+    expect(test.context.lineTo).toHaveBeenCalledTimes(4);
+    expect(rectangle.transform.rotation).toBe(0);
     test.renderer.destroy();
   });
 

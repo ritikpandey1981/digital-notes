@@ -1,5 +1,6 @@
 import {
   InkObject,
+  Transform,
   isVectorObject,
   type EllipseGeometry,
   type LineGeometry,
@@ -7,7 +8,6 @@ import {
   type ObjectCollection,
   type PageObject,
   type RectangleGeometry,
-  type Transform,
   type VectorPageObject,
 } from "@folio/document";
 import type { HistoryNotification, IHistoryController, IHistoryState } from "@folio/history";
@@ -92,10 +92,12 @@ import { OverlapSelectionCycle } from "./OverlapSelectionCycle";
 import { PageManipulationCoordinateMapper } from "./PageManipulationCoordinateMapper";
 import { PageSelectionCoordinateMapper } from "./PageSelectionCoordinateMapper";
 import {
+  resolveOrientedSelectionFrame,
   resolveSelectionManipulationHit,
   selectionManipulationCursorCss,
   type SelectionManipulationCursor,
 } from "./SelectionManipulationTarget";
+import { normalizeRotationDegrees, snapRotationPointer } from "./RotationPresentation";
 import {
   createVectorShapeDraft,
   type ShapeCreationKind,
@@ -161,6 +163,13 @@ export interface ShapeEditingSnapshot {
     height: number;
   }>;
   readonly viewportSize: Readonly<{ width: number; height: number }>;
+  readonly selectionFrame?: Readonly<{
+    centerX: number;
+    centerY: number;
+    width: number;
+    height: number;
+    rotation: number;
+  }>;
 }
 
 /** Public composition and lifecycle callbacks accepted by {@link CanvasSurface}. */
@@ -282,6 +291,15 @@ function createShapeEditingSnapshot(
     x: viewport.pageRect.x + bounds.x,
     y: viewport.pageRect.y + bounds.y,
   });
+  const localCenter = Object.freeze({
+    x: object.localBounds.x + object.localBounds.width / 2,
+    y: object.localBounds.y + object.localBounds.height / 2,
+  });
+  const pageCenter = object.transform.applyToPoint(localCenter, localCenter);
+  const viewportCenter = viewport.worldToViewport({
+    x: viewport.pageRect.x + pageCenter.x,
+    y: viewport.pageRect.y + pageCenter.y,
+  });
   return Object.freeze({
     objectId: object.id,
     objectType: object.type,
@@ -295,6 +313,13 @@ function createShapeEditingSnapshot(
       height: bounds.height * viewport.camera.zoom,
     }),
     viewportSize: Object.freeze({ ...viewport.size }),
+    selectionFrame: Object.freeze({
+      centerX: viewportCenter.x,
+      centerY: viewportCenter.y,
+      width: object.localBounds.width * object.transform.scale * viewport.camera.zoom,
+      height: object.localBounds.height * object.transform.scale * viewport.camera.zoom,
+      rotation: object.transform.rotation,
+    }),
   });
 }
 
@@ -446,6 +471,8 @@ export function CanvasSurface({
     let shapePreviewLayer: ReturnType<CanvasController["createOverlayLayer"]> | null = null;
     let shapePreviewRenderer: TransformPreviewRenderer | null = null;
     let measurementElement: HTMLDivElement | null = null;
+    let rotationIndicatorElement: HTMLDivElement | null = null;
+    let rotationIndicatorFrame: number | null = null;
     let manipulationController: ManipulationController<ManipulationResult> | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
@@ -697,9 +724,7 @@ export function CanvasSurface({
             ? selectedObject
             : null;
         activeSelectionOverlayRenderer.setSelection(
-          selectedObject === undefined ||
-            selectionBounds === undefined ||
-            selectedVector?.type === "line"
+          selectedObject === undefined || selectionBounds === undefined || selectedVector !== null
             ? null
             : { objectId: selectedObject.id, bounds: selectionBounds },
         );
@@ -839,6 +864,66 @@ export function CanvasSurface({
         fontVariantNumeric: "tabular-nums",
       });
       host.appendChild(activeMeasurementElement);
+      rotationIndicatorElement = document.createElement("div");
+      const activeRotationIndicator = rotationIndicatorElement;
+      activeRotationIndicator.dataset.rotationIndicator = "hidden";
+      activeRotationIndicator.dataset.testid = "rotation-angle-indicator";
+      activeRotationIndicator.setAttribute("aria-hidden", "true");
+      Object.assign(activeRotationIndicator.style, {
+        position: "absolute",
+        zIndex: "5",
+        display: "none",
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+        border: "1px solid var(--folio-border, rgba(37, 37, 34, 0.12))",
+        borderRadius: "8px",
+        background: "color-mix(in srgb, var(--folio-surface, #ffffff) 94%, transparent)",
+        color: "var(--folio-ink, #252522)",
+        boxShadow: "0 6px 18px rgba(0, 0, 0, 0.12)",
+        backdropFilter: "blur(10px)",
+        padding: "4px 7px",
+        font: "650 11px/1.2 Inter, ui-sans-serif, system-ui, sans-serif",
+        fontVariantNumeric: "tabular-nums",
+      });
+      host.appendChild(activeRotationIndicator);
+      const hideRotationIndicator = (): void => {
+        if (rotationIndicatorFrame !== null) {
+          cancelAnimationFrame(rotationIndicatorFrame);
+          rotationIndicatorFrame = null;
+        }
+        activeRotationIndicator.style.display = "none";
+        activeRotationIndicator.dataset.rotationIndicator = "hidden";
+        activeRotationIndicator.textContent = "";
+      };
+      const showRotationIndicator = (object: VectorPageObject, transform: Transform): void => {
+        if (object.type === "line") return;
+        if (rotationIndicatorFrame !== null) cancelAnimationFrame(rotationIndicatorFrame);
+        rotationIndicatorFrame = requestAnimationFrame(() => {
+          rotationIndicatorFrame = null;
+          const frame = resolveOrientedSelectionFrame(
+            object.localBounds,
+            transform,
+            viewport.camera.zoom,
+          );
+          const handle = viewport.worldToViewport({
+            x: viewport.pageRect.x + frame.rotationHandle.x,
+            y: viewport.pageRect.y + frame.rotationHandle.y,
+          });
+          const degrees = normalizeRotationDegrees(transform.rotation);
+          activeRotationIndicator.textContent = `${degrees}°`;
+          activeRotationIndicator.style.left = `${Math.max(
+            8,
+            Math.min(host.clientWidth - 52, handle.x + 13),
+          )}px`;
+          activeRotationIndicator.style.top = `${Math.max(
+            8,
+            Math.min(host.clientHeight - 30, handle.y - 13),
+          )}px`;
+          activeRotationIndicator.style.display = "block";
+          activeRotationIndicator.dataset.rotationIndicator = "visible";
+          activeRotationIndicator.dataset.rotationDegrees = String(degrees);
+        });
+      };
       const manipulationCoordinateMapper = new PageManipulationCoordinateMapper({
         coordinateConverter,
         viewport,
@@ -1095,6 +1180,29 @@ export function CanvasSurface({
         host.dataset.manipulationScale = String(state.finalObjectScale ?? 1);
         const object =
           state.objectId === null ? undefined : documentSession.collection.lookup(state.objectId);
+        const vectorPreviewTransform =
+          state.phase === "dragging" &&
+          isVectorObject(object) &&
+          state.finalObjectTranslation !== null &&
+          state.finalObjectRotation !== null &&
+          state.finalObjectScale !== null
+            ? new Transform({
+                translation: state.finalObjectTranslation,
+                rotation: state.finalObjectRotation,
+                scale: state.finalObjectScale,
+              })
+            : null;
+        activeVectorInteractionRenderer.setSelectionPreviewTransform(vectorPreviewTransform);
+        if (
+          vectorPreviewTransform !== null &&
+          isVectorObject(object) &&
+          object.type !== "line" &&
+          state.kind === "rotation"
+        ) {
+          showRotationIndicator(object, vectorPreviewTransform);
+        } else {
+          hideRotationIndicator();
+        }
         const selectedGeometry = selectionGeometry.resolve(
           documentSession.collection,
           editorSelection.ids,
@@ -1448,6 +1556,9 @@ export function CanvasSurface({
           bounds: selection.bounds,
           position: pagePosition,
           zoom: viewport.camera.zoom,
+          ...(isVectorObject(selectedObject) && selectedObject.type !== "line"
+            ? { localBounds: selectedObject.localBounds, transform: selectedObject.transform }
+            : {}),
         });
         setManipulationCursor(hit?.cursor ?? "default");
       };
@@ -1614,6 +1725,9 @@ export function CanvasSurface({
                     bounds: selectedGeometry.bounds,
                     position: pagePosition,
                     zoom: viewport.camera.zoom,
+                    ...(isVectorObject(selectedLine) && selectedLine.type !== "line"
+                      ? { localBounds: selectedLine.localBounds, transform: selectedLine.transform }
+                      : {}),
                   });
             if (route === undefined) {
               route = isLineObject(selectedLine) ? "selection" : (hit?.kind ?? "selection");
@@ -1661,10 +1775,19 @@ export function CanvasSurface({
               }
             }
           } else {
-            const pagePosition = manipulationCoordinateMapper.screenToPage(
+            let pagePosition = manipulationCoordinateMapper.screenToPage(
               position,
               activeManipulationController.hasActiveSession(),
             );
+            if (route === "rotation" && event.shiftKey && pagePosition !== null) {
+              pagePosition = snapRotationPointer(
+                activeManipulationController.getManipulationState(),
+                pagePosition,
+              );
+              host.dataset.rotationSnapActive = "true";
+            } else if (route === "rotation") {
+              host.dataset.rotationSnapActive = "false";
+            }
             activeManipulationController.handlePointer({
               phase,
               pointerId: event.pointerId,
@@ -2455,6 +2578,10 @@ export function CanvasSurface({
         cancelAnimationFrame(viewportPresentationFrame);
         viewportPresentationFrame = null;
       }
+      if (rotationIndicatorFrame !== null) {
+        cancelAnimationFrame(rotationIndicatorFrame);
+        rotationIndicatorFrame = null;
+      }
       viewportActionsReadyRef.current?.(null);
       unsubscribeSelection?.();
       unsubscribeManipulation?.();
@@ -2494,6 +2621,7 @@ export function CanvasSurface({
       shapePreviewLayer?.destroy();
       inkLayer?.destroy();
       measurementElement?.remove();
+      rotationIndicatorElement?.remove();
       controller.destroy();
     };
   }, [

@@ -23,7 +23,7 @@ export const DEFAULT_SHAPE_DRAWING_STYLE: ShapeDrawingStyle = Object.freeze({
 });
 
 class ShapeToolStateImplementation implements ShapeToolState {
-  #activeShape: ShapeToolKind = "line";
+  #activeShape: ShapeToolKind = "rectangle";
   #style = DEFAULT_SHAPE_DRAWING_STYLE;
   #version = 0;
 

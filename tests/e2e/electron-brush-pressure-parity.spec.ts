@@ -27,7 +27,10 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
 
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await window.getByRole("combobox", { name: "Pen preset" }).selectOption("pen-brush");
+    const presetTrigger = window.getByRole("button", { name: "Pen preset" });
+    await presetTrigger.click();
+    await window.locator('[role="menuitemradio"][data-preset-id="pen-brush"]').click();
+    await expect(presetTrigger).toHaveAttribute("data-active-preset-id", "pen-brush");
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "20");
     await window.keyboard.press("Escape");
 

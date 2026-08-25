@@ -31,6 +31,10 @@ export function pointIsWithinBrushPage(
   );
 }
 
+export function nativeCursorForBrushRegion(brushCursorEligible: boolean): "default" | "none" {
+  return brushCursorEligible ? "none" : "default";
+}
+
 const eraserCursor = createSvgCursor(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M5.2 14.8l8.9-8.9a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8l-8 8H7.3l-2.1-2.1a1.4 1.4 0 010-2z" fill="#f9a8d4" stroke="#111827" stroke-width="1.5" stroke-linejoin="round"/><path d="M11.2 18.9l-4.7-4.7M11.2 18.9h7.3" stroke="#111827" stroke-width="1.5" stroke-linecap="round"/></svg>',
   6,
@@ -50,10 +54,10 @@ const cursorByTool: Readonly<Record<EditorTool, EditorCursorPresentation>> = Obj
   Move: Object.freeze({ id: "move", css: null }),
   Rotate: Object.freeze({ id: "rotate", css: null }),
   Scale: Object.freeze({ id: "scale", css: null }),
-  Pencil: Object.freeze({ id: "pencil", css: "none" }),
-  Pen: Object.freeze({ id: "pen", css: "none" }),
-  Marker: Object.freeze({ id: "marker", css: "none" }),
-  Highlighter: Object.freeze({ id: "highlighter", css: "none" }),
+  Pencil: Object.freeze({ id: "pencil", css: "default" }),
+  Pen: Object.freeze({ id: "pen", css: "default" }),
+  Marker: Object.freeze({ id: "marker", css: "default" }),
+  Highlighter: Object.freeze({ id: "highlighter", css: "default" }),
   Eraser: Object.freeze({ id: "eraser", css: eraserCursor }),
   Shapes: Object.freeze({
     id: "shapes",

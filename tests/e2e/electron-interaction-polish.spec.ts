@@ -88,7 +88,7 @@ test("provides manipulation cursors and grouped move, scale, and rotate interact
           initialGroup.y - 32 / coordinates.zoom,
         ),
         cursor: "rotation",
-        css: /^url\("data:image\/svg\+xml,.+"\) 12 12, crosshair$/u,
+        css: /^url\("data:image\/svg\+xml,.+"\) 16 16, crosshair$/u,
       },
       {
         point: coordinates.pageToScreen(

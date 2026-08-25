@@ -3,20 +3,21 @@ import type { EditorTool } from "./editor-types";
 import {
   brushCursorDiameter,
   cursorPresentationForTool,
+  nativeCursorForBrushRegion,
   pointIsWithinBrushPage,
   usesImperativeBrushCursor,
 } from "./editor-cursor-policy";
 
 describe("desktop editor cursor policy", () => {
-  it("delegates brush tools to the imperative ring while retaining the eraser cursor", () => {
+  it("starts brush tools with the native arrow until the imperative ring is page-eligible", () => {
     const brushes = ["Pencil", "Pen", "Marker", "Highlighter"] as const;
     const eraser = cursorPresentationForTool("Eraser");
 
     expect(brushes.map((tool) => cursorPresentationForTool(tool).css)).toEqual([
-      "none",
-      "none",
-      "none",
-      "none",
+      "default",
+      "default",
+      "default",
+      "default",
     ]);
     expect(eraser.id).toBe("eraser");
     expect(eraser.css).toContain("data:image/svg+xml");
@@ -93,5 +94,7 @@ describe("desktop editor cursor policy", () => {
     expect(pointIsWithinBrushPage({ x: 100, y: 80 }, page)).toBe(true);
     expect(pointIsWithinBrushPage({ x: 700, y: 880 }, page)).toBe(true);
     expect(pointIsWithinBrushPage({ x: 99, y: 80 }, page)).toBe(false);
+    expect(nativeCursorForBrushRegion(true)).toBe("none");
+    expect(nativeCursorForBrushRegion(false)).toBe("default");
   });
 });

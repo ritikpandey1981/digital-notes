@@ -110,7 +110,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await expect(contextHint).toContainText("Tip: Hold Space + Drag → Move canvas");
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "pen");
     const penCursor = await inkCanvas.evaluate((canvas) => canvas.style.cursor);
-    expect(penCursor).toBe("none");
+    expect(penCursor).toBe("default");
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
     await window.mouse.move(500, 120);
     await penButton.hover();
@@ -136,7 +136,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "highlighter");
     const highlighterCursor = await inkCanvas.evaluate((canvas) => canvas.style.cursor);
-    expect(highlighterCursor).toBe("none");
+    expect(highlighterCursor).toBe("default");
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
 
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
@@ -207,7 +207,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
           .getAttribute("data-preview-rendered-width"),
       ),
     ).toBeCloseTo(5.8 * previewScale);
-    await expect(palette.locator("svg")).toHaveCount(0);
+    await expect(palette.locator("svg")).toHaveCount(1);
     const previewMetrics = await window
       .getByRole("img", { name: "Pen stroke preview" })
       .evaluate((element) => {

@@ -1,17 +1,26 @@
-import type { ObjectBounds } from "@folio/document";
+import type { ObjectBounds, Transform } from "@folio/document";
 import type { ManipulationKind } from "@folio/manipulation";
 import type { PagePoint } from "@folio/selection";
 
 const OUTLINE_PADDING_PIXELS = 4;
 const HANDLE_HIT_RADIUS_PIXELS = 12;
 const ROTATION_HANDLE_OFFSET_PIXELS = 28;
-const ROTATION_CURSOR_CSS =
-  'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2724%27 height=%2724%27 viewBox=%270 0 24 24%27%3E%3Cpath d=%27M18.5 7.5A7 7 0 1 0 19 15%27 fill=%27none%27 stroke=%27white%27 stroke-width=%274%27 stroke-linecap=%27round%27/%3E%3Cpath d=%27M18 3v5.5h5.5%27 fill=%27none%27 stroke=%27white%27 stroke-width=%274%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3Cpath d=%27M18.5 7.5A7 7 0 1 0 19 15%27 fill=%27none%27 stroke=%27%23111827%27 stroke-width=%272%27 stroke-linecap=%27round%27/%3E%3Cpath d=%27M18 3v5.5h5.5%27 fill=%27none%27 stroke=%27%23111827%27 stroke-width=%272%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E") 12 12, crosshair';
+export const ROTATION_CURSOR_CSS = createRotationCursorCss();
 
 export interface SelectionManipulationTargetInput {
   readonly bounds: ObjectBounds;
   readonly position: PagePoint;
   readonly zoom: number;
+  readonly localBounds?: ObjectBounds;
+  readonly transform?: Transform;
+}
+
+export interface OrientedSelectionFrame {
+  readonly center: Readonly<{ x: number; y: number }>;
+  readonly topMidpoint: Readonly<{ x: number; y: number }>;
+  readonly rotationHandle: Readonly<{ x: number; y: number }>;
+  readonly corners: readonly Readonly<{ x: number; y: number }>[];
+  readonly rotation: number;
 }
 
 export type SelectionManipulationCursor =
@@ -38,7 +47,7 @@ export function resolveSelectionManipulationTarget(
 export function resolveSelectionManipulationHit(
   input: SelectionManipulationTargetInput,
 ): SelectionManipulationHit | null {
-  const { bounds, position, zoom } = input;
+  const { bounds, position, zoom, localBounds, transform } = input;
   if (
     position.coordinateSpace !== "page" ||
     !Number.isFinite(position.x) ||
@@ -47,6 +56,32 @@ export function resolveSelectionManipulationHit(
     zoom <= 0
   ) {
     return null;
+  }
+
+  if (localBounds !== undefined && transform !== undefined) {
+    const frame = resolveOrientedSelectionFrame(localBounds, transform, zoom);
+    const hitRadius = HANDLE_HIT_RADIUS_PIXELS / zoom;
+    if (distance(position, frame.rotationHandle) <= hitRadius) {
+      return Object.freeze({ kind: "rotation", cursor: "rotation" });
+    }
+    const cursors = ["nwse-resize", "nesw-resize", "nwse-resize", "nesw-resize"] as const;
+    const cornerIndex = frame.corners.findIndex(
+      (handle) => distance(position, handle) <= hitRadius,
+    );
+    if (cornerIndex >= 0) {
+      return Object.freeze({ kind: "scale", cursor: cursors[cornerIndex] ?? "nwse-resize" });
+    }
+    const pivot = {
+      x: localBounds.x + localBounds.width / 2,
+      y: localBounds.y + localBounds.height / 2,
+    };
+    const localPosition = transform.invertPoint(position, pivot);
+    return localPosition.x >= localBounds.x &&
+      localPosition.x <= localBounds.x + localBounds.width &&
+      localPosition.y >= localBounds.y &&
+      localPosition.y <= localBounds.y + localBounds.height
+      ? Object.freeze({ kind: "translation", cursor: "grab" })
+      : null;
   }
 
   const padding = OUTLINE_PADDING_PIXELS / zoom;
@@ -81,6 +116,46 @@ export function resolveSelectionManipulationHit(
     : null;
 }
 
+export function resolveOrientedSelectionFrame(
+  localBounds: ObjectBounds,
+  transform: Transform,
+  zoom: number,
+): OrientedSelectionFrame {
+  if (!Number.isFinite(zoom) || zoom <= 0) {
+    throw new RangeError("Oriented selection geometry requires a positive finite zoom.");
+  }
+  const pivot = Object.freeze({
+    x: localBounds.x + localBounds.width / 2,
+    y: localBounds.y + localBounds.height / 2,
+  });
+  const padding = OUTLINE_PADDING_PIXELS / zoom / transform.scale;
+  const rotationOffset = ROTATION_HANDLE_OFFSET_PIXELS / zoom / transform.scale;
+  const left = localBounds.x - padding;
+  const right = localBounds.x + localBounds.width + padding;
+  const top = localBounds.y - padding;
+  const bottom = localBounds.y + localBounds.height + padding;
+  const transformPoint = (point: Readonly<{ x: number; y: number }>) =>
+    transform.applyToPoint(point, pivot);
+  return Object.freeze({
+    center: transformPoint(pivot),
+    topMidpoint: transformPoint({ x: pivot.x, y: top }),
+    rotationHandle: transformPoint({ x: pivot.x, y: top - rotationOffset }),
+    corners: Object.freeze([
+      transformPoint({ x: left, y: top }),
+      transformPoint({ x: right, y: top }),
+      transformPoint({ x: right, y: bottom }),
+      transformPoint({ x: left, y: bottom }),
+    ]),
+    rotation: transform.rotation,
+  });
+}
+
 function distance(position: PagePoint, target: Readonly<{ x: number; y: number }>): number {
   return Math.hypot(position.x - target.x, position.y - target.y);
+}
+
+function createRotationCursorCss(): string {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M25 14a10 10 0 1 0-2.9 8" fill="none" stroke="white" stroke-width="5" stroke-linecap="round"/><path d="M24.5 7.5V14H18" fill="none" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 14a10 10 0 1 0-2.9 8" fill="none" stroke="#111827" stroke-width="2.25" stroke-linecap="round"/><path d="M24.5 7.5V14H18" fill="none" stroke="#111827" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 16 16, crosshair`;
 }

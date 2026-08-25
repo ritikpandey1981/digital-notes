@@ -9,6 +9,7 @@ import {
 import {
   resolveSelectionManipulationHit,
   resolveSelectionManipulationTarget,
+  resolveOrientedSelectionFrame,
   selectionManipulationCursorCss,
 } from "../SelectionManipulationTarget";
 
@@ -162,10 +163,56 @@ describe("Select tool manipulation targeting", () => {
       resolveSelectionManipulationHit({ bounds, position: pagePoint(0, 100), zoom: 2 }),
     ).toBeNull();
     expect(selectionManipulationCursorCss("rotation")).toMatch(
-      /^url\("data:image\/svg\+xml,.+"\) 12 12, crosshair$/u,
+      /^url\("data:image\/svg\+xml,.+"\) 16 16, crosshair$/u,
     );
     expect(selectionManipulationCursorCss("grab")).toBe("grab");
     expect(selectionManipulationCursorCss("grabbing")).toBe("grabbing");
+  });
+
+  it("rotates frame handles and hit testing with a single vector object's local bounds", () => {
+    const localBounds = Object.freeze({ x: 10, y: 20, width: 100, height: 40 });
+    const transform = new Transform({
+      translation: { x: 30, y: 15 },
+      rotation: Math.PI / 4,
+      scale: 1.5,
+    });
+    const frame = resolveOrientedSelectionFrame(localBounds, transform, 2);
+    const transformedBounds = transform.transformBounds(localBounds);
+
+    expect(frame.rotation).toBe(Math.PI / 4);
+    expect(
+      Math.hypot(
+        frame.corners[0]!.x - frame.corners[1]!.x,
+        frame.corners[0]!.y - frame.corners[1]!.y,
+      ),
+    ).toBeCloseTo(154);
+    expect(
+      resolveSelectionManipulationHit({
+        bounds: transformedBounds,
+        localBounds,
+        transform,
+        position: pagePoint(frame.corners[0]!.x, frame.corners[0]!.y),
+        zoom: 2,
+      })?.kind,
+    ).toBe("scale");
+    expect(
+      resolveSelectionManipulationHit({
+        bounds: transformedBounds,
+        localBounds,
+        transform,
+        position: pagePoint(frame.rotationHandle.x, frame.rotationHandle.y),
+        zoom: 2,
+      })?.kind,
+    ).toBe("rotation");
+    expect(
+      resolveSelectionManipulationHit({
+        bounds: transformedBounds,
+        localBounds,
+        transform,
+        position: pagePoint(frame.center.x, frame.center.y),
+        zoom: 2,
+      })?.kind,
+    ).toBe("translation");
   });
 });
 

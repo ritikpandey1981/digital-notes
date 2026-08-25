@@ -51,8 +51,12 @@ export function resolveShapeEditingToolbarPlacement(
   );
   const interactionBounds = selectionInteractionBounds(snapshot);
   const controlRects = selectionControlRects(snapshot);
-  const centerX = snapshot.viewportBounds.x + snapshot.viewportBounds.width / 2;
-  const centerY = snapshot.viewportBounds.y + snapshot.viewportBounds.height / 2;
+  const centerX =
+    snapshot.selectionFrame?.centerX ??
+    snapshot.viewportBounds.x + snapshot.viewportBounds.width / 2;
+  const centerY =
+    snapshot.selectionFrame?.centerY ??
+    snapshot.viewportBounds.y + snapshot.viewportBounds.height / 2;
   const candidates: readonly PlacementCandidate[] = [
     {
       left: clampHorizontal(centerX - width / 2, width, viewport.width),
@@ -114,6 +118,9 @@ function selectionInteractionBounds(snapshot: ShapeEditingSnapshot): Rect {
       left: LINE_HANDLE_HIT_RADIUS,
     });
   }
+  if (snapshot.selectionFrame !== undefined) {
+    return unionRects([bounds, ...selectionControlRects(snapshot)]);
+  }
   const sideExtent = SELECTION_OUTLINE_PADDING + SELECTION_HANDLE_HIT_RADIUS;
   return expandRect(bounds, {
     top: SELECTION_OUTLINE_PADDING + ROTATION_HANDLE_OFFSET + SELECTION_HANDLE_HIT_RADIUS,
@@ -136,6 +143,16 @@ function selectionControlRects(snapshot: ShapeEditingSnapshot): readonly Rect[] 
       controlRect(centerX, centerY, LINE_HANDLE_HIT_RADIUS),
     ];
   }
+  if (snapshot.selectionFrame !== undefined) {
+    const frame = orientedFramePoints(snapshot.selectionFrame);
+    return [
+      controlRect(frame.rotationHandle.x, frame.rotationHandle.y, SELECTION_HANDLE_HIT_RADIUS),
+      lineRect(frame.topMidpoint, frame.rotationHandle),
+      ...frame.corners.map((corner) =>
+        controlRect(corner.x, corner.y, SELECTION_HANDLE_HIT_RADIUS),
+      ),
+    ];
+  }
   const left = bounds.x - SELECTION_OUTLINE_PADDING;
   const right = bounds.x + bounds.width + SELECTION_OUTLINE_PADDING;
   const top = bounds.y - SELECTION_OUTLINE_PADDING;
@@ -154,6 +171,49 @@ function selectionControlRects(snapshot: ShapeEditingSnapshot): readonly Rect[] 
     controlRect(right, bottom, SELECTION_HANDLE_HIT_RADIUS),
     controlRect(left, bottom, SELECTION_HANDLE_HIT_RADIUS),
   ];
+}
+
+function orientedFramePoints(frame: NonNullable<ShapeEditingSnapshot["selectionFrame"]>) {
+  const halfWidth = frame.width / 2 + SELECTION_OUTLINE_PADDING;
+  const halfHeight = frame.height / 2 + SELECTION_OUTLINE_PADDING;
+  const rotateOffset = (x: number, y: number) => {
+    const cosine = Math.cos(frame.rotation);
+    const sine = Math.sin(frame.rotation);
+    return {
+      x: frame.centerX + x * cosine - y * sine,
+      y: frame.centerY + x * sine + y * cosine,
+    };
+  };
+  return {
+    topMidpoint: rotateOffset(0, -halfHeight),
+    rotationHandle: rotateOffset(0, -halfHeight - ROTATION_HANDLE_OFFSET),
+    corners: [
+      rotateOffset(-halfWidth, -halfHeight),
+      rotateOffset(halfWidth, -halfHeight),
+      rotateOffset(halfWidth, halfHeight),
+      rotateOffset(-halfWidth, halfHeight),
+    ],
+  };
+}
+
+function lineRect(
+  first: Readonly<{ x: number; y: number }>,
+  second: Readonly<{ x: number; y: number }>,
+): Rect {
+  return {
+    x: Math.min(first.x, second.x) - 1,
+    y: Math.min(first.y, second.y) - 1,
+    width: Math.abs(first.x - second.x) + 2,
+    height: Math.abs(first.y - second.y) + 2,
+  };
+}
+
+function unionRects(rects: readonly Rect[]): Rect {
+  const minX = Math.min(...rects.map(({ x }) => x));
+  const minY = Math.min(...rects.map(({ y }) => y));
+  const maxX = Math.max(...rects.map(({ x, width }) => x + width));
+  const maxY = Math.max(...rects.map(({ y, height }) => y + height));
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 function viewportFallbackCandidates(

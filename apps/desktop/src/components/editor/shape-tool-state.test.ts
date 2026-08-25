@@ -9,7 +9,7 @@ describe("shape tool state", () => {
     const shapes = createShapeToolState();
 
     expect(shapes.snapshot()).toMatchObject({
-      activeShape: "line",
+      activeShape: "rectangle",
       style: DEFAULT_SHAPE_DRAWING_STYLE,
       version: 0,
     });
@@ -20,6 +20,16 @@ describe("shape tool state", () => {
       pressureEnabled: false,
     });
     expect(presets.activeState("pen").color.hex).toBe("#2563eb");
+  });
+
+  it("remembers the selected subtype and defaults first activation to Rectangle", () => {
+    const shapes = createShapeToolState();
+
+    expect(shapes.snapshot().activeShape).toBe("rectangle");
+    shapes.selectShape("ellipse");
+    expect(shapes.snapshot().activeShape).toBe("ellipse");
+    shapes.selectShape("line");
+    expect(shapes.snapshot().activeShape).toBe("line");
   });
 
   it("retains Shape color, width, opacity, and subtype without mutating drawing presets", () => {

@@ -13,6 +13,12 @@ export function useFloatingWidgetDismissal<TBoundary extends HTMLElement = HTMLE
       if (boundaryRef.current?.contains(event.target) === true) return;
       if (
         event.target instanceof Element &&
+        event.target.closest('[data-floating-widget-owned-portal="true"]') !== null
+      ) {
+        return;
+      }
+      if (
+        event.target instanceof Element &&
         event.target.closest("[data-tool-dock-layout]") !== null
       ) {
         return;

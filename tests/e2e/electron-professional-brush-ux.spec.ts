@@ -55,13 +55,16 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
 
     await window.getByRole("button", { name: "Pencil", exact: true }).click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pencil");
-    await expect(window.getByRole("combobox", { name: "Pencil preset" })).toHaveValue("pencil-hb");
+    await expect(window.getByRole("button", { name: "Pencil preset" })).toHaveAttribute(
+      "data-active-preset-id",
+      "pencil-hb",
+    );
     await expect(window.getByRole("slider", { name: "Smoothing" })).toBeVisible();
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[1]);
 
     await selectInactiveBrush(window, "Pen");
     await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await window.getByRole("combobox", { name: "Pen preset" }).selectOption("pen-brush");
+    await selectPreset(window, "Pen preset", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-width", "6");
     await expect(surface).toHaveAttribute("data-drawing-smoothing", "0.18");
@@ -69,7 +72,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
 
     await selectInactiveBrush(window, "Marker");
     await window.getByRole("button", { name: "Marker", exact: true }).click();
-    await window.getByRole("combobox", { name: "Marker preset" }).selectOption("marker-broad");
+    await selectPreset(window, "Marker preset", "marker-broad");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "marker-broad");
     await expect(surface).toHaveAttribute("data-drawing-width", "16");
     await expect(surface).toHaveAttribute("data-drawing-smoothing", "0.25");
@@ -78,7 +81,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await selectInactiveBrush(window, "Highlighter");
     await window.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
-    await expect(window.getByRole("combobox", { name: "Highlighter preset" })).toHaveCount(0);
+    await expect(window.getByRole("button", { name: "Highlighter preset" })).toHaveCount(0);
     await expect(window.getByRole("slider", { name: "Smoothing" })).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-drawing-smoothing", "0");
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[4]);
@@ -136,6 +139,13 @@ async function selectInactiveBrush(window: Page, tool: string): Promise<void> {
     "aria-pressed",
     "true",
   );
+}
+
+async function selectPreset(window: Page, triggerName: string, presetId: string): Promise<void> {
+  const trigger = window.getByRole("button", { name: triggerName });
+  await trigger.click();
+  await window.locator(`[role="menuitemradio"][data-preset-id="${presetId}"]`).click();
+  await expect(trigger).toHaveAttribute("data-active-preset-id", presetId);
 }
 
 async function capture(window: Page, directory: string, name: string): Promise<void> {

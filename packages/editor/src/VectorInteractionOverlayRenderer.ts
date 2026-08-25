@@ -7,6 +7,7 @@ import {
 } from "@folio/document";
 import { RenderScheduler, type AnimationFrameAdapter, type Viewport } from "@folio/rendering";
 import type { LineEndpoint, LineHandle } from "./LineEndpointInteraction";
+import { resolveOrientedSelectionFrame } from "./SelectionManipulationTarget";
 import { appendVectorGeometryPath } from "./VectorShapeRendering";
 
 export interface VectorInteractionOverlayRendererOptions {
@@ -23,6 +24,7 @@ export class VectorInteractionOverlayRenderer {
   readonly #viewport: Viewport;
   readonly #scheduler: RenderScheduler;
   #selection: VectorPageObject | null = null;
+  #selectionPreviewTransform: Transform | null = null;
   #hover: PageObject | null = null;
   #hoverPresentation: "hover" | "candidate" = "hover";
   #lineHandleHover: LineHandle | null = null;
@@ -45,6 +47,15 @@ export class VectorInteractionOverlayRenderer {
     this.#assertActive();
     if (this.#selection === object) return;
     this.#selection = object;
+    this.#selectionPreviewTransform = null;
+    this.#scheduler.requestRender();
+    this.#updateDiagnostics();
+  }
+
+  setSelectionPreviewTransform(transform: Transform | null): void {
+    this.#assertActive();
+    if (sameTransform(this.#selectionPreviewTransform, transform)) return;
+    this.#selectionPreviewTransform = transform;
     this.#scheduler.requestRender();
     this.#updateDiagnostics();
   }
@@ -88,6 +99,7 @@ export class VectorInteractionOverlayRenderer {
     if (this.#destroyed) return;
     this.#scheduler.destroy();
     this.#selection = null;
+    this.#selectionPreviewTransform = null;
     this.#hover = null;
     this.#hoverPresentation = "hover";
     this.#lineHandleHover = null;
@@ -125,12 +137,43 @@ export class VectorInteractionOverlayRenderer {
         snapshot.camera.zoom,
         endpointPreview?.object.id === this.#selection.id
           ? endpointPreview.transform
-          : this.#selection.transform,
+          : (this.#selectionPreviewTransform ?? this.#selection.transform),
         endpointPreview?.object.id === this.#selection.id
           ? endpointPreview.activeEndpoint
           : this.#lineHandleHover,
       );
     }
+    context.restore();
+  }
+
+  #drawSelectionFrame(object: VectorPageObject, transform: Transform, zoom: number): void {
+    const context = this.#context;
+    const frame = resolveOrientedSelectionFrame(object.localBounds, transform, zoom);
+    const first = frame.corners[0];
+    if (first === undefined) return;
+    context.save();
+    context.strokeStyle = "#7183ce";
+    context.lineWidth = 2 / zoom;
+    context.beginPath();
+    context.moveTo(first.x, first.y);
+    for (const corner of frame.corners.slice(1)) context.lineTo(corner.x, corner.y);
+    context.closePath();
+    context.stroke();
+    context.beginPath();
+    context.moveTo(frame.topMidpoint.x, frame.topMidpoint.y);
+    context.lineTo(frame.rotationHandle.x, frame.rotationHandle.y);
+    context.stroke();
+    const handleSize = 10 / zoom;
+    const halfHandle = handleSize / 2;
+    context.fillStyle = "#ffffff";
+    for (const corner of frame.corners) {
+      context.fillRect(corner.x - halfHandle, corner.y - halfHandle, handleSize, handleSize);
+      context.strokeRect(corner.x - halfHandle, corner.y - halfHandle, handleSize, handleSize);
+    }
+    context.beginPath();
+    context.arc(frame.rotationHandle.x, frame.rotationHandle.y, halfHandle, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
     context.restore();
   }
 
@@ -166,6 +209,9 @@ export class VectorInteractionOverlayRenderer {
       this.#drawLineHandles(object.geometry, zoom, transform.scale, activeLineHandle);
     }
     context.restore();
+    if (state === "selected" && object.type !== "line") {
+      this.#drawSelectionFrame(object, transform, zoom);
+    }
   }
 
   #drawBoundsHover(object: PageObject, zoom: number, presentation: "hover" | "candidate"): void {
@@ -230,9 +276,39 @@ export class VectorInteractionOverlayRenderer {
           ? "empty"
           : "outline-emphasis";
     this.#canvas.dataset.vectorSelectionPresentation = "soft";
+    this.#canvas.dataset.vectorSelectionRotation = String(
+      this.#selectionPreviewTransform?.rotation ?? this.#selection?.transform.rotation ?? 0,
+    );
+    const selectionTransform = this.#selectionPreviewTransform ?? this.#selection?.transform;
+    if (
+      this.#selection !== null &&
+      this.#selection.type !== "line" &&
+      selectionTransform !== undefined
+    ) {
+      const frame = resolveOrientedSelectionFrame(
+        this.#selection.localBounds,
+        selectionTransform,
+        this.#viewport.camera.zoom,
+      );
+      this.#canvas.dataset.vectorSelectionFrameCorners = JSON.stringify(frame.corners);
+      this.#canvas.dataset.vectorRotationHandle = JSON.stringify(frame.rotationHandle);
+    } else {
+      this.#canvas.dataset.vectorSelectionFrameCorners = "[]";
+      this.#canvas.dataset.vectorRotationHandle = "";
+    }
   }
 
   #assertActive(): void {
     if (this.#destroyed) throw new Error("Vector interaction overlay is destroyed.");
   }
+}
+
+function sameTransform(first: Transform | null, second: Transform | null): boolean {
+  if (first === null || second === null) return first === second;
+  return (
+    first.translation.x === second.translation.x &&
+    first.translation.y === second.translation.y &&
+    first.rotation === second.rotation &&
+    first.scale === second.scale
+  );
 }

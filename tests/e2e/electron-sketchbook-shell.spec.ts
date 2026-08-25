@@ -56,18 +56,18 @@ test("captures the Phase 16.5 sketchbook workspace states", async () => {
     const shapesButton = toolDock.getByRole("button", { name: "Shapes", exact: true });
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
-    await expect(surface).toHaveAttribute("data-active-editor-tool", "disabled");
-    await expect(window.getByTestId("context-hint")).not.toContainText("perfect square");
+    await expect(surface).toHaveAttribute("data-active-editor-tool", "rectangle");
+    await expect(window.getByTestId("context-hint")).toContainText("perfect square");
     await expect(window.getByTestId("context-hint")).not.toContainText("perfect circle");
-    await capture(window, repositoryRoot, "phase-16-5-shapes-before-subtype.png");
+    await capture(window, repositoryRoot, "phase-16-5-shapes-rectangle-armed.png");
 
     await drawGesture(
       window,
       await livePageToScreen(surface, inkCanvas, { x: 180, y: 180 }),
       await livePageToScreen(surface, inkCanvas, { x: 320, y: 280 }),
     );
-    await expect(surface).toHaveAttribute("data-document-vector-object-count", "0");
-    await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
+    await expect(surface).toHaveAttribute("data-document-vector-object-count", "1");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
     await expect(shapesWidget).toBeHidden();
 
     await shapesButton.click();
@@ -83,7 +83,7 @@ test("captures the Phase 16.5 sketchbook workspace states", async () => {
       await livePageToScreen(surface, inkCanvas, { x: 260, y: 180 }),
       await livePageToScreen(surface, inkCanvas, { x: 420, y: 300 }),
     );
-    await expect(surface).toHaveAttribute("data-document-vector-object-count", "1");
+    await expect(surface).toHaveAttribute("data-document-vector-object-count", "2");
     await expect(surface).toHaveAttribute("data-selected-object-type", "rectangle");
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
     await capture(window, repositoryRoot, "phase-16-5-rectangle-selected.png");
@@ -93,13 +93,13 @@ test("captures the Phase 16.5 sketchbook workspace states", async () => {
     await expect(palette).toBeHidden();
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
-    await expect(surface).toHaveAttribute("data-active-editor-tool", "disabled");
+    await expect(surface).toHaveAttribute("data-active-editor-tool", "rectangle");
     await drawGesture(
       window,
       await livePageToScreen(surface, inkCanvas, { x: 480, y: 180 }),
       await livePageToScreen(surface, inkCanvas, { x: 620, y: 300 }),
     );
-    await expect(surface).toHaveAttribute("data-document-vector-object-count", "1");
+    await expect(surface).toHaveAttribute("data-document-vector-object-count", "3");
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
     await shapesWidget.getByRole("button", { name: "Ellipse", exact: true }).click();
