@@ -67,7 +67,13 @@ describe("@folio/editor public API", () => {
     const toolRegistryProps: CanvasSurfaceProps = {
       onToolRegistryReady: (registry) => registry?.snapshot(),
     };
-    const shapeActions: ShapeEditingActions = { updateStyle: () => true };
+    const shapeActions: ShapeEditingActions = {
+      updateStyle: () => true,
+      beginContinuousStyleEdit: () => true,
+      updateContinuousStylePreview: () => true,
+      commitContinuousStyleEdit: () => true,
+      cancelContinuousStyleEdit: () => true,
+    };
     const shapeSnapshot: ShapeEditingSnapshot = {
       objectId: "shape-1",
       objectType: "rectangle",

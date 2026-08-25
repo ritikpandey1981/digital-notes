@@ -1,9 +1,14 @@
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
-test("captures the Phase 16.5 sketchbook workspace states", async () => {
+test("captures the Phase 16.5 sketchbook workspace states", async ({ browserName }, testInfo) => {
+  void browserName;
   test.setTimeout(60_000);
   const repositoryRoot = process.cwd();
+  const screenshotDirectory =
+    process.env.FOLIO_SCREENSHOT_DIR ?? testInfo.outputPath("phase-16-5-sketchbook");
+  mkdirSync(screenshotDirectory, { recursive: true });
   const electronApp = await electron.launch({
     args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
     executablePath: path.join(
@@ -32,14 +37,14 @@ test("captures the Phase 16.5 sketchbook workspace states", async () => {
       page: "#fffdf8",
       surface: "#fff",
     });
-    await capture(window, repositoryRoot, "phase-16-5-default-workspace.png");
+    await capture(window, screenshotDirectory, "phase-16-5-default-workspace.png");
 
     const penButton = toolDock.getByRole("button", { name: "Pen", exact: true });
     await penButton.click();
     await expect(palette).toBeHidden();
     await penButton.click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
-    await capture(window, repositoryRoot, "phase-16-5-pen-settings.png");
+    await capture(window, screenshotDirectory, "phase-16-5-pen-settings.png");
     await window.keyboard.press("Escape");
 
     const highlighterButton = toolDock.getByRole("button", {
@@ -59,7 +64,7 @@ test("captures the Phase 16.5 sketchbook workspace states", async () => {
     await expect(surface).toHaveAttribute("data-active-editor-tool", "rectangle");
     await expect(window.getByTestId("context-hint")).toContainText("perfect square");
     await expect(window.getByTestId("context-hint")).not.toContainText("perfect circle");
-    await capture(window, repositoryRoot, "phase-16-5-shapes-rectangle-armed.png");
+    await capture(window, screenshotDirectory, "phase-16-5-shapes-rectangle-armed.png");
 
     await drawGesture(
       window,
@@ -86,7 +91,7 @@ test("captures the Phase 16.5 sketchbook workspace states", async () => {
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "2");
     await expect(surface).toHaveAttribute("data-selected-object-type", "rectangle");
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
-    await capture(window, repositoryRoot, "phase-16-5-rectangle-selected.png");
+    await capture(window, screenshotDirectory, "phase-16-5-rectangle-selected.png");
 
     await penButton.click();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "ink");
@@ -124,16 +129,16 @@ test("captures the Phase 16.5 sketchbook workspace states", async () => {
     await window.getByRole("button", { name: /^Zoom options,/u }).click();
     await expect(window.getByRole("menu")).toBeVisible();
     await expect(window.getByTestId("viewport-navigation-shortcuts")).toBeVisible();
-    await capture(window, repositoryRoot, "phase-16-5-viewport-menu.png");
+    await capture(window, screenshotDirectory, "phase-16-5-viewport-menu.png");
     await window.keyboard.press("Escape");
   } finally {
     await electronApp.close();
   }
 });
 
-async function capture(window: Page, repositoryRoot: string, fileName: string): Promise<void> {
+async function capture(window: Page, directory: string, fileName: string): Promise<void> {
   await window.screenshot({
-    path: path.join(repositoryRoot, "test-results", fileName),
+    path: path.join(directory, fileName),
     animations: "disabled",
   });
 }

@@ -1,12 +1,31 @@
-import { useState, type CSSProperties, type KeyboardEvent, type WheelEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type WheelEvent,
+} from "react";
 import type { ToolOptionPropertyDescriptor } from "./tool-options-registry";
 
 interface ContinuousSliderProps {
   readonly descriptor: ToolOptionPropertyDescriptor;
   readonly onChange: (value: number) => void;
+  readonly onInteractionStart?: () => void;
+  readonly onInteractionCommit?: () => void;
+  readonly onInteractionCancel?: () => void;
 }
 
-export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps) {
+type InteractionKind = "number" | "range-keyboard" | "range-pointer" | "wheel";
+
+export function ContinuousSlider({
+  descriptor,
+  onChange,
+  onInteractionStart,
+  onInteractionCommit,
+  onInteractionCancel,
+}: ContinuousSliderProps) {
   if (typeof descriptor.value !== "number" || typeof descriptor.defaultValue !== "number") {
     throw new TypeError("Continuous sliders require numeric descriptors.");
   }
@@ -19,7 +38,30 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
   const precision = descriptor.precision ?? 1;
   const displayedValue = formatValue(value * displayScale, precision);
   const [draftValue, setDraftValue] = useState<string | null>(null);
+  const activeInteractionRef = useRef<InteractionKind | null>(null);
+  const cancelOnUnmountRef = useRef(onInteractionCancel);
+  useLayoutEffect(() => {
+    cancelOnUnmountRef.current = onInteractionCancel;
+  }, [onInteractionCancel]);
   const progress = ((value - minimum) / (maximum - minimum)) * 100;
+
+  const beginInteraction = (kind: InteractionKind): void => {
+    if (activeInteractionRef.current === kind) return;
+    if (activeInteractionRef.current !== null) onInteractionCommit?.();
+    activeInteractionRef.current = kind;
+    onInteractionStart?.();
+  };
+  const commitInteraction = (kind: InteractionKind): void => {
+    if (activeInteractionRef.current !== kind) return;
+    activeInteractionRef.current = null;
+    onInteractionCommit?.();
+  };
+  const cancelInteraction = (kind?: InteractionKind): void => {
+    if (activeInteractionRef.current === null) return;
+    if (kind !== undefined && activeInteractionRef.current !== kind) return;
+    activeInteractionRef.current = null;
+    onInteractionCancel?.();
+  };
 
   const update = (candidate: number): number => {
     const next = clamp(roundToStep(candidate, step), minimum, maximum);
@@ -42,28 +84,60 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
     return update(next);
   };
   const handleRangeKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (!event.shiftKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelInteraction("range-keyboard");
+      event.currentTarget.blur();
+      return;
+    }
+    if (!isArrowKey(event.key)) return;
+    beginInteraction("range-keyboard");
+    if (!event.shiftKey) return;
     event.preventDefault();
-    adjust(event.key === "ArrowRight" ? 1 : -1, largeStep);
+    adjust(isPositiveArrow(event.key) ? 1 : -1, largeStep);
+  };
+  const handleRangeKeyUp = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (isArrowKey(event.key)) commitInteraction("range-keyboard");
   };
   const handleNumberKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    if (event.shiftKey && isArrowKey(event.key)) {
       event.preventDefault();
-      const next = adjust(event.key === "ArrowRight" ? 1 : -1, largeStep);
+      const next = adjust(isPositiveArrow(event.key) ? 1 : -1, largeStep);
       setDraftValue(formatValue(next * displayScale, precision));
       return;
     }
     if (event.key === "Enter") {
       event.currentTarget.blur();
     } else if (event.key === "Escape") {
+      event.preventDefault();
       setDraftValue(null);
+      cancelInteraction("number");
       event.currentTarget.blur();
     }
   };
   const handleWheel = (event: WheelEvent<HTMLDivElement>): void => {
     if (event.deltaY === 0) return;
+    beginInteraction("wheel");
     adjust(event.deltaY < 0 ? 1 : -1, event.shiftKey ? largeStep : step);
+    commitInteraction("wheel");
   };
+  const handleRangeChange = (nextValue: number): void => {
+    if (activeInteractionRef.current !== null) {
+      update(nextValue);
+      return;
+    }
+    beginInteraction("range-keyboard");
+    update(nextValue);
+    commitInteraction("range-keyboard");
+  };
+
+  useEffect(
+    () => () => {
+      if (activeInteractionRef.current !== null) cancelOnUnmountRef.current?.();
+      activeInteractionRef.current = null;
+    },
+    [],
+  );
 
   return (
     <div
@@ -87,9 +161,16 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
             step={step * displayScale}
             value={draftValue ?? displayedValue}
             aria-label={`${descriptor.displayName} value`}
-            onFocus={() => setDraftValue(displayedValue)}
+            onFocus={() => {
+              beginInteraction("number");
+              setDraftValue(displayedValue);
+            }}
             onChange={(event) => updateDraft(event.currentTarget.value)}
-            onBlur={(event) => commitDraft(event.currentTarget.value)}
+            onBlur={(event) => {
+              if (activeInteractionRef.current !== "number") return;
+              commitDraft(event.currentTarget.value);
+              commitInteraction("number");
+            }}
             onKeyDown={handleNumberKeyDown}
           />
           <span className="min-w-3 text-[10px] text-folio-muted" aria-hidden="true">
@@ -107,11 +188,25 @@ export function ContinuousSlider({ descriptor, onChange }: ContinuousSliderProps
         value={value}
         aria-label={descriptor.displayName}
         style={{ "--folio-slider-progress": `${progress}%` } as CSSProperties}
-        onChange={(event) => update(Number(event.currentTarget.value))}
+        onChange={(event) => handleRangeChange(Number(event.currentTarget.value))}
         onKeyDown={handleRangeKeyDown}
+        onKeyUp={handleRangeKeyUp}
+        onPointerDown={() => beginInteraction("range-pointer")}
+        onPointerUp={() => commitInteraction("range-pointer")}
+        onPointerCancel={() => cancelInteraction("range-pointer")}
+        onLostPointerCapture={() => cancelInteraction("range-pointer")}
+        onBlur={() => cancelInteraction()}
       />
     </div>
   );
+}
+
+function isArrowKey(key: string): boolean {
+  return ["ArrowLeft", "ArrowRight", "ArrowDown", "ArrowUp"].includes(key);
+}
+
+function isPositiveArrow(key: string): boolean {
+  return key === "ArrowRight" || key === "ArrowUp";
 }
 
 function formatValue(value: number, precision: number): string {

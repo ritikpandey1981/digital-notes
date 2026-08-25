@@ -79,7 +79,8 @@ export function ToolOptionsWidget({
   const renderCountRef = useRef(0);
   const reducedMotion = useReducedMotion() === true;
   const paletteVisible = descriptor !== null;
-  const paletteRef = useFloatingWidgetDismissal(paletteVisible, onDismiss);
+  const paletteRef = useRef<HTMLElement | null>(null);
+  const floatingWidgetScope = useFloatingWidgetDismissal(paletteVisible, onDismiss, paletteRef);
   useLayoutEffect(() => {
     renderCountRef.current += 1;
     if (paletteRef.current !== null) {
@@ -100,6 +101,7 @@ export function ToolOptionsWidget({
         {descriptor === null ? null : (
           <motion.section
             ref={paletteRef}
+            data-floating-widget-scope={floatingWidgetScope}
             key="context-tool-palette"
             className="folio-floating-surface pointer-events-auto w-[304px] p-3"
             role="group"
@@ -170,13 +172,13 @@ export function ToolOptionsWidget({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
+                      data-floating-widget-owner={floatingWidgetScope}
                       align="end"
                       side="right"
                       sideOffset={8}
                       collisionPadding={10}
                       className="z-[45] min-w-52"
                       data-testid="brush-preset-menu"
-                      data-floating-widget-owned-portal="true"
                     >
                       {descriptor.preset.options.map((preset) => {
                         const selected = preset.id === descriptor.preset?.activeId;
@@ -230,7 +232,7 @@ function ColorOptions({
 }) {
   const reducedMotion = useReducedMotion() === true;
   const activeColor = requireString(descriptor.value, "Stroke color");
-  const queueColorChange = useFrameCoalescedCallback(onChange);
+  const [queueColorChange] = useFrameCoalescedCallback(onChange);
   const commitHex = (event: FocusEvent<HTMLInputElement>): void => {
     try {
       onChange(event.currentTarget.value);

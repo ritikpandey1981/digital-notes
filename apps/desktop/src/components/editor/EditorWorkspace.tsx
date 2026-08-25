@@ -80,6 +80,7 @@ export function EditorWorkspace({
   });
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
   const shapeEditingActionsRef = useRef<ShapeEditingActions | null>(null);
+  const continuousShapeStylePatchRef = useRef<ShapeStylePatch | null>(null);
   const [shapeEditingSnapshot, setShapeEditingSnapshot] = useState<ShapeEditingSnapshot | null>(
     null,
   );
@@ -101,13 +102,25 @@ export function EditorWorkspace({
   const duplicateSelection = useCallback(() => {
     objectLifecycleActionsRef.current?.duplicateSelection();
   }, []);
-  const updateShapeStyle = useCallback(
-    (patch: ShapeStylePatch) => {
-      onChangeShapeStyle(patch);
-      shapeEditingActionsRef.current?.updateStyle(patch);
-    },
-    [onChangeShapeStyle],
-  );
+  const beginContinuousShapeStyleEdit = useCallback(() => {
+    continuousShapeStylePatchRef.current = null;
+    shapeEditingActionsRef.current?.beginContinuousStyleEdit();
+  }, []);
+  const previewContinuousShapeStyle = useCallback((patch: ShapeStylePatch) => {
+    const previous = continuousShapeStylePatchRef.current;
+    continuousShapeStylePatchRef.current = Object.freeze({ ...previous, ...patch });
+    shapeEditingActionsRef.current?.updateContinuousStylePreview(patch);
+  }, []);
+  const commitContinuousShapeStyleEdit = useCallback(() => {
+    const patch = continuousShapeStylePatchRef.current;
+    continuousShapeStylePatchRef.current = null;
+    const committed = shapeEditingActionsRef.current?.commitContinuousStyleEdit() === true;
+    if (committed && patch !== null) onChangeShapeStyle(patch);
+  }, [onChangeShapeStyle]);
+  const cancelContinuousShapeStyleEdit = useCallback(() => {
+    continuousShapeStylePatchRef.current = null;
+    shapeEditingActionsRef.current?.cancelContinuousStyleEdit();
+  }, []);
   return (
     <section
       ref={workspaceRef}
@@ -139,7 +152,10 @@ export function EditorWorkspace({
       />
       <ShapeEditingToolbar
         snapshot={shapeEditingSnapshot}
-        onUpdateStyle={updateShapeStyle}
+        onBeginStyleEdit={beginContinuousShapeStyleEdit}
+        onPreviewStyle={previewContinuousShapeStyle}
+        onCommitStyleEdit={commitContinuousShapeStyleEdit}
+        onCancelStyleEdit={cancelContinuousShapeStyleEdit}
         onDuplicate={duplicateSelection}
         onDelete={deleteSelection}
       />

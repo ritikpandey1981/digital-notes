@@ -528,6 +528,7 @@ async function emitRapidColorInputs(locator: Locator, colors: readonly string[])
       setValue.call(input, color);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }
+    input.dispatchEvent(new Event("change", { bubbles: true }));
   }, colors);
 }
 

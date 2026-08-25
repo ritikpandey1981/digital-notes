@@ -2,13 +2,14 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
-test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation polish", async () => {
+test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation polish", async ({
+  browserName,
+}, testInfo) => {
+  void browserName;
   test.setTimeout(120_000);
   const repositoryRoot = process.cwd();
-  const screenshotDirectory = path.join(
-    repositoryRoot,
-    "docs/interaction/screenshots/post-phase-17-ux-polish",
-  );
+  const screenshotDirectory =
+    process.env.FOLIO_SCREENSHOT_DIR ?? testInfo.outputPath("post-phase-17-ux-polish");
   mkdirSync(screenshotDirectory, { recursive: true });
   const electronApp = await electron.launch({
     args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
@@ -39,6 +40,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     };
 
     await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.mouse.move(2, 2);
     await window.mouse.move(insidePage.x, insidePage.y);
     await expect(brushCursor).toHaveAttribute("data-visible", "true");
     await expect(inkCanvas).toHaveCSS("cursor", "none");
@@ -193,6 +195,17 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await window.screenshot({
       path: path.join(screenshotDirectory, "01-oriented-rotation.png"),
       animations: "disabled",
+    });
+    await window.bringToFront();
+    await window.mouse.move(snappedTarget.x, snappedTarget.y);
+    await inkCanvas.dispatchEvent("pointerup", {
+      button: 0,
+      buttons: 0,
+      clientX: snappedTarget.x,
+      clientY: snappedTarget.y,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: "mouse",
     });
     await window.mouse.up();
     await window.keyboard.up("Shift");

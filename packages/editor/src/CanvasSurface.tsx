@@ -50,6 +50,7 @@ import {
   type SelectionState,
 } from "@folio/selection";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ContinuousVectorStyleEdit } from "./ContinuousVectorStyleEdit";
 import { EditorClipboard } from "./EditorClipboard";
 import {
   editorViewportWheelZoom,
@@ -148,6 +149,10 @@ export interface ShapeStylePatch {
 
 export interface ShapeEditingActions {
   readonly updateStyle: (patch: ShapeStylePatch) => boolean;
+  readonly beginContinuousStyleEdit: () => boolean;
+  readonly updateContinuousStylePreview: (patch: ShapeStylePatch) => boolean;
+  readonly commitContinuousStyleEdit: () => boolean;
+  readonly cancelContinuousStyleEdit: () => boolean;
 }
 
 export interface ShapeEditingSnapshot {
@@ -363,6 +368,14 @@ export function CanvasSurface({
   const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
   const resetManipulationCursorRef = useRef<(() => void) | null>(null);
   const resetVectorHoverRef = useRef<(() => void) | null>(null);
+  const cancelContinuousStyleEditRef = useRef<(() => boolean) | null>(null);
+  const controllerReadyRef = useRef(onControllerReady);
+  const selectionControllerReadyRef = useRef(onSelectionControllerReady);
+  const manipulationControllerReadyRef = useRef(onManipulationControllerReady);
+  const toolRegistryReadyRef = useRef(onToolRegistryReady);
+  const historyControllerReadyRef = useRef(onHistoryControllerReady);
+  const diagnosticsRef = useRef(onDiagnostics);
+  const errorRef = useRef(onError);
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
   const historyChangeRef = useRef(onHistoryChange);
@@ -375,6 +388,7 @@ export function CanvasSurface({
   const editingActionsRef = useRef<EditorEditingShortcutActions | null>(null);
 
   useLayoutEffect(() => {
+    cancelContinuousStyleEditRef.current?.();
     interactionModeRef.current = interactionMode;
     const kind = manipulationKindForMode(interactionMode);
     const activeKind = manipulationControllerRef.current?.getManipulationState().kind ?? null;
@@ -390,6 +404,24 @@ export function CanvasSurface({
     toolRegistryRef.current?.activate(interactionMode);
     updateToolDiagnosticsRef.current?.();
   }, [interactionMode]);
+
+  useLayoutEffect(() => {
+    controllerReadyRef.current = onControllerReady;
+    selectionControllerReadyRef.current = onSelectionControllerReady;
+    manipulationControllerReadyRef.current = onManipulationControllerReady;
+    toolRegistryReadyRef.current = onToolRegistryReady;
+    historyControllerReadyRef.current = onHistoryControllerReady;
+    diagnosticsRef.current = onDiagnostics;
+    errorRef.current = onError;
+  }, [
+    onControllerReady,
+    onDiagnostics,
+    onError,
+    onHistoryControllerReady,
+    onManipulationControllerReady,
+    onSelectionControllerReady,
+    onToolRegistryReady,
+  ]);
 
   useEffect(() => {
     drawingStyleRef.current = drawingStyle;
@@ -454,7 +486,7 @@ export function CanvasSurface({
         ),
       ],
       onViewportChange: (snapshot) => synchronizeViewportLayers(snapshot),
-      onError: (error) => onError?.(error),
+      onError: (error) => errorRef.current?.(error),
     });
     let themeObserver: MutationObserver | null = null;
     let pointerInput: PointerInputController | null = null;
@@ -476,6 +508,7 @@ export function CanvasSurface({
     let manipulationController: ManipulationController<ManipulationResult> | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
+    let continuousVectorStyleEdit: ContinuousVectorStyleEdit | null = null;
     let toolRegistry: EditorToolRegistry | null = null;
     let uninstallHistoryShortcuts: (() => void) | null = null;
     let uninstallEditingShortcuts: (() => void) | null = null;
@@ -773,6 +806,7 @@ export function CanvasSurface({
       };
       let synchronizePrimaryIntoEditorSelection = true;
       unsubscribeSelection = activeSelectionController.subscribe((state) => {
+        continuousVectorStyleEdit?.cancel();
         if (synchronizePrimaryIntoEditorSelection) {
           editorSelection.selectPrimary(state.selectedObjectId);
         }
@@ -787,6 +821,7 @@ export function CanvasSurface({
         }
       });
       const selectEditorObjects = (objectIds: readonly string[]): void => {
+        continuousVectorStyleEdit?.cancel();
         const requestedIds = new Set(objectIds);
         const validIds = documentSession.collection.objects
           .filter((object) => requestedIds.has(object.id) && object.visible && !object.locked)
@@ -1003,12 +1038,12 @@ export function CanvasSurface({
           updateHistoryDiagnostics(notification.state);
           historyChangeRef.current?.(notification);
         },
-        onError: (error) => onError?.(error),
+        onError: (error) => errorRef.current?.(error),
       });
       const activeHistoryCoordinator = historyCoordinator;
       uninstallHistoryShortcuts = installEditorHistoryShortcuts({
         controller: activeHistoryCoordinator.controller,
-        onError: (error) => onError?.(error),
+        onError: (error) => errorRef.current?.(error),
       });
       updateHistoryDiagnostics(activeHistoryCoordinator.controller.getHistoryState());
       manipulationController = createManipulationController({
@@ -1041,50 +1076,94 @@ export function CanvasSurface({
               cause instanceof Error
                 ? cause
                 : new Error("History transform execution failed.", { cause });
-            onError?.(error);
+            errorRef.current?.(error);
             return false;
           }
         },
-        onError: (error) => onError?.(error),
+        onError: (error) => errorRef.current?.(error),
       });
       const activeManipulationController = manipulationController;
       manipulationControllerRef.current = activeManipulationController;
       const reportEditingFailure = (cause: unknown, message: string): false => {
-        onError?.(cause instanceof Error ? cause : new Error(message, { cause }));
+        errorRef.current?.(cause instanceof Error ? cause : new Error(message, { cause }));
         return false;
       };
+      const selectedVectorObject = (): VectorPageObject | null => {
+        const selected = selectedEditableObjects();
+        const object = selected.length === 1 ? selected[0] : undefined;
+        return isVectorObject(object) ? object : null;
+      };
+      const patchedVectorStyle = (object: VectorPageObject, patch: ShapeStylePatch) => ({
+        strokeColor: Object.freeze({
+          hex: patch.strokeColor ?? object.style.strokeColor.hex,
+          opacity: patch.opacity ?? object.style.strokeColor.opacity,
+        }),
+        strokeWidth: patch.strokeWidth ?? object.style.strokeWidth,
+        ...(object.style.fillColor === undefined ? {} : { fillColor: object.style.fillColor }),
+      });
+      continuousVectorStyleEdit = new ContinuousVectorStyleEdit({
+        documentSession,
+        commit: (object, style) => activeHistoryCoordinator.executeVectorStyleUpdate(object, style),
+        onPreviewDocumentChange: () => synchronizeDocumentFromHistory(),
+      });
+      const activeContinuousVectorStyleEdit = continuousVectorStyleEdit;
+      const cancelContinuousStyleEdit = (): boolean => activeContinuousVectorStyleEdit.cancel();
+      cancelContinuousStyleEditRef.current = cancelContinuousStyleEdit;
       const shapeEditingActions: ShapeEditingActions = Object.freeze({
         updateStyle: (patch: ShapeStylePatch): boolean => {
-          const selected = selectedEditableObjects();
-          const object = selected.length === 1 ? selected[0] : undefined;
-          if (!isVectorObject(object)) return false;
-          const strokeColor = patch.strokeColor ?? object.style.strokeColor.hex;
-          const opacity = patch.opacity ?? object.style.strokeColor.opacity;
-          const strokeWidth = patch.strokeWidth ?? object.style.strokeWidth;
-          if (
-            strokeColor === object.style.strokeColor.hex &&
-            opacity === object.style.strokeColor.opacity &&
-            strokeWidth === object.style.strokeWidth
-          ) {
-            return false;
-          }
+          cancelContinuousStyleEdit();
+          const object = selectedVectorObject();
+          if (object === null) return false;
           try {
-            const state = activeHistoryCoordinator.executeVectorStyleUpdate(object, {
-              strokeColor: Object.freeze({ hex: strokeColor, opacity }),
-              strokeWidth,
-              ...(object.style.fillColor === undefined
-                ? {}
-                : { fillColor: object.style.fillColor }),
-            });
+            const style = patchedVectorStyle(object, patch);
+            if (
+              style.strokeColor.hex === object.style.strokeColor.hex &&
+              style.strokeColor.opacity === object.style.strokeColor.opacity &&
+              style.strokeWidth === object.style.strokeWidth
+            ) {
+              return false;
+            }
+            const state = activeHistoryCoordinator.executeVectorStyleUpdate(object, style);
             updateHistoryDiagnostics(state);
             return true;
           } catch (cause) {
             return reportEditingFailure(cause, "Shape appearance update failed.");
           }
         },
+        beginContinuousStyleEdit: (): boolean => {
+          const object = selectedVectorObject();
+          return object !== null && activeContinuousVectorStyleEdit.begin(object);
+        },
+        updateContinuousStylePreview: (patch: ShapeStylePatch): boolean => {
+          let object = selectedVectorObject();
+          if (object === null) return false;
+          if (!activeContinuousVectorStyleEdit.active) {
+            if (!activeContinuousVectorStyleEdit.begin(object)) return false;
+            object = selectedVectorObject();
+            if (object === null) return false;
+          }
+          try {
+            return activeContinuousVectorStyleEdit.update(patchedVectorStyle(object, patch));
+          } catch (cause) {
+            cancelContinuousStyleEdit();
+            return reportEditingFailure(cause, "Shape appearance preview failed.");
+          }
+        },
+        commitContinuousStyleEdit: (): boolean => {
+          try {
+            const state = activeContinuousVectorStyleEdit.commit();
+            if (state === null) return false;
+            updateHistoryDiagnostics(state);
+            return true;
+          } catch (cause) {
+            return reportEditingFailure(cause, "Shape appearance commit failed.");
+          }
+        },
+        cancelContinuousStyleEdit,
       });
       shapeEditingActionsReadyRef.current?.(shapeEditingActions);
       const deleteSelectedObjects = (): boolean => {
+        cancelContinuousStyleEdit();
         const objects = selectedEditableObjects();
         if (objects.length === 0) return false;
         try {
@@ -1099,6 +1178,7 @@ export function CanvasSurface({
         }
       };
       const duplicateSelectedObjects = (): boolean => {
+        cancelContinuousStyleEdit();
         const objects = selectedEditableObjects();
         if (objects.length === 0) return false;
         try {
@@ -1121,6 +1201,7 @@ export function CanvasSurface({
           return copied;
         },
         cut: () => {
+          cancelContinuousStyleEdit();
           const objects = selectedEditableObjects();
           if (!editorClipboard.copy(objects)) return false;
           updateClipboardDiagnostics();
@@ -1161,7 +1242,7 @@ export function CanvasSurface({
       editingActionsRef.current = editingActions;
       uninstallEditingShortcuts = installEditorEditingShortcuts({
         actions: editingActions,
-        onError: (error) => onError?.(error),
+        onError: (error) => errorRef.current?.(error),
       });
       updateClipboardDiagnostics();
       const objectLifecycleActions: ObjectLifecycleActions = Object.freeze({
@@ -1318,7 +1399,7 @@ export function CanvasSurface({
         updateManipulation(activeManipulationController.getManipulationState(), false);
         updateDocumentDiagnostics();
         publishViewportPresentation(snapshot);
-        onDiagnostics?.(snapshot);
+        diagnosticsRef.current?.(snapshot);
       };
       const viewportActions: ViewportActions = Object.freeze({
         zoomIn: () =>
@@ -2064,11 +2145,11 @@ export function CanvasSurface({
               cause instanceof Error
                 ? cause
                 : new Error("History stroke execution failed.", { cause });
-            onError?.(error);
+            errorRef.current?.(error);
           }
         },
         onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
-        onError: (error) => onError?.(error),
+        onError: (error) => errorRef.current?.(error),
       });
       const activePointerInput = pointerInput;
       const activeInkCanvas = inkLayer.canvas;
@@ -2502,7 +2583,7 @@ export function CanvasSurface({
       updateToolDiagnosticsRef.current = updateToolDiagnostics;
       activeToolRegistry.activate(interactionModeRef.current);
       updateToolDiagnostics();
-      onToolRegistryReady?.(activeToolRegistry);
+      toolRegistryReadyRef.current?.(activeToolRegistry);
       toolKeyboardDownListener = (event) => {
         if (!handleViewportKeyboard("down", event)) {
           activeToolRegistry.handleKeyboard("down", event);
@@ -2513,7 +2594,10 @@ export function CanvasSurface({
           activeToolRegistry.handleKeyboard("up", event);
         }
       };
-      viewportBlurListener = cancelViewportPan;
+      viewportBlurListener = () => {
+        cancelContinuousStyleEdit();
+        cancelViewportPan();
+      };
       window.addEventListener("keydown", toolKeyboardDownListener, true);
       window.addEventListener("keyup", toolKeyboardUpListener, true);
       window.addEventListener("blur", viewportBlurListener);
@@ -2529,15 +2613,15 @@ export function CanvasSurface({
       host.dataset.shapeCreationCapability = "ready";
       host.dataset.shapeCreationState = "idle";
       host.dataset.manipulationPointerCapture = "released";
-      onControllerReady?.(controller);
-      onSelectionControllerReady?.(activeSelectionController);
-      onManipulationControllerReady?.(activeManipulationController);
-      onHistoryControllerReady?.(activeHistoryCoordinator.controller);
-      onDiagnostics?.(controller.snapshot());
+      controllerReadyRef.current?.(controller);
+      selectionControllerReadyRef.current?.(activeSelectionController);
+      manipulationControllerReadyRef.current?.(activeManipulationController);
+      historyControllerReadyRef.current?.(activeHistoryCoordinator.controller);
+      diagnosticsRef.current?.(controller.snapshot());
       themeObserver = new MutationObserver(() => {
         if (controller.status === "mounted") {
           controller.setTheme(readTheme());
-          onDiagnostics?.(controller.snapshot());
+          diagnosticsRef.current?.(controller.snapshot());
         }
       });
       themeObserver.observe(document.documentElement, {
@@ -2554,10 +2638,11 @@ export function CanvasSurface({
       host.dataset.objectLifecycleCapability = "error";
       host.dataset.clipboardCapability = "error";
       host.dataset.contextMenuCapability = "error";
-      onError?.(error);
+      errorRef.current?.(error);
     }
 
     return () => {
+      continuousVectorStyleEdit?.cancel();
       themeObserver?.disconnect();
       for (const [type, listener] of editorPointerListeners) {
         inkLayer?.canvas.removeEventListener(type, listener, true);
@@ -2592,11 +2677,12 @@ export function CanvasSurface({
       releaseManipulationPointerCaptureRef.current = null;
       resetManipulationCursorRef.current = null;
       resetVectorHoverRef.current = null;
+      cancelContinuousStyleEditRef.current = null;
       toolRegistry?.destroy();
       releaseShapePointerCapture();
       toolRegistryRef.current = null;
       updateToolDiagnosticsRef.current = null;
-      onToolRegistryReady?.(null);
+      toolRegistryReadyRef.current?.(null);
       uninstallHistoryShortcuts?.();
       uninstallEditingShortcuts?.();
       editingActionsRef.current = null;
@@ -2624,15 +2710,7 @@ export function CanvasSurface({
       rotationIndicatorElement?.remove();
       controller.destroy();
     };
-  }, [
-    onControllerReady,
-    onDiagnostics,
-    onError,
-    onHistoryControllerReady,
-    onManipulationControllerReady,
-    onSelectionControllerReady,
-    onToolRegistryReady,
-  ]);
+  }, []);
 
   const performContextMenuAction = (action: EditorContextMenuAction): void => {
     const actions = editingActionsRef.current;

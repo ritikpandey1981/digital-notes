@@ -1,22 +1,19 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useId, type RefObject } from "react";
 
-export function useFloatingWidgetDismissal<TBoundary extends HTMLElement = HTMLElement>(
+/** Owns dismissal for one floating widget and any portaled descendants carrying its scope. */
+export function useFloatingWidgetDismissal(
   open: boolean,
   onDismiss: () => void,
-): RefObject<TBoundary | null> {
-  const boundaryRef = useRef<TBoundary | null>(null);
+  boundaryRef: RefObject<HTMLElement | null>,
+): string {
+  const scopeId = useId();
 
   useEffect(() => {
     if (!open) return;
     const handleOutsidePointerDown = (event: PointerEvent): void => {
       if (!(event.target instanceof Node)) return;
       if (boundaryRef.current?.contains(event.target) === true) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest('[data-floating-widget-owned-portal="true"]') !== null
-      ) {
-        return;
-      }
+      if (event.target instanceof Element && isOwnedFloatingSurface(event.target, scopeId)) return;
       if (
         event.target instanceof Element &&
         event.target.closest("[data-tool-dock-layout]") !== null
@@ -47,9 +44,18 @@ export function useFloatingWidgetDismissal<TBoundary extends HTMLElement = HTMLE
       document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [onDismiss, open]);
+  }, [boundaryRef, onDismiss, open, scopeId]);
 
-  return boundaryRef;
+  return scopeId;
+}
+
+function isOwnedFloatingSurface(target: Element, scopeId: string): boolean {
+  let candidate: Element | null = target;
+  while (candidate !== null) {
+    if (candidate.getAttribute("data-floating-widget-owner") === scopeId) return true;
+    candidate = candidate.parentElement;
+  }
+  return false;
 }
 
 type CanvasPointerRegion = "outside" | "page" | "workspace";

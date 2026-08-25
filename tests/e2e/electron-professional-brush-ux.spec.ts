@@ -13,10 +13,13 @@ const SCREENSHOT_NAMES = [
   "08-large-cursor-200.png",
 ] as const;
 
-test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and cursor", async () => {
+test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and cursor", async ({
+  browserName,
+}, testInfo) => {
+  void browserName;
   test.setTimeout(90_000);
   const repositoryRoot = process.cwd();
-  const screenshotDirectory = path.join(repositoryRoot, "docs/interaction/screenshots/phase-17c");
+  const screenshotDirectory = process.env.FOLIO_SCREENSHOT_DIR ?? testInfo.outputPath("phase-17c");
   mkdirSync(screenshotDirectory, { recursive: true });
   const electronApp = await electron.launch({
     args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],

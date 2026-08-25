@@ -32,6 +32,24 @@
 }
 
 @layer base {
+  .folio-editor-chrome-selection,
+  [data-tooltip-layer="global"] {
+    user-select: none;
+  }
+
+  .folio-editor-chrome-selection [data-testid="canvas-surface"] {
+    user-select: auto;
+  }
+
+  .folio-editor-chrome-selection [data-floating-surface],
+  .folio-editor-chrome-selection [role="menu"] {
+    user-select: none;
+  }
+
+  .folio-editor-chrome-selection :is(input, textarea, [contenteditable="true"]) {
+    user-select: text;
+  }
+
   :root {
     --folio-motion-hover: 100ms;
     --folio-motion-press: 75ms;

@@ -48,7 +48,7 @@ function ApplicationShellContent() {
   const redo = useCallback(() => historyActionsRef.current?.redo(), []);
 
   return (
-    <div className="flex h-screen min-h-[640px] flex-col overflow-hidden bg-folio-workspace text-folio-ink">
+    <div className="folio-editor-chrome-selection flex h-screen min-h-[640px] flex-col overflow-hidden bg-folio-workspace text-folio-ink">
       <SketchbookTopBar
         canUndo={historyAvailability.canUndo}
         canRedo={historyAvailability.canRedo}

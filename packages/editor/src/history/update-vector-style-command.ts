@@ -111,7 +111,7 @@ class UpdateVectorStyleCommand implements EditorCommand<ObjectCollection> {
     if (object.modifiedAt !== expectedModifiedAt || !sameStyle(object.style, expectedStyle)) {
       throw new Error(`Vector object '${this.#objectId}' is stale during ${operation}.`);
     }
-    return document.replace(createReplacement(object, targetStyle, targetModifiedAt));
+    return document.replace(createVectorStyleReplacement(object, targetStyle, targetModifiedAt));
   }
 }
 
@@ -121,11 +121,13 @@ export function createUpdateVectorStyleCommand(
   return new UpdateVectorStyleCommand(input);
 }
 
-function createReplacement(
+/** Creates a same-identity immutable vector replacement for command or live-preview use. */
+export function createVectorStyleReplacement(
   object: VectorPageObject,
-  style: EditableStyle,
+  style: EditableStyleInput,
   modifiedAt: string,
 ): VectorPageObject {
+  const resolvedStyle = createEditableStyle(style);
   const factory = new ObjectFactory();
   const lifecycle = {
     id: object.id,
@@ -136,7 +138,7 @@ function createReplacement(
     metadata: object.metadata,
     zIndex: object.zIndex,
     transform: object.transform,
-    style,
+    style: resolvedStyle,
   } as const;
   switch (object.type) {
     case "line":

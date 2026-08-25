@@ -51,6 +51,7 @@ export const CanvasHost = memo(function CanvasHost({
   onViewportNavigationLearned,
 }: CanvasHostProps) {
   const renderCountRef = useRef(0);
+  const diagnosticsCallbackGeneration = renderCountRef.current + 1;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const brushCursorRef = useRef<HTMLDivElement | null>(null);
   const drawingColorRef = useRef(drawingStyle.color);
@@ -285,6 +286,13 @@ export const CanvasHost = memo(function CanvasHost({
         interactionMode={interactionMode}
         drawingStyle={drawingStyle}
         onHistoryControllerReady={handleHistoryControllerReady}
+        onDiagnostics={() => {
+          if (hostRef.current !== null) {
+            hostRef.current.dataset.latestDiagnosticsCallbackGeneration = String(
+              diagnosticsCallbackGeneration,
+            );
+          }
+        }}
         onHistoryChange={handleHistoryChange}
         onObjectLifecycleActionsReady={onObjectLifecycleActionsReady}
         onShapeEditingActionsReady={onShapeEditingActionsReady}

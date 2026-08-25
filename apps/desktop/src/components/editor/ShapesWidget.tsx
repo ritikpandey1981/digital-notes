@@ -1,6 +1,7 @@
 import { cn } from "@folio/ui";
 import { Circle, Minus, Square } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useRef } from "react";
 import type { ShapeToolKind } from "./editor-types";
 import { ToolTooltip } from "./ToolTooltip";
 import {
@@ -25,13 +26,15 @@ const shapes = [
 
 export function ShapesWidget({ open, activeShape, onSelectShape, onDismiss }: ShapesWidgetProps) {
   const reducedMotion = useReducedMotion() === true;
-  const boundaryRef = useFloatingWidgetDismissal(open, onDismiss);
+  const boundaryRef = useRef<HTMLElement | null>(null);
+  const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef);
   return (
     <div className="pointer-events-none absolute left-[76px] top-[calc(50%+125px)] z-20 -translate-y-1/2">
       <AnimatePresence initial={false}>
         {open ? (
           <motion.section
             ref={boundaryRef}
+            data-floating-widget-scope={floatingWidgetScope}
             className="folio-floating-surface pointer-events-auto flex w-[52px] flex-col items-center gap-0.5 p-1"
             role="toolbar"
             aria-label="Shapes"
