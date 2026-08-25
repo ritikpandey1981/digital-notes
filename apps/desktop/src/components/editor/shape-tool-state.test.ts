@@ -1,4 +1,4 @@
-import { createPenPresetStore } from "@folio/editor";
+import { createEditorColorSystem, createPenPresetStore } from "@folio/editor";
 import { describe, expect, it } from "vitest";
 import { createShapeToolState, DEFAULT_SHAPE_DRAWING_STYLE } from "./shape-tool-state";
 
@@ -84,5 +84,39 @@ describe("shape tool state", () => {
     expect(changed.style.color).toBe("#dc2626");
     expect(Object.isFrozen(changed)).toBe(true);
     expect(Object.isFrozen(changed.style)).toBe(true);
+  });
+
+  it("canonicalizes Shape creation color immediately and rejects invalid ingress", () => {
+    const shapes = createShapeToolState();
+    expect(shapes.updateStyle({ strokeColor: "#FFF" }).style.color).toBe("#ffffff");
+    expect(shapes.updateStyle({ strokeColor: "FFFFFF" }).style.color).toBe("#ffffff");
+    shapes.selectShape("ellipse");
+    expect(shapes.snapshot().style.color).toBe("#ffffff");
+
+    const beforeInvalid = shapes.snapshot();
+    expect(() => shapes.updateStyle({ strokeColor: "red" })).toThrow(TypeError);
+    expect(shapes.snapshot()).toEqual(beforeInvalid);
+  });
+
+  it("keeps active-palette selection separate from every creation-tool color", () => {
+    const colors = createEditorColorSystem();
+    const presets = createPenPresetStore();
+    const shapes = createShapeToolState();
+    const brushColors = Object.freeze({
+      pencil: presets.activeState("pencil").color.hex,
+      pen: presets.activeState("pen").color.hex,
+      marker: presets.activeState("marker").color.hex,
+      highlighter: presets.activeState("highlighter").color.hex,
+    });
+    const shapeColor = shapes.snapshot().style.color;
+
+    colors.setActivePalette("sketch");
+
+    expect(colors.snapshot().activePaletteId).toBe("sketch");
+    expect(presets.activeState("pencil").color.hex).toBe(brushColors.pencil);
+    expect(presets.activeState("pen").color.hex).toBe(brushColors.pen);
+    expect(presets.activeState("marker").color.hex).toBe(brushColors.marker);
+    expect(presets.activeState("highlighter").color.hex).toBe(brushColors.highlighter);
+    expect(shapes.snapshot().style.color).toBe(shapeColor);
   });
 });

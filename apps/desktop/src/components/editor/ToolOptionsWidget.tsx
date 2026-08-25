@@ -268,13 +268,13 @@ function ColorOptions({
             <AnimatePresence initial={false}>
               {colors.recentColors.slice(0, 5).map((color) => (
                 <motion.button
-                  key={color.hex}
+                  key={color}
                   layout="position"
                   type="button"
                   className="size-4 rounded-full border border-black/15 transition-[transform,box-shadow] duration-100 ease-out hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
-                  style={{ backgroundColor: color.hex }}
-                  aria-label={`Use recent color ${color.hex}`}
-                  aria-pressed={color.hex === activeColor}
+                  style={{ backgroundColor: color }}
+                  aria-label={`Use recent color ${color}`}
+                  aria-pressed={color === activeColor}
                   initial={{ opacity: 0, scale: 0.86 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
@@ -282,7 +282,7 @@ function ColorOptions({
                     duration: motionSeconds(INTERACTION_MOTION.hoverMilliseconds, reducedMotion),
                     ease: PROFESSIONAL_EASE,
                   }}
-                  onClick={() => onChange(color.hex)}
+                  onClick={() => onChange(color)}
                 />
               ))}
             </AnimatePresence>
@@ -292,16 +292,16 @@ function ColorOptions({
       <div className="flex items-center justify-between gap-1" aria-label="Color palette">
         {colors.presetColors.map((color) => (
           <button
-            key={color.hex}
+            key={color}
             type="button"
             className={cn(
               "size-[18px] rounded-full border border-black/15 shadow-sm transition-[transform,box-shadow] duration-100 ease-out hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95",
-              color.hex === activeColor && "ring-2 ring-folio-accent ring-offset-1",
+              color === activeColor && "ring-2 ring-folio-accent ring-offset-1",
             )}
-            style={{ backgroundColor: color.hex }}
-            aria-label={`Use color ${color.hex}`}
-            aria-pressed={color.hex === activeColor}
-            onClick={() => onChange(color.hex)}
+            style={{ backgroundColor: color }}
+            aria-label={`Use color ${color}`}
+            aria-pressed={color === activeColor}
+            onClick={() => onChange(color)}
           />
         ))}
       </div>

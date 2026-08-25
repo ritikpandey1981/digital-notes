@@ -1,4 +1,4 @@
-import type { CanvasDrawingStyle, ShapeStylePatch } from "@folio/editor";
+import { normalizeArtworkHex, type CanvasDrawingStyle, type ShapeStylePatch } from "@folio/editor";
 import type { ShapeToolKind } from "./editor-types";
 
 type ShapeDrawingStyle = Readonly<Required<Omit<CanvasDrawingStyle, "brush">>>;
@@ -44,7 +44,10 @@ class ShapeToolStateImplementation implements ShapeToolState {
 
   updateStyle(patch: ShapeStylePatch): ShapeToolStateSnapshot {
     const style = Object.freeze({
-      color: patch.strokeColor ?? this.#style.color,
+      color:
+        patch.strokeColor === undefined
+          ? this.#style.color
+          : normalizeArtworkHex(patch.strokeColor),
       width: patch.strokeWidth ?? this.#style.width,
       opacity: patch.opacity ?? this.#style.opacity,
       pressureEnabled: false,

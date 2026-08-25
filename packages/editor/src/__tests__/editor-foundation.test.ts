@@ -9,12 +9,12 @@ import {
 
 describe("Phase 14 editor foundation", () => {
   it("maintains a bounded, deduplicated recent-color list", () => {
-    const colors = createEditorColorSystem({ recentLimit: 2 });
+    const colors = createEditorColorSystem();
     const blue = colors.createColor({ hex: "#2563eb", opacity: 0.5 });
     colors.remember(blue);
     colors.remember(colors.createColor("#dc2626"));
     colors.remember(blue);
-    expect(colors.snapshot().recentColors.map(({ hex }) => hex)).toEqual(["#2563eb", "#dc2626"]);
+    expect(colors.snapshot().recentColors).toEqual(["#2563eb", "#dc2626"]);
     expect(colors.snapshot().presetColors.length).toBeGreaterThan(4);
   });
 

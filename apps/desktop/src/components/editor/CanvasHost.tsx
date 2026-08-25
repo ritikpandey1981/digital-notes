@@ -54,14 +54,10 @@ export const CanvasHost = memo(function CanvasHost({
   const diagnosticsCallbackGeneration = renderCountRef.current + 1;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const brushCursorRef = useRef<HTMLDivElement | null>(null);
-  const drawingColorRef = useRef(drawingStyle.color);
-  const onDrawingColorUsedRef = useRef(onDrawingColorUsed);
   const onHistoryAvailabilityChangeRef = useRef(onHistoryAvailabilityChange);
   const historyControllerRef = useRef<
     Parameters<NonNullable<CanvasSurfaceProps["onHistoryControllerReady"]>>[0] | null
   >(null);
-  drawingColorRef.current = drawingStyle.color;
-  onDrawingColorUsedRef.current = onDrawingColorUsed;
   onHistoryAvailabilityChangeRef.current = onHistoryAvailabilityChange;
   useLayoutEffect(() => {
     renderCountRef.current += 1;
@@ -91,17 +87,6 @@ export const CanvasHost = memo(function CanvasHost({
         canUndo: notification.state.canUndo,
         canRedo: notification.state.canRedo,
       });
-      if (
-        notification.outcome === "succeeded" &&
-        notification.operation === "execute" &&
-        (notification.command.id.startsWith("stroke-") ||
-          notification.command.id.startsWith("create-line-") ||
-          notification.command.id.startsWith("create-rectangle-") ||
-          notification.command.id.startsWith("create-ellipse-")) &&
-        drawingColorRef.current !== undefined
-      ) {
-        onDrawingColorUsedRef.current(drawingColorRef.current);
-      }
     },
     [],
   );
@@ -294,6 +279,7 @@ export const CanvasHost = memo(function CanvasHost({
           }
         }}
         onHistoryChange={handleHistoryChange}
+        onArtworkColorUsed={onDrawingColorUsed}
         onObjectLifecycleActionsReady={onObjectLifecycleActionsReady}
         onShapeEditingActionsReady={onShapeEditingActionsReady}
         onShapeEditingChange={onShapeEditingChange}

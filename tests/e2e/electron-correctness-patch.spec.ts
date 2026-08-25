@@ -207,6 +207,19 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
       opacity: 1,
     });
 
+    const historyBeforeRecentInspection = await attributeNumber(surface, "data-history-undo-depth");
+    await penButton.click();
+    await penButton.click();
+    await expect(palette).toBeVisible();
+    const recentColorButtons = palette.locator('[aria-label="Recent colors"]').getByRole("button");
+    await expect(recentColorButtons).toHaveCount(2);
+    expect(
+      await recentColorButtons.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel)),
+    ).toEqual(["Use recent color #111111", "Use recent color #dc2626"]);
+    expect(await attributeNumber(surface, "data-history-undo-depth")).toBe(
+      historyBeforeRecentInspection,
+    );
+
     await shapesButton.click();
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).hover();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");

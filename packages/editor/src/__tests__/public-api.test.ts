@@ -13,15 +13,20 @@ import type {
 describe("@folio/editor public API", () => {
   it("exposes only the application-facing canvas adapter at runtime", () => {
     expect(Object.keys(editor).sort()).toEqual([
+      "BUILT_IN_COLOR_PALETTES",
       "CanvasSurface",
       "DEFAULT_BRUSH_PRESETS",
       "DEFAULT_BRUSH_PRESET_IDS",
+      "DEFAULT_COLOR_PALETTE_ID",
       "DEFAULT_EDITOR_VIEWPORT_SNAPSHOT",
       "DEFAULT_PEN_PRESETS",
       "EDITOR_PRESET_COLORS",
       "EDITOR_STROKE_WIDTHS",
       "EDITOR_VIEWPORT_ZOOM_PRESETS",
+      "FAVORITE_COLOR_CAPACITY",
+      "RECENT_COLOR_CAPACITY",
       "createBrushToolStateStore",
+      "createColorPalette",
       "createDefaultPropertyDescriptorRegistry",
       "createEditorColorSystem",
       "createEditorToolRegistry",
@@ -31,7 +36,14 @@ describe("@folio/editor public API", () => {
       "createVectorPropertyProvider",
       "editorViewportWheelZoom",
       "formatEditorViewportZoom",
+      "hexToHsv",
+      "hexToRgb",
+      "hsvToHex",
+      "hsvToRgb",
       "nextEditorViewportZoom",
+      "normalizeArtworkHex",
+      "rgbToHex",
+      "rgbToHsv",
     ]);
   });
 
@@ -56,6 +68,7 @@ describe("@folio/editor public API", () => {
     const historyProps: CanvasSurfaceProps = {
       onHistoryControllerReady: (controller) => controller.getHistoryState(),
       onHistoryChange: (notification) => notification.state,
+      onArtworkColorUsed: (color) => color,
     };
     const lifecycleActions: ObjectLifecycleActions = {
       deleteSelection: () => true,
@@ -118,6 +131,7 @@ describe("@folio/editor public API", () => {
     expect(ellipseProps.interactionMode).toBe("ellipse");
     expect(historyProps.onHistoryControllerReady).toBeTypeOf("function");
     expect(historyProps.onHistoryChange).toBeTypeOf("function");
+    expect(historyProps.onArtworkColorUsed).toBeTypeOf("function");
     expect(lifecycleActions.duplicateSelection()).toBe(true);
     expect(lifecycleProps.onObjectLifecycleActionsReady).toBeTypeOf("function");
     expect(toolRegistryProps.onToolRegistryReady).toBeTypeOf("function");

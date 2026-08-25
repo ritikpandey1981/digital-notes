@@ -51,6 +51,7 @@ import {
 } from "@folio/selection";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ContinuousVectorStyleEdit } from "./ContinuousVectorStyleEdit";
+import { committedArtworkColor, committedVectorRecolor } from "./artwork-color-usage";
 import { EditorClipboard } from "./EditorClipboard";
 import {
   editorViewportWheelZoom,
@@ -209,6 +210,8 @@ export interface CanvasSurfaceProps {
   readonly onManipulationChange?: (state: ManipulationState) => void;
   /** Receives immutable post-operation History notifications. */
   readonly onHistoryChange?: (notification: HistoryNotification) => void;
+  /** Receives canonical colors read from successfully committed artwork, excluding Undo/Redo. */
+  readonly onArtworkColorUsed?: (color: string) => void;
   /** Receives immutable rendering diagnostics at lifecycle checkpoints. */
   readonly onDiagnostics?: (snapshot: CanvasControllerSnapshot) => void;
   /** Receives session-bound viewport actions and null during cleanup. */
@@ -344,6 +347,7 @@ export function CanvasSurface({
   onSelectionChange,
   onManipulationChange,
   onHistoryChange,
+  onArtworkColorUsed,
   onDiagnostics,
   onViewportActionsReady,
   onViewportChange,
@@ -379,6 +383,7 @@ export function CanvasSurface({
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
   const historyChangeRef = useRef(onHistoryChange);
+  const artworkColorUsedRef = useRef(onArtworkColorUsed);
   const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
   const shapeEditingActionsReadyRef = useRef(onShapeEditingActionsReady);
   const shapeEditingChangeRef = useRef(onShapeEditingChange);
@@ -439,6 +444,10 @@ export function CanvasSurface({
   useEffect(() => {
     historyChangeRef.current = onHistoryChange;
   }, [onHistoryChange]);
+
+  useEffect(() => {
+    artworkColorUsedRef.current = onArtworkColorUsed;
+  }, [onArtworkColorUsed]);
 
   useEffect(() => {
     objectLifecycleActionsReadyRef.current = onObjectLifecycleActionsReady;
@@ -1088,6 +1097,23 @@ export function CanvasSurface({
         errorRef.current?.(cause instanceof Error ? cause : new Error(message, { cause }));
         return false;
       };
+      const reportArtworkColorUsed = (color: string): void => {
+        try {
+          artworkColorUsedRef.current?.(color);
+        } catch {
+          // Application observers cannot interrupt a successful document commit.
+        }
+      };
+      const reportCommittedCreationColor = (objectId: string): void => {
+        const committed = documentSession.collection.lookup(objectId);
+        if (committed !== undefined) reportArtworkColorUsed(committedArtworkColor(committed));
+      };
+      const reportCommittedVectorRecolor = (original: VectorPageObject): void => {
+        const committed = documentSession.collection.lookup(original.id);
+        if (!isVectorObject(committed)) return;
+        const color = committedVectorRecolor(original, committed);
+        if (color !== null) reportArtworkColorUsed(color);
+      };
       const selectedVectorObject = (): VectorPageObject | null => {
         const selected = selectedEditableObjects();
         const object = selected.length === 1 ? selected[0] : undefined;
@@ -1103,7 +1129,11 @@ export function CanvasSurface({
       });
       continuousVectorStyleEdit = new ContinuousVectorStyleEdit({
         documentSession,
-        commit: (object, style) => activeHistoryCoordinator.executeVectorStyleUpdate(object, style),
+        commit: (object, style) => {
+          const state = activeHistoryCoordinator.executeVectorStyleUpdate(object, style);
+          reportCommittedVectorRecolor(object);
+          return state;
+        },
         onPreviewDocumentChange: () => synchronizeDocumentFromHistory(),
       });
       const activeContinuousVectorStyleEdit = continuousVectorStyleEdit;
@@ -1125,6 +1155,7 @@ export function CanvasSurface({
             }
             const state = activeHistoryCoordinator.executeVectorStyleUpdate(object, style);
             updateHistoryDiagnostics(state);
+            reportCommittedVectorRecolor(object);
             return true;
           } catch (cause) {
             return reportEditingFailure(cause, "Shape appearance update failed.");
@@ -2139,6 +2170,7 @@ export function CanvasSurface({
           );
           try {
             activeHistoryCoordinator.executeStroke(object);
+            reportCommittedCreationColor(object.id);
           } catch (cause) {
             synchronizeDocumentFromHistory();
             const error =
@@ -2330,6 +2362,7 @@ export function CanvasSurface({
           const object = createShapeObject(creation.draft);
           const state = activeHistoryCoordinator.executeObjectCreation(object);
           updateHistoryDiagnostics(state);
+          reportCommittedCreationColor(object.id);
           selectEditorObjects([object.id]);
           host.dataset.lastCreatedShapeType = object.type;
           host.dataset.lastCreatedShapeId = object.id;
