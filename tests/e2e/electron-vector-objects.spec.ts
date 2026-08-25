@@ -229,7 +229,8 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect(surface).toHaveAttribute("data-selected-object-type", "ellipse");
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
     const historyBeforeStyle = Number(await surface.getAttribute("data-history-undo-depth"));
-    await emitRapidColorInputs(shapeToolbar.getByLabel("Shape stroke color"), [
+    await shapeToolbar.getByLabel("Shape stroke color").click();
+    await emitRapidColorInputs(window.getByRole("textbox", { name: "Hex color" }), [
       "#2563eb",
       "#16a34a",
       "#9333ea",
@@ -520,16 +521,7 @@ async function livePageToScreen(surface: Locator, canvas: Locator, point: Point)
 }
 
 async function emitRapidColorInputs(locator: Locator, colors: readonly string[]): Promise<void> {
-  await locator.evaluate((element, values) => {
-    const input = element as HTMLInputElement;
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    if (setValue === undefined) throw new Error("Native color value setter is unavailable.");
-    for (const color of values) {
-      setValue.call(input, color);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, colors);
+  for (const color of colors) await locator.fill(color);
 }
 
 async function nonTransparentPixelCount(canvas: Locator): Promise<number> {
@@ -590,13 +582,12 @@ async function expectPanelInsideWorkspace(panel: Locator, host: Locator): Promis
 async function toolbarMetrics(toolbar: Locator): Promise<ToolbarMetrics> {
   return toolbar.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    const firstControl = element.querySelector('input[aria-label="Shape stroke color"]');
+    const firstControl = element.querySelector('button[aria-label="Shape stroke color"]');
     const lastButton = element.querySelector('button[aria-label="More shape options"]');
     if (!(firstControl instanceof HTMLElement) || !(lastButton instanceof HTMLElement)) {
       throw new Error("Toolbar edge controls are missing.");
     }
-    const firstControlBounds = firstControl.parentElement?.getBoundingClientRect();
-    if (firstControlBounds === undefined) throw new Error("Toolbar first control is missing.");
+    const firstControlBounds = firstControl.getBoundingClientRect();
     const lastButtonBounds = lastButton.getBoundingClientRect();
     return {
       width: bounds.width,

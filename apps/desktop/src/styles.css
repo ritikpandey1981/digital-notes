@@ -228,6 +228,40 @@
     border-left-width: 1px;
   }
 
+  .folio-tool-tooltip[data-side="left"]::before {
+    top: calc(50% - var(--folio-tooltip-arrow-size) / 2);
+    right: calc(var(--folio-tooltip-arrow-size) / -2);
+    border-top-width: 1px;
+    border-right-width: 1px;
+  }
+
+  .folio-hue-slider {
+    background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  }
+
+  .folio-hue-slider::-webkit-slider-thumb {
+    width: 15px;
+    height: 15px;
+    appearance: none;
+    border: 2px solid white;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow:
+      0 0 0 1px rgb(0 0 0 / 0.55),
+      0 2px 5px rgb(0 0 0 / 0.22);
+  }
+
+  .folio-hue-slider::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border: 2px solid white;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow:
+      0 0 0 1px rgb(0 0 0 / 0.55),
+      0 2px 5px rgb(0 0 0 / 0.22);
+  }
+
   .shell-icon-button {
     @apply flex size-8 items-center justify-center rounded-lg text-folio-muted transition-[background-color,color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-[0.96];
   }

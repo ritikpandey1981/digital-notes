@@ -49,8 +49,11 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await window.getByRole("button", { name: "Redo", exact: true }).click();
     await expect.poll(async () => (await selectedVectorStyle(surface)).opacity).toBe(0.35);
 
-    const colorInput = shapeToolbar.getByLabel("Shape stroke color");
+    await shapeToolbar.getByLabel("Shape stroke color").click();
+    const colorInput = window.getByRole("textbox", { name: "Hex color" });
     await emitColorGesture(colorInput, ["#dc2626", "#16a34a", "#2563eb", "#9333ea"]);
+    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    await window.keyboard.press("Escape");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "4");
     await expect.poll(async () => (await selectedVectorStyle(surface)).color).toBe("#9333ea");
     await window.getByRole("button", { name: "Undo", exact: true }).click();
@@ -212,17 +215,7 @@ async function setRangeValues(slider: Locator, values: readonly string[]): Promi
 }
 
 async function emitColorGesture(input: Locator, colors: readonly string[]): Promise<void> {
-  await input.focus();
-  await input.evaluate((element, values) => {
-    const colorInput = element as HTMLInputElement;
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    if (setValue === undefined) throw new Error("Native color value setter is unavailable.");
-    for (const color of values) {
-      setValue.call(colorInput, color);
-      colorInput.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    colorInput.dispatchEvent(new Event("change", { bubbles: true }));
-  }, colors);
+  for (const color of colors) await input.fill(color);
 }
 
 async function selectedVectorStyle(surface: Locator): Promise<VectorStyleDiagnostic> {

@@ -116,16 +116,17 @@ test("renders every PageObject in one creation-ordered document stack", async ()
 
 async function selectDrawingColor(window: Page, color: string): Promise<void> {
   const penButton = window.getByRole("button", { name: "Pen", exact: true });
-  const colorInput = window.getByLabel("Custom stroke color");
   await penButton.click();
-  if (!(await colorInput.isVisible())) await penButton.click();
-  await colorInput.fill(color);
+  const trigger = window.getByTestId("tool-options-color-trigger");
+  if (!(await trigger.isVisible())) await penButton.click();
+  await trigger.click();
+  await window.getByRole("textbox", { name: "Hex color" }).fill(color);
   await expect(window.getByTestId("canvas-surface")).toHaveAttribute("data-drawing-color", color);
   const host = window.getByTestId("canvas-host");
   const bounds = await host.boundingBox();
   if (bounds === null) throw new Error("Canvas host has no visible bounds.");
   await window.mouse.click(bounds.x + bounds.width - 24, bounds.y + 24);
-  await expect(window.getByTestId("tool-options-widget")).toHaveCount(0);
+  await expect(window.getByTestId("full-color-picker")).toHaveCount(0);
 }
 
 async function chooseShape(window: Page, shape: "Line" | "Rectangle" | "Ellipse"): Promise<void> {

@@ -1,0 +1,546 @@
+import { hexToRgb, type EditorColorSystemSnapshot, type HsvColor } from "@folio/editor";
+import {
+  cn,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@folio/ui";
+import { Check, ChevronDown } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ChangeEvent,
+  type FocusEvent,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
+import {
+  adjustSvWithKeyboard,
+  completeHexDraft,
+  hsvFromSvPointer,
+  resolveColorPickerPlacement,
+  rgbDraftToHex,
+  type RgbDraft,
+} from "./color-picker-model";
+import type { ColorPickerSessionSnapshot, ColorPreviewSchedule } from "./useColorPickerSession";
+import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
+
+interface FullColorPickerProps {
+  readonly session: ColorPickerSessionSnapshot;
+  readonly colors: EditorColorSystemSnapshot;
+  readonly onPreviewHex: (
+    color: string,
+    schedule?: ColorPreviewSchedule,
+  ) => ColorPickerSessionSnapshot | null;
+  readonly onPreviewHsv: (
+    hsv: HsvColor,
+    schedule?: ColorPreviewSchedule,
+  ) => ColorPickerSessionSnapshot | null;
+  readonly onSelectPalette: (paletteId: string) => void;
+  readonly onCommit: () => void;
+  readonly onCancel: () => void;
+}
+
+const FALLBACK_PICKER_SIZE = Object.freeze({ width: 332, height: 594 });
+
+export function FullColorPicker({
+  session,
+  colors,
+  onPreviewHex,
+  onPreviewHsv,
+  onSelectPalette,
+  onCommit,
+  onCancel,
+}: FullColorPickerProps) {
+  const pickerRef = useRef<HTMLElement | null>(null);
+  const [presentation, setPresentation] = useState(() => ({
+    currentColor: session.currentColor,
+    hsv: session.hsv,
+  }));
+  const lastMeaningfulHueRef = useRef(session.hsv.hue);
+  const [pickerSize, setPickerSize] = useState<{ width: number; height: number }>(
+    FALLBACK_PICKER_SIZE,
+  );
+  const [, setPositionVersion] = useState(0);
+  const cancelAndRestoreFocus = useCallback((): void => {
+    const anchor = session.anchor;
+    onCancel();
+    queueMicrotask(() => {
+      if (anchor.isConnected) anchor.focus({ preventScroll: true });
+    });
+  }, [onCancel, session.anchor]);
+  const floatingScope = useFloatingWidgetDismissal(true, onCommit, pickerRef, {
+    onEscape: cancelAndRestoreFocus,
+    canvasPageDismissal: "synchronous",
+  });
+  const positioningAnchor =
+    session.source === "selected-vector"
+      ? (session.anchor.closest<HTMLElement>('[data-testid="shape-editing-toolbar"]') ??
+        session.anchor)
+      : session.anchor;
+  const anchorBounds = positioningAnchor.getBoundingClientRect();
+  const placement = resolveColorPickerPlacement(
+    anchorBounds,
+    pickerSize,
+    { width: window.innerWidth, height: window.innerHeight },
+    session.source,
+  );
+  const style: CSSProperties = { left: placement.left, top: placement.top };
+  const ownerScopes = [floatingScope, session.ownerScope].filter(Boolean).join(" ");
+  const previewHex = (color: string, schedule?: ColorPreviewSchedule): boolean => {
+    const next = onPreviewHex(color, schedule);
+    if (next === null) return false;
+    const hsv =
+      next.hsv.saturation > 0
+        ? next.hsv
+        : Object.freeze({ ...next.hsv, hue: lastMeaningfulHueRef.current });
+    if (next.hsv.saturation > 0) lastMeaningfulHueRef.current = next.hsv.hue;
+    setPresentation({ currentColor: next.currentColor, hsv });
+    return true;
+  };
+  const previewHsv = (hsv: HsvColor, schedule?: ColorPreviewSchedule): boolean => {
+    const next = onPreviewHsv(hsv, schedule);
+    if (next === null) return false;
+    lastMeaningfulHueRef.current = hsv.hue;
+    setPresentation({ currentColor: next.currentColor, hsv: next.hsv });
+    return true;
+  };
+
+  useLayoutEffect(() => {
+    const picker = pickerRef.current;
+    if (picker === null) return;
+    const measure = (): void => {
+      const bounds = picker.getBoundingClientRect();
+      setPickerSize((previous) =>
+        previous.width === bounds.width && previous.height === bounds.height
+          ? previous
+          : { width: bounds.width, height: bounds.height },
+      );
+      setPositionVersion((version) => version + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(picker);
+    const anchorObserver = new ResizeObserver(measure);
+    anchorObserver.observe(positioningAnchor);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      anchorObserver.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [positioningAnchor, session.anchor]);
+
+  useEffect(() => {
+    addFloatingOwner(session.anchor, floatingScope);
+    return () => removeFloatingOwner(session.anchor, floatingScope);
+  }, [floatingScope, session.anchor]);
+
+  useEffect(() => {
+    const cancelForWindowBlur = (): void => onCancel();
+    window.addEventListener("blur", cancelForWindowBlur);
+    return () => window.removeEventListener("blur", cancelForWindowBlur);
+  }, [onCancel]);
+
+  return (
+    <section
+      ref={pickerRef}
+      className="folio-floating-surface fixed z-40 w-[332px] max-w-[calc(100vw-24px)] overflow-y-auto p-3"
+      style={{ ...style, maxHeight: "calc(100vh - 24px)" }}
+      role="dialog"
+      aria-label={`${session.target.label} picker`}
+      data-testid="full-color-picker"
+      data-color-target-id={session.target.id}
+      data-color-target-label={session.target.label}
+      data-picker-source={session.source}
+      data-picker-side={placement.side}
+      data-floating-widget-scope={floatingScope}
+      data-floating-widget-owner={session.ownerScope}
+      data-floating-surface="folio"
+    >
+      <div className="mb-2 flex items-start justify-between gap-3 px-0.5">
+        <div>
+          <h2 className="text-xs font-semibold text-folio-ink">{session.target.label}</h2>
+          <p className="text-[10px] text-folio-muted">Full color picker</p>
+        </div>
+        <span className="rounded-full bg-folio-accent-soft px-2 py-1 font-mono text-[9px] uppercase text-folio-accent">
+          {presentation.currentColor}
+        </span>
+      </div>
+
+      <SaturationValueField hsv={presentation.hsv} onPreview={previewHsv} />
+      <label className="mt-2 block">
+        <span className="sr-only">Hue</span>
+        <input
+          type="range"
+          min={0}
+          max={359}
+          step={1}
+          value={Math.round(presentation.hsv.hue)}
+          className="folio-hue-slider h-3 w-full cursor-pointer appearance-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent focus-visible:ring-offset-2"
+          aria-label={`Hue ${Math.round(presentation.hsv.hue)} degrees`}
+          onChange={(event) =>
+            previewHsv(
+              { ...presentation.hsv, hue: Number(event.currentTarget.value) },
+              "animation-frame",
+            )
+          }
+        />
+      </label>
+
+      <div className="mt-3 grid grid-cols-2 gap-2" aria-label="Current and previous colors">
+        <ColorReadout label="Current" color={presentation.currentColor} />
+        <ColorReadout
+          label="Previous"
+          color={session.previousColor}
+          onSelect={() => previewHex(session.previousColor)}
+        />
+      </div>
+
+      <HexEditor color={presentation.currentColor} onPreview={previewHex} />
+      <RgbEditors color={presentation.currentColor} onPreview={previewHex} />
+
+      <ColorCollection
+        label="Recent"
+        emptyLabel="Colors appear after artwork is committed"
+        colors={colors.recentColors}
+        currentColor={presentation.currentColor}
+        onSelect={(color) => previewHex(color)}
+      />
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted">
+          Palette
+        </span>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex h-7 min-w-32 items-center justify-between gap-2 rounded-lg border border-folio-border bg-folio-surface px-2 text-[11px] font-medium text-folio-ink hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+              aria-label={`Active color palette, ${colors.activePalette.name}`}
+              data-testid="color-palette-trigger"
+            >
+              {colors.activePalette.name}
+              <ChevronDown className="size-3.5 text-folio-muted" aria-hidden="true" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            sideOffset={8}
+            collisionPadding={12}
+            className="z-[55] min-w-44"
+            data-floating-widget-owner={ownerScopes}
+            data-testid="color-palette-menu"
+          >
+            {colors.palettes
+              .filter(({ source }) => source === "built-in")
+              .map((palette) => (
+                <DropdownMenuItem
+                  key={palette.id}
+                  role="menuitemradio"
+                  aria-checked={palette.id === colors.activePaletteId}
+                  className="justify-between"
+                  onSelect={() => onSelectPalette(palette.id)}
+                >
+                  {palette.name}
+                  {palette.id === colors.activePaletteId ? (
+                    <Check className="size-4 text-folio-accent" aria-hidden="true" />
+                  ) : null}
+                </DropdownMenuItem>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <ColorCollection
+        label={`${colors.activePalette.name} colors`}
+        colors={colors.activePalette.colors}
+        currentColor={presentation.currentColor}
+        onSelect={(color) => previewHex(color)}
+      />
+    </section>
+  );
+}
+
+function SaturationValueField({
+  hsv,
+  onPreview,
+}: {
+  readonly hsv: HsvColor;
+  readonly onPreview: (hsv: HsvColor, schedule?: ColorPreviewSchedule) => boolean;
+}) {
+  const fieldRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+  useEffect(() => {
+    fieldRef.current?.focus();
+  }, []);
+  const previewAtPointer = (event: PointerEvent<HTMLDivElement>): void => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    onPreview(hsvFromSvPointer(bounds, event.clientX, event.clientY, hsv.hue), "animation-frame");
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const next = adjustSvWithKeyboard(hsv, event.key, event.shiftKey);
+    if (next === null) return;
+    event.preventDefault();
+    onPreview(next, "animation-frame");
+  };
+  return (
+    <div
+      ref={fieldRef}
+      className="relative h-36 touch-none overflow-hidden rounded-xl border border-black/15 shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent focus-visible:ring-offset-2"
+      style={{ backgroundColor: `hsl(${hsv.hue} 100% 50%)` }}
+      role="group"
+      tabIndex={0}
+      aria-label={`Saturation ${Math.round(hsv.saturation * 100)} percent, value ${Math.round(hsv.value * 100)} percent. Use arrow keys to adjust.`}
+      data-testid="color-sv-field"
+      onKeyDown={handleKeyDown}
+      onPointerDown={(event) => {
+        draggingRef.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        previewAtPointer(event);
+      }}
+      onPointerMove={(event) => {
+        if (draggingRef.current) previewAtPointer(event);
+      }}
+      onPointerUp={(event) => {
+        if (!draggingRef.current) return;
+        previewAtPointer(event);
+        draggingRef.current = false;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }}
+      onPointerCancel={() => {
+        draggingRef.current = false;
+      }}
+    >
+      <span
+        className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white to-transparent"
+        aria-hidden="true"
+      />
+      <span
+        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent to-black"
+        aria-hidden="true"
+      />
+      <span
+        className="pointer-events-none absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.75)]"
+        style={{ left: `${hsv.saturation * 100}%`, top: `${(1 - hsv.value) * 100}%` }}
+        aria-hidden="true"
+      />
+    </div>
+  );
+}
+
+function ColorReadout({
+  label,
+  color,
+  onSelect,
+}: {
+  readonly label: "Current" | "Previous";
+  readonly color: string;
+  readonly onSelect?: () => void;
+}) {
+  const content = (
+    <>
+      <span
+        className="size-6 shrink-0 rounded-md border border-black/15 shadow-sm"
+        style={{ backgroundColor: color }}
+        aria-hidden="true"
+      />
+      <span className="min-w-0">
+        <span className="block text-[9px] font-medium text-folio-muted">{label}</span>
+        <span className="block truncate font-mono text-[9px] uppercase text-folio-ink">
+          {color}
+        </span>
+      </span>
+    </>
+  );
+  const className =
+    "flex items-center gap-2 rounded-lg border border-folio-border bg-folio-surface-muted p-1.5 text-left";
+  if (onSelect !== undefined) {
+    return (
+      <button
+        type="button"
+        className={`${className} hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent`}
+        aria-label={`${label} color ${color}`}
+        onClick={onSelect}
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className={className} role="status" aria-label={`${label} color ${color}`}>
+      {content}
+    </div>
+  );
+}
+
+function HexEditor({
+  color,
+  onPreview,
+}: {
+  readonly color: string;
+  readonly onPreview: (color: string) => boolean;
+}) {
+  const [draft, setDraft] = useState(color.toUpperCase());
+  const focusedRef = useRef(false);
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(color.toUpperCase());
+  }, [color]);
+  const previewValid = (value: string): string | null => {
+    const normalized = completeHexDraft(value);
+    if (normalized !== null) onPreview(normalized);
+    return normalized;
+  };
+  return (
+    <label className="mt-3 grid grid-cols-[36px_1fr] items-center gap-2">
+      <span className="text-[10px] font-semibold text-folio-muted">Hex</span>
+      <input
+        type="text"
+        value={draft}
+        maxLength={7}
+        spellCheck={false}
+        className="h-8 rounded-lg border border-folio-border bg-folio-surface px-2 font-mono text-[11px] uppercase text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+        aria-label="Hex color"
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onChange={(event) => {
+          setDraft(event.currentTarget.value);
+          previewValid(event.currentTarget.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          const normalized = previewValid(event.currentTarget.value);
+          if (normalized !== null) setDraft(normalized.toUpperCase());
+        }}
+        onBlur={(event) => {
+          focusedRef.current = false;
+          const normalized = previewValid(event.currentTarget.value);
+          setDraft((normalized ?? color).toUpperCase());
+        }}
+      />
+    </label>
+  );
+}
+
+function RgbEditors({
+  color,
+  onPreview,
+}: {
+  readonly color: string;
+  readonly onPreview: (color: string) => boolean;
+}) {
+  const [draft, setDraft] = useState<RgbDraft>(() => rgbDraftFromHex(color));
+  const focusCountRef = useRef(0);
+  useEffect(() => {
+    if (focusCountRef.current === 0) setDraft(rgbDraftFromHex(color));
+  }, [color]);
+  const change = (channel: keyof RgbDraft, value: string): void => {
+    const next = { ...draft, [channel]: value };
+    setDraft(next);
+    const normalized = rgbDraftToHex(next);
+    if (normalized !== null) onPreview(normalized);
+  };
+  const blur = (event: FocusEvent<HTMLInputElement>): void => {
+    focusCountRef.current = Math.max(0, focusCountRef.current - 1);
+    if (rgbDraftToHex(draft) === null) setDraft(rgbDraftFromHex(color));
+    else if (!(event.relatedTarget instanceof HTMLInputElement)) setDraft(rgbDraftFromHex(color));
+  };
+  return (
+    <fieldset className="mt-2 grid grid-cols-[36px_repeat(3,1fr)] items-end gap-2">
+      <legend className="sr-only">RGB color channels</legend>
+      <span className="self-center text-[10px] font-semibold text-folio-muted">RGB</span>
+      {(["red", "green", "blue"] as const).map((channel) => (
+        <label key={channel} className="min-w-0">
+          <span className="mb-1 block text-center text-[9px] uppercase text-folio-muted">
+            {channel.charAt(0)}
+          </span>
+          <input
+            type="number"
+            min={0}
+            max={255}
+            step={1}
+            inputMode="numeric"
+            value={draft[channel]}
+            className="h-8 w-full rounded-lg border border-folio-border bg-folio-surface px-1 text-center text-[11px] tabular-nums text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+            aria-label={`${channel} channel`}
+            onFocus={() => {
+              focusCountRef.current += 1;
+            }}
+            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+              change(channel, event.currentTarget.value)
+            }
+            onBlur={blur}
+          />
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function ColorCollection({
+  label,
+  emptyLabel,
+  colors,
+  currentColor,
+  onSelect,
+}: {
+  readonly label: string;
+  readonly emptyLabel?: string;
+  readonly colors: readonly string[];
+  readonly currentColor: string;
+  readonly onSelect: (color: string) => void;
+}) {
+  return (
+    <div className="mt-3">
+      <p className="mb-1.5 text-[10px] font-semibold text-folio-muted">{label}</p>
+      {colors.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-folio-border px-2 py-1.5 text-[9px] text-folio-muted">
+          {emptyLabel}
+        </p>
+      ) : (
+        <div className="grid grid-cols-10 gap-1.5" aria-label={label}>
+          {colors.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={cn(
+                "size-[22px] rounded-full border border-black/15 shadow-sm transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+                color === currentColor && "ring-2 ring-folio-accent ring-offset-1",
+              )}
+              style={{ backgroundColor: color }}
+              aria-label={`${label === "Recent" ? "Use recent color" : "Use color"} ${color}`}
+              aria-pressed={color === currentColor}
+              onClick={() => onSelect(color)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function rgbDraftFromHex(color: string): RgbDraft {
+  const rgb = hexToRgb(color);
+  return { red: String(rgb.red), green: String(rgb.green), blue: String(rgb.blue) };
+}
+
+function addFloatingOwner(element: HTMLElement, scope: string): void {
+  const owners = new Set(
+    element.getAttribute("data-floating-widget-owner")?.split(/\s+/u).filter(Boolean) ?? [],
+  );
+  owners.add(scope);
+  element.setAttribute("data-floating-widget-owner", [...owners].join(" "));
+}
+
+function removeFloatingOwner(element: HTMLElement, scope: string): void {
+  const owners = (element.getAttribute("data-floating-widget-owner")?.split(/\s+/u) ?? []).filter(
+    (owner) => owner.length > 0 && owner !== scope,
+  );
+  if (owners.length === 0) element.removeAttribute("data-floating-widget-owner");
+  else element.setAttribute("data-floating-widget-owner", owners.join(" "));
+}

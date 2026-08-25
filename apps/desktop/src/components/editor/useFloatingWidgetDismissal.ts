@@ -5,6 +5,10 @@ export function useFloatingWidgetDismissal(
   open: boolean,
   onDismiss: () => void,
   boundaryRef: RefObject<HTMLElement | null>,
+  options: Readonly<{
+    onEscape?: () => void;
+    canvasPageDismissal?: "microtask" | "synchronous";
+  }> = {},
 ): string {
   const scopeId = useId();
 
@@ -28,15 +32,17 @@ export function useFloatingWidgetDismissal(
         return;
       }
       if (canvasRegion === "page") {
-        queueMicrotask(onDismiss);
+        if (options.canvasPageDismissal === "synchronous") onDismiss();
+        else queueMicrotask(onDismiss);
         return;
       }
       onDismiss();
     };
     const handleEscape = (event: KeyboardEvent): void => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.target instanceof Element && isOwnedFloatingSurface(event.target, scopeId)) return;
       event.preventDefault();
-      onDismiss();
+      (options.onEscape ?? onDismiss)();
     };
     document.addEventListener("pointerdown", handleOutsidePointerDown, true);
     window.addEventListener("keydown", handleEscape);
@@ -44,7 +50,7 @@ export function useFloatingWidgetDismissal(
       document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [boundaryRef, onDismiss, open, scopeId]);
+  }, [boundaryRef, onDismiss, open, options.canvasPageDismissal, options.onEscape, scopeId]);
 
   return scopeId;
 }
@@ -52,7 +58,8 @@ export function useFloatingWidgetDismissal(
 function isOwnedFloatingSurface(target: Element, scopeId: string): boolean {
   let candidate: Element | null = target;
   while (candidate !== null) {
-    if (candidate.getAttribute("data-floating-widget-owner") === scopeId) return true;
+    const owners = candidate.getAttribute("data-floating-widget-owner")?.split(/\s+/u) ?? [];
+    if (owners.includes(scopeId)) return true;
     candidate = candidate.parentElement;
   }
   return false;

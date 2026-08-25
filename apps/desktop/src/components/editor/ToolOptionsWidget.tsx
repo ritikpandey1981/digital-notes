@@ -1,4 +1,3 @@
-import type { EditorColorSystemSnapshot } from "@folio/editor";
 import {
   cn,
   DropdownMenu,
@@ -8,12 +7,11 @@ import {
 } from "@folio/ui";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Check, ChevronDown } from "lucide-react";
-import type { ChangeEvent, FocusEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useLayoutEffect, useRef } from "react";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { StrokePreviewCanvas } from "./StrokePreviewCanvas";
 import type { ToolOptionPropertyDescriptor, ToolOptionsDescriptor } from "./tool-options-registry";
-import { useFrameCoalescedCallback } from "./useFrameCoalescedCallback";
 import {
   INTERACTION_MOTION,
   motionSeconds,
@@ -23,9 +21,8 @@ import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
 
 interface ToolOptionsWidgetProps {
   readonly descriptor: ToolOptionsDescriptor | null;
-  readonly colors: EditorColorSystemSnapshot;
   readonly onSelectPreset: (presetId: string) => void;
-  readonly onChangeColor: (color: string) => void;
+  readonly onOpenColorPicker: (anchor: HTMLElement, ownerScope: string) => void;
   readonly onChangeWidth: (width: number) => void;
   readonly onChangeOpacity: (opacity: number) => void;
   readonly onChangeSmoothing: (amount: number) => void;
@@ -34,8 +31,8 @@ interface ToolOptionsWidgetProps {
 }
 
 interface PropertyControlContext {
-  readonly colors: EditorColorSystemSnapshot;
   readonly onChange: (value: string | number) => void;
+  readonly onOpenColorPicker: (anchor: HTMLElement) => void;
 }
 
 type PropertyControlRenderer = (
@@ -45,11 +42,7 @@ type PropertyControlRenderer = (
 
 const propertyControlRenderers: Readonly<Record<string, PropertyControlRenderer>> = Object.freeze({
   strokeColor: (descriptor, context) => (
-    <ColorOptions
-      descriptor={descriptor}
-      colors={context.colors}
-      onChange={(color) => context.onChange(color)}
-    />
+    <CompactColorTrigger descriptor={descriptor} onOpen={context.onOpenColorPicker} />
   ),
   strokeWidth: (descriptor, context) => (
     <ContinuousSlider descriptor={descriptor} onChange={(value) => context.onChange(value)} />
@@ -67,9 +60,8 @@ const propertyControlRenderers: Readonly<Record<string, PropertyControlRenderer>
 
 export function ToolOptionsWidget({
   descriptor,
-  colors,
   onSelectPreset,
-  onChangeColor,
+  onOpenColorPicker,
   onChangeWidth,
   onChangeOpacity,
   onChangeSmoothing,
@@ -89,7 +81,7 @@ export function ToolOptionsWidget({
   });
 
   const propertyActions: Readonly<Record<string, (value: string | number) => void>> = {
-    strokeColor: (value) => onChangeColor(requireString(value, "Stroke color")),
+    strokeColor: () => undefined,
     strokeWidth: (value) => onChangeWidth(requireNumber(value, "Stroke width")),
     opacity: (value) => onChangeOpacity(requireNumber(value, "Opacity")),
     smoothing: (value) => onChangeSmoothing(requireNumber(value, "Smoothing")),
@@ -210,7 +202,12 @@ export function ToolOptionsWidget({
                 const action = propertyActions[property.key];
                 if (render === undefined || action === undefined) return null;
                 return (
-                  <div key={property.key}>{render(property, { colors, onChange: action })}</div>
+                  <div key={property.key}>
+                    {render(property, {
+                      onChange: action,
+                      onOpenColorPicker: (anchor) => onOpenColorPicker(anchor, floatingWidgetScope),
+                    })}
+                  </div>
                 );
               })}
             </motion.div>
@@ -221,112 +218,37 @@ export function ToolOptionsWidget({
   );
 }
 
-function ColorOptions({
+function CompactColorTrigger({
   descriptor,
-  colors,
-  onChange,
+  onOpen,
 }: {
   readonly descriptor: ToolOptionPropertyDescriptor;
-  readonly colors: EditorColorSystemSnapshot;
-  readonly onChange: (color: string) => void;
+  readonly onOpen: (anchor: HTMLElement) => void;
 }) {
-  const reducedMotion = useReducedMotion() === true;
   const activeColor = requireString(descriptor.value, "Stroke color");
-  const [queueColorChange] = useFrameCoalescedCallback(onChange);
-  const commitHex = (event: FocusEvent<HTMLInputElement>): void => {
-    try {
-      onChange(event.currentTarget.value);
-    } catch {
-      event.currentTarget.value = activeColor;
-    }
-  };
-
   return (
     <div
       className="rounded-xl px-2 py-1.5 transition-colors duration-100 ease-out hover:bg-folio-hover"
       data-tool-option="strokeColor"
     >
-      <div className="mb-2 flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted">
-          Current color
+          Color
         </span>
-        <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          className="flex h-8 min-w-28 items-center gap-2 rounded-lg border border-folio-border bg-folio-surface px-2 transition-[background-color,box-shadow] hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+          aria-label={`Open ${activeColor} color picker`}
+          data-testid="tool-options-color-trigger"
+          onClick={(event) => onOpen(event.currentTarget)}
+        >
           <span
-            className="size-5 rounded-full border border-black/15 shadow-sm"
+            className="size-5 shrink-0 rounded-full border border-black/15 shadow-sm"
             style={{ backgroundColor: activeColor }}
             aria-hidden="true"
           />
           <span className="font-mono text-[10px] uppercase text-folio-ink">{activeColor}</span>
-        </div>
-      </div>
-      <div className="mb-1 flex min-h-5 items-center justify-between">
-        <span className="text-[9px] font-medium text-folio-muted">Recent</span>
-        <div className="flex items-center gap-1" aria-label="Recent colors">
-          {colors.recentColors.length === 0 ? (
-            <span className="text-[9px] text-folio-muted">No recent colors</span>
-          ) : (
-            <AnimatePresence initial={false}>
-              {colors.recentColors.slice(0, 5).map((color) => (
-                <motion.button
-                  key={color}
-                  layout="position"
-                  type="button"
-                  className="size-4 rounded-full border border-black/15 transition-[transform,box-shadow] duration-100 ease-out hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
-                  style={{ backgroundColor: color }}
-                  aria-label={`Use recent color ${color}`}
-                  aria-pressed={color === activeColor}
-                  initial={{ opacity: 0, scale: 0.86 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{
-                    duration: motionSeconds(INTERACTION_MOTION.hoverMilliseconds, reducedMotion),
-                    ease: PROFESSIONAL_EASE,
-                  }}
-                  onClick={() => onChange(color)}
-                />
-              ))}
-            </AnimatePresence>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center justify-between gap-1" aria-label="Color palette">
-        {colors.presetColors.map((color) => (
-          <button
-            key={color}
-            type="button"
-            className={cn(
-              "size-[18px] rounded-full border border-black/15 shadow-sm transition-[transform,box-shadow] duration-100 ease-out hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95",
-              color === activeColor && "ring-2 ring-folio-accent ring-offset-1",
-            )}
-            style={{ backgroundColor: color }}
-            aria-label={`Use color ${color}`}
-            aria-pressed={color === activeColor}
-            onClick={() => onChange(color)}
-          />
-        ))}
-      </div>
-      <div className="mt-2 flex items-center gap-1.5">
-        <input
-          type="color"
-          className="size-7 shrink-0 cursor-pointer rounded-lg border border-folio-border bg-transparent p-0.5 transition-[transform,box-shadow] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
-          value={activeColor}
-          aria-label="Custom stroke color"
-          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-            queueColorChange(event.currentTarget.value)
-          }
-        />
-        <input
-          key={activeColor}
-          type="text"
-          className="h-7 min-w-0 flex-1 rounded-lg border border-folio-border bg-folio-surface px-2 font-mono text-[10px] uppercase text-folio-ink transition-[border-color,box-shadow] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-          defaultValue={activeColor}
-          aria-label="Stroke color hex value"
-          maxLength={7}
-          onBlur={commitHex}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-        />
+        </button>
       </div>
     </div>
   );

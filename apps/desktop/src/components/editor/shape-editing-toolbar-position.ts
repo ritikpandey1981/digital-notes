@@ -18,6 +18,8 @@ interface Rect {
   readonly height: number;
 }
 
+export type ShapeEditingToolbarOccupiedZone = Rect;
+
 interface PlacementCandidate {
   readonly left: number;
   readonly top: number;
@@ -39,6 +41,7 @@ const LINE_HANDLE_HIT_RADIUS = 10;
 export function resolveShapeEditingToolbarPlacement(
   snapshot: ShapeEditingSnapshot,
   measuredSize: ShapeEditingToolbarSize,
+  occupiedZones: readonly ShapeEditingToolbarOccupiedZone[] = [],
 ): ShapeEditingToolbarPlacement {
   const viewport = snapshot.viewportSize;
   const width = Math.min(
@@ -50,7 +53,7 @@ export function resolveShapeEditingToolbarPlacement(
     Math.max(0, viewport.height - VIEWPORT_MARGIN * 2),
   );
   const interactionBounds = selectionInteractionBounds(snapshot);
-  const controlRects = selectionControlRects(snapshot);
+  const controlRects = [...selectionControlRects(snapshot), ...occupiedZones];
   const centerX =
     snapshot.selectionFrame?.centerX ??
     snapshot.viewportBounds.x + snapshot.viewportBounds.width / 2;

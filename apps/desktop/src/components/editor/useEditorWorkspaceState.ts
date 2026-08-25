@@ -3,11 +3,13 @@ import {
   createEditorColorSystem,
   type ActiveToolStatePatch,
   type CanvasDrawingStyle,
+  type ColorTargetAdapter,
   type DrawingToolKind,
   type ShapeStylePatch,
 } from "@folio/editor";
 import * as React from "react";
 import { constrainOpacityForTool } from "./drawing-style-policy";
+import { createHistoryFreeColorTarget } from "./color-target-adapters";
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import {
   createFloatingToolWidgetRegistry,
@@ -135,6 +137,53 @@ export function useEditorWorkspaceState() {
     },
     [colorSystem, refresh],
   );
+  const brushColorTargets = React.useMemo(
+    () =>
+      new Map<EditorTool, ColorTargetAdapter>(
+        (
+          [
+            ["Pencil", "pencil"],
+            ["Pen", "pen"],
+            ["Marker", "marker"],
+            ["Highlighter", "highlighter"],
+          ] as const
+        ).map(([tool, kind]) => [
+          tool,
+          createHistoryFreeColorTarget({
+            id: `creation-${kind}`,
+            label: `${tool} Color`,
+            getColor: () => brushStore.resolvedBrush(kind).color,
+            setColor: (color) => {
+              brushStore.updateActiveToolState(kind, { color });
+              refresh();
+            },
+          }),
+        ]),
+      ),
+    [brushStore, refresh],
+  );
+  const shapeColorTarget = React.useMemo(
+    () =>
+      createHistoryFreeColorTarget({
+        id: `creation-shape-${shapeState.activeShape}`,
+        label: `${shapeLabel(shapeState.activeShape)} Color`,
+        getColor: () => shapeToolState.snapshot().style.color,
+        setColor: (color) => {
+          shapeToolState.updateStyle({ strokeColor: color });
+          refresh();
+        },
+      }),
+    [refresh, shapeState.activeShape, shapeToolState],
+  );
+  const colorTarget =
+    activeTool === "Shapes" ? shapeColorTarget : (brushColorTargets.get(activeTool) ?? null);
+  const selectColorPalette = React.useCallback(
+    (paletteId: string): void => {
+      colorSystem.setActivePalette(paletteId);
+      refresh();
+    },
+    [colorSystem, refresh],
+  );
 
   return {
     activeTool,
@@ -146,6 +195,8 @@ export function useEditorWorkspaceState() {
     drawingStyle,
     toolOptions,
     colors: colorSystem.snapshot(),
+    colorTarget,
+    selectColorPalette,
     setDrawingColor,
     selectDrawingPreset,
     setDrawingWidth,
@@ -155,6 +206,10 @@ export function useEditorWorkspaceState() {
     rememberColorUsage,
     dismissFloatingWidget,
   };
+}
+
+function shapeLabel(shape: ShapeToolKind): string {
+  return shape.charAt(0).toUpperCase() + shape.slice(1);
 }
 
 function drawingKindForTool(tool: EditorTool): DrawingToolKind {

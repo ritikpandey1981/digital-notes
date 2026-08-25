@@ -60,6 +60,10 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
         );
       }
     }, canvasBounds);
+    await window.mouse.move(
+      canvasBounds.x + canvasBounds.width / 2,
+      canvasBounds.y + canvasBounds.height / 2,
+    );
     await nextPaint(window);
 
     expect(await renderCounts(renderTargets)).toEqual(rendersBeforeMovement);
@@ -83,17 +87,20 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
     await nextPaint(window);
     expect(await renderCounts([workspace, host, surface, dock])).toEqual(renderCountsBeforeDrawing);
     await window.mouse.up();
+    await expect(surface).toHaveAttribute("data-document-object-count", "1");
 
     const families = ["Pencil", "Pen", "Marker", "Highlighter"] as const;
     let strokeCount = 1;
     for (const [familyIndex, family] of families.entries()) {
       if (family !== "Pencil") {
         await window.getByRole("button", { name: family, exact: true }).click();
+        await nextPaint(window);
       }
       for (let index = 0; index < 5; index += 1) {
         const y = 115 + familyIndex * 145 + index * 20;
         await drawPath(window, pageToScreen, y, index);
         strokeCount += 1;
+        await expect(surface).toHaveAttribute("data-document-object-count", String(strokeCount));
       }
     }
     await expect(surface).toHaveAttribute("data-document-object-count", String(strokeCount));
@@ -109,24 +116,9 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
     const historicalBrushes = await surface.getAttribute("data-document-stroke-brushes");
     const historyDepth = await surface.getAttribute("data-history-undo-depth");
     await window.getByRole("button", { name: "Pen", exact: true }).click();
-    const colorInput = palette.locator('input[type="color"]');
-    await expect(colorInput).toBeVisible();
-    await colorInput.evaluate((element) => {
-      const input = element as HTMLInputElement;
-      const setNativeValue = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      if (setNativeValue === undefined)
-        throw new Error("Native color value setter is unavailable.");
-      for (let index = 0; index < 120; index += 1) {
-        setNativeValue.call(
-          input,
-          index === 119 ? "#2f6fed" : `#${(0x100000 + index).toString(16)}`,
-        );
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-    });
+    await palette.getByTestId("tool-options-color-trigger").click();
+    const hexInput = window.getByRole("textbox", { name: "Hex color" });
+    await hexInput.fill("#2f6fed");
     await nextPaint(window);
     await expect(surface).toHaveAttribute("data-drawing-color", "#2f6fed");
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "9");
@@ -190,6 +182,7 @@ async function drawPath(
   await window.mouse.move(middle.x, middle.y, { steps: 4 });
   await window.mouse.move(end.x, end.y, { steps: 4 });
   await window.mouse.up();
+  await nextPaint(window);
 }
 
 async function dispatchCancelledPenStroke(

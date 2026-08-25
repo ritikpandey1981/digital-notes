@@ -1,7 +1,6 @@
 import type { ShapeEditingSnapshot, ShapeStylePatch } from "@folio/editor";
 import { CopyPlus, MoreHorizontal, Trash2 } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -18,7 +17,6 @@ import {
   type ShapeEditingToolbarSize,
 } from "./shape-editing-toolbar-position";
 import type { ToolOptionPropertyDescriptor } from "./tool-options-registry";
-import { useFrameCoalescedCallback } from "./useFrameCoalescedCallback";
 
 interface ShapeEditingToolbarProps {
   readonly snapshot: ShapeEditingSnapshot | null;
@@ -26,8 +24,10 @@ interface ShapeEditingToolbarProps {
   readonly onPreviewStyle: (patch: ShapeStylePatch) => void;
   readonly onCommitStyleEdit: () => void;
   readonly onCancelStyleEdit: () => void;
+  readonly onOpenColorPicker: (anchor: HTMLElement) => void;
   readonly onDuplicate: () => void;
   readonly onDelete: () => void;
+  readonly rightOccupiedWidth?: number;
 }
 
 const TOOLBAR_MARGIN = 12;
@@ -38,41 +38,18 @@ export function ShapeEditingToolbar({
   onPreviewStyle,
   onCommitStyleEdit,
   onCancelStyleEdit,
+  onOpenColorPicker,
   onDuplicate,
   onDelete,
+  rightOccupiedWidth = 0,
 }: ShapeEditingToolbarProps) {
   const toolbarRef = useRef<HTMLElement | null>(null);
-  const colorInputRef = useRef<HTMLInputElement | null>(null);
-  const colorEditActiveRef = useRef(false);
-  const cancelStyleEditRef = useRef(onCancelStyleEdit);
   const selectedObjectIdRef = useRef<string | null>(null);
   const [toolbarSize, setToolbarSize] = useState<ShapeEditingToolbarSize>({
     width: 0,
     height: 0,
   });
   const [expandedSection, setExpandedSection] = useState<ExpandedSection | null>(null);
-  const [queueStrokeColorChange, flushStrokeColorChange, cancelStrokeColorChange] =
-    useFrameCoalescedCallback((strokeColor: string) => onPreviewStyle({ strokeColor }));
-  useLayoutEffect(() => {
-    cancelStyleEditRef.current = onCancelStyleEdit;
-  }, [onCancelStyleEdit]);
-  const beginColorEdit = useCallback((): void => {
-    if (colorEditActiveRef.current) return;
-    colorEditActiveRef.current = true;
-    onBeginStyleEdit();
-  }, [onBeginStyleEdit]);
-  const commitColorEdit = useCallback((): void => {
-    if (!colorEditActiveRef.current) return;
-    flushStrokeColorChange();
-    colorEditActiveRef.current = false;
-    onCommitStyleEdit();
-  }, [flushStrokeColorChange, onCommitStyleEdit]);
-  const cancelColorEdit = useCallback((): void => {
-    if (!colorEditActiveRef.current) return;
-    cancelStrokeColorChange();
-    colorEditActiveRef.current = false;
-    onCancelStyleEdit();
-  }, [cancelStrokeColorChange, onCancelStyleEdit]);
   const visible = snapshot !== null;
   const activeExpandedSection =
     expandedSection !== null && snapshot?.objectId === expandedSection.objectId
@@ -87,7 +64,22 @@ export function ShapeEditingToolbar({
     [snapshot?.opacity],
   );
   const placement =
-    snapshot === null ? null : resolveShapeEditingToolbarPlacement(snapshot, toolbarSize);
+    snapshot === null
+      ? null
+      : resolveShapeEditingToolbarPlacement(
+          snapshot,
+          toolbarSize,
+          rightOccupiedWidth <= 0
+            ? []
+            : [
+                {
+                  x: snapshot.viewportSize.width - rightOccupiedWidth,
+                  y: 0,
+                  width: rightOccupiedWidth,
+                  height: snapshot.viewportSize.height,
+                },
+              ],
+        );
   const maximumToolbarWidth =
     snapshot === null
       ? `calc(100% - ${TOOLBAR_MARGIN * 2}px)`
@@ -129,31 +121,10 @@ export function ShapeEditingToolbar({
   }, []);
 
   useEffect(() => {
-    const input = colorInputRef.current;
-    if (input === null) return;
-    input.addEventListener("change", commitColorEdit);
-    return () => input.removeEventListener("change", commitColorEdit);
-  }, [commitColorEdit]);
-
-  useEffect(() => {
-    window.addEventListener("blur", cancelColorEdit);
-    return () => window.removeEventListener("blur", cancelColorEdit);
-  }, [cancelColorEdit]);
-
-  useEffect(() => {
     const objectId = snapshot?.objectId ?? null;
     if (selectedObjectIdRef.current !== objectId) onCancelStyleEdit();
     selectedObjectIdRef.current = objectId;
   }, [onCancelStyleEdit, snapshot?.objectId]);
-
-  useEffect(
-    () => () => {
-      cancelStrokeColorChange();
-      if (colorEditActiveRef.current) cancelStyleEditRef.current();
-      colorEditActiveRef.current = false;
-    },
-    [cancelStrokeColorChange],
-  );
 
   useEffect(() => {
     if (activeExpandedSection === null) return;
@@ -191,41 +162,27 @@ export function ShapeEditingToolbar({
       data-toolbar-sizing="content"
       data-toolbar-placement={placement?.side ?? "hidden"}
       data-toolbar-collision-policy="selection-controls"
+      data-toolbar-right-occupied-width={rightOccupiedWidth}
       data-toolbar-expanded-section={activeExpandedSection ?? ""}
       data-selected-shape-type={snapshot?.objectType ?? ""}
       data-floating-surface="folio"
     >
-      <label className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-folio-hover focus-within:ring-2 focus-within:ring-folio-accent">
-        <span className="sr-only">Shape stroke color</span>
+      <button
+        type="button"
+        className="group relative flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-folio-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+        aria-label="Shape stroke color"
+        data-testid="selected-vector-color-trigger"
+        tabIndex={visible ? 0 : -1}
+        disabled={!visible}
+        onClick={(event) => onOpenColorPicker(event.currentTarget)}
+      >
         <span
-          className="pointer-events-none size-5 rounded-full border border-black/15 shadow-sm"
+          className="size-5 rounded-full border border-black/15 shadow-sm"
           style={{ backgroundColor: snapshot?.strokeColor ?? "#111111" }}
           aria-hidden="true"
         />
-        <input
-          ref={colorInputRef}
-          className="absolute size-px opacity-0"
-          type="color"
-          aria-label="Shape stroke color"
-          value={snapshot?.strokeColor ?? "#111111"}
-          tabIndex={visible ? 0 : -1}
-          disabled={!visible}
-          onFocus={beginColorEdit}
-          onInput={(event) => {
-            beginColorEdit();
-            queueStrokeColorChange(event.currentTarget.value);
-          }}
-          onChange={() => undefined}
-          onBlur={commitColorEdit}
-          onPointerCancel={cancelColorEdit}
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            cancelColorEdit();
-            event.currentTarget.blur();
-          }}
-        />
-      </label>
+        <ToolTooltip label="Shape stroke color" side="bottom" />
+      </button>
       <span className="h-6 w-px shrink-0 bg-folio-border" aria-hidden="true" />
       <ExpandableToolbarSection
         id="strokeWidth"

@@ -150,18 +150,16 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       await selectedColor.evaluate((button) => getComputedStyle(button).transitionProperty),
     ).toContain("box-shadow");
     await expectRecentlyUsedColor(window, "#2563eb", false);
-    const customColor = window.getByLabel("Custom stroke color");
-    await customColor.evaluate((element) => {
-      const input = element as HTMLInputElement;
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      if (setValue === undefined) throw new Error("Native color value setter is unavailable.");
-      for (const color of ["#ef4444", "#22c55e", "#0ea5e9", "#8b5cf6"]) {
-        setValue.call(input, color);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-    });
+    await expect(palette).toHaveCount(0);
+    await penButton.click();
+    await expect(palette).toBeVisible();
+    await palette.getByTestId("tool-options-color-trigger").click();
+    const customColor = window.getByRole("textbox", { name: "Hex color" });
+    for (const color of ["#ef4444", "#22c55e", "#0ea5e9", "#8b5cf6"]) {
+      await customColor.fill(color);
+    }
     await expect(surface).toHaveAttribute("data-drawing-color", "#8b5cf6");
-    await expect(window.getByText("#8b5cf6", { exact: true })).toBeVisible();
+    await expect(palette.getByTestId("tool-options-color-trigger")).toContainText("#8b5cf6");
     await chooseColor(window, "#2563eb");
     await expect(surface).toHaveAttribute("data-drawing-color", "#2563eb");
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "5.8");
@@ -461,7 +459,15 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
 });
 
 async function chooseColor(window: Page, color: string): Promise<void> {
-  await window.getByRole("button", { name: `Use color ${color}` }).click();
+  const picker = window.getByTestId("full-color-picker");
+  if (await picker.isVisible()) {
+    await picker.getByRole("button", { name: `Use color ${color}` }).click();
+    return;
+  }
+  await window
+    .getByTestId("quick-color-rail")
+    .getByRole("button", { name: `Use color ${color}` })
+    .click();
 }
 
 async function expectRecentlyUsedColor(
@@ -469,6 +475,12 @@ async function expectRecentlyUsedColor(
   color: string,
   expected: boolean,
 ): Promise<void> {
+  if (expected && !(await window.getByTestId("full-color-picker").isVisible())) {
+    await window
+      .getByTestId("context-tool-palette")
+      .getByTestId("tool-options-color-trigger")
+      .click();
+  }
   const recentColor = window.getByRole("button", { name: `Use recent color ${color}` });
   if (expected) await expect(recentColor).toBeVisible();
   else await expect(recentColor).toHaveCount(0);

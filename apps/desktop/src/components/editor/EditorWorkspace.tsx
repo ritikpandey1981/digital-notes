@@ -1,5 +1,6 @@
 import type {
   CanvasDrawingStyle,
+  ColorTargetAdapter,
   EditorColorSystemSnapshot,
   ObjectLifecycleActions,
   ShapeEditingActions,
@@ -8,7 +9,7 @@ import type {
   EditorViewportSnapshot,
   ViewportActions,
 } from "@folio/editor";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
@@ -16,6 +17,11 @@ import { ShapesWidget } from "./ShapesWidget";
 import { ShapeEditingToolbar } from "./ShapeEditingToolbar";
 import { ToolDock } from "./ToolDock";
 import { ToolOptionsWidget } from "./ToolOptionsWidget";
+import { FullColorPicker } from "./FullColorPicker";
+import { QuickColorRail } from "./QuickColorRail";
+import { createContinuousColorTarget } from "./color-target-adapters";
+import { quickColorRailSupportsTool } from "./color-picker-model";
+import { useColorPickerSession } from "./useColorPickerSession";
 import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
@@ -29,7 +35,8 @@ interface EditorWorkspaceProps {
   drawingStyle: CanvasDrawingStyle;
   toolOptions: ToolOptionsDescriptor | null;
   colors: EditorColorSystemSnapshot;
-  onChangeDrawingColor: (color: string) => void;
+  colorTarget: ColorTargetAdapter | null;
+  onSelectColorPalette: (paletteId: string) => void;
   onSelectDrawingPreset: (presetId: string) => void;
   onChangeDrawingWidth: (width: number) => void;
   onChangeDrawingOpacity: (opacity: number) => void;
@@ -54,7 +61,8 @@ export function EditorWorkspace({
   drawingStyle,
   toolOptions,
   colors,
-  onChangeDrawingColor,
+  colorTarget,
+  onSelectColorPalette,
   onSelectDrawingPreset,
   onChangeDrawingWidth,
   onChangeDrawingOpacity,
@@ -81,6 +89,7 @@ export function EditorWorkspace({
   const [shapeEditingSnapshot, setShapeEditingSnapshot] = useState<ShapeEditingSnapshot | null>(
     null,
   );
+  const colorPicker = useColorPickerSession();
   const handleObjectLifecycleActionsReady = useCallback(
     (actions: ObjectLifecycleActions | null) => {
       objectLifecycleActionsRef.current = actions;
@@ -99,18 +108,65 @@ export function EditorWorkspace({
   const duplicateSelection = useCallback(() => {
     objectLifecycleActionsRef.current?.duplicateSelection();
   }, []);
-  const beginContinuousShapeStyleEdit = useCallback(() => {
-    shapeEditingActionsRef.current?.beginContinuousStyleEdit();
+  const beginContinuousShapeStyleEdit = useCallback((): boolean => {
+    return shapeEditingActionsRef.current?.beginContinuousStyleEdit() ?? false;
   }, []);
-  const previewContinuousShapeStyle = useCallback((patch: ShapeStylePatch) => {
-    shapeEditingActionsRef.current?.updateContinuousStylePreview(patch);
+  const previewContinuousShapeStyle = useCallback((patch: ShapeStylePatch): boolean => {
+    return shapeEditingActionsRef.current?.updateContinuousStylePreview(patch) ?? false;
   }, []);
-  const commitContinuousShapeStyleEdit = useCallback(() => {
-    shapeEditingActionsRef.current?.commitContinuousStyleEdit();
+  const commitContinuousShapeStyleEdit = useCallback((): boolean => {
+    return shapeEditingActionsRef.current?.commitContinuousStyleEdit() ?? false;
   }, []);
-  const cancelContinuousShapeStyleEdit = useCallback(() => {
-    shapeEditingActionsRef.current?.cancelContinuousStyleEdit();
+  const cancelContinuousShapeStyleEdit = useCallback((): boolean => {
+    return shapeEditingActionsRef.current?.cancelContinuousStyleEdit() ?? false;
   }, []);
+  const selectedVectorTargetId =
+    shapeEditingSnapshot === null ? null : `selected-vector-${shapeEditingSnapshot.objectId}`;
+  useEffect(() => {
+    const activeSession = colorPicker.snapshot;
+    if (activeSession === null) return;
+    const validTargetIds = new Set(
+      [colorTarget?.id, selectedVectorTargetId].filter((id): id is string => id !== undefined),
+    );
+    if (!validTargetIds.has(activeSession.target.id)) colorPicker.cancel();
+  }, [colorPicker, colorPicker.snapshot, colorTarget?.id, selectedVectorTargetId]);
+  const openCreationPicker = useCallback(
+    (anchor: HTMLElement, source: "quick-rail" | "tool-settings", ownerScope?: string): void => {
+      if (colorTarget === null) return;
+      colorPicker.open({ target: colorTarget, source, anchor, ownerScope });
+    },
+    [colorPicker, colorTarget],
+  );
+  const openSelectedVectorPicker = useCallback(
+    (anchor: HTMLElement): void => {
+      if (shapeEditingSnapshot === null) return;
+      const objectType = shapeEditingSnapshot.objectType;
+      const selectedVectorColorTarget = createContinuousColorTarget({
+        id: `selected-vector-${shapeEditingSnapshot.objectId}`,
+        label: `${objectType.charAt(0).toUpperCase() + objectType.slice(1)} Color`,
+        getColor: () => shapeEditingSnapshot.strokeColor,
+        beginContinuousEdit: beginContinuousShapeStyleEdit,
+        previewContinuousEdit: (strokeColor) => previewContinuousShapeStyle({ strokeColor }),
+        commitContinuousEdit: commitContinuousShapeStyleEdit,
+        cancelContinuousEdit: cancelContinuousShapeStyleEdit,
+      });
+      colorPicker.open({
+        target: selectedVectorColorTarget,
+        source: "selected-vector",
+        anchor,
+        ownerScope: undefined,
+      });
+    },
+    [
+      beginContinuousShapeStyleEdit,
+      cancelContinuousShapeStyleEdit,
+      colorPicker,
+      commitContinuousShapeStyleEdit,
+      previewContinuousShapeStyle,
+      shapeEditingSnapshot,
+    ],
+  );
+  const quickColorRailVisible = quickColorRailSupportsTool(activeTool) && colorTarget !== null;
   return (
     <section
       ref={workspaceRef}
@@ -146,20 +202,44 @@ export function EditorWorkspace({
         onPreviewStyle={previewContinuousShapeStyle}
         onCommitStyleEdit={commitContinuousShapeStyleEdit}
         onCancelStyleEdit={cancelContinuousShapeStyleEdit}
+        onOpenColorPicker={openSelectedVectorPicker}
         onDuplicate={duplicateSelection}
         onDelete={deleteSelection}
+        rightOccupiedWidth={quickColorRailVisible ? 76 : 0}
       />
       <ToolOptionsWidget
         descriptor={toolOptions}
-        colors={colors}
         onSelectPreset={onSelectDrawingPreset}
-        onChangeColor={onChangeDrawingColor}
+        onOpenColorPicker={(anchor, ownerScope) =>
+          openCreationPicker(anchor, "tool-settings", ownerScope)
+        }
         onChangeWidth={onChangeDrawingWidth}
         onChangeOpacity={onChangeDrawingOpacity}
         onChangeSmoothing={onChangeDrawingSmoothing}
         onDismiss={onDismissFloatingWidget}
         previewScale={viewportSnapshot.zoom}
       />
+      <QuickColorRail
+        activeTool={activeTool}
+        target={colorTarget}
+        palette={colors.activePalette}
+        onOpenPicker={(anchor) => openCreationPicker(anchor, "quick-rail")}
+        onApplyColor={(color) => {
+          if (colorTarget !== null) colorPicker.applyDirect(colorTarget, color);
+        }}
+      />
+      {colorPicker.snapshot === null ? null : (
+        <FullColorPicker
+          key={colorPicker.snapshot.target.id}
+          session={colorPicker.snapshot}
+          colors={colors}
+          onPreviewHex={colorPicker.previewHex}
+          onPreviewHsv={colorPicker.previewHsv}
+          onSelectPalette={onSelectColorPalette}
+          onCommit={colorPicker.commit}
+          onCancel={colorPicker.cancel}
+        />
+      )}
     </section>
   );
 }

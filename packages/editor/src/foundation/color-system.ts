@@ -45,6 +45,7 @@ export interface EditorColorSystemOptions {
 /** Lifecycle contract reserved for shared Phase 18B color controls. */
 export interface ColorTargetAdapter {
   readonly id: string;
+  readonly label: string;
   readonly getCurrentColor: () => string;
   readonly begin: () => boolean;
   readonly preview: (canonicalHex: string) => boolean;

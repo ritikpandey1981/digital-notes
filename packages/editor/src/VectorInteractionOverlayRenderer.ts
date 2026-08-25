@@ -9,6 +9,7 @@ import { RenderScheduler, type AnimationFrameAdapter, type Viewport } from "@fol
 import type { LineEndpoint, LineHandle } from "./LineEndpointInteraction";
 import { resolveOrientedSelectionFrame } from "./SelectionManipulationTarget";
 import { appendVectorGeometryPath } from "./VectorShapeRendering";
+import { SELECTION_HOVER_COLOR, SELECTION_OUTLINE_COLOR } from "./selection-presentation";
 
 export interface VectorInteractionOverlayRendererOptions {
   readonly context: CanvasRenderingContext2D;
@@ -152,7 +153,7 @@ export class VectorInteractionOverlayRenderer {
     const first = frame.corners[0];
     if (first === undefined) return;
     context.save();
-    context.strokeStyle = "#7183ce";
+    context.strokeStyle = SELECTION_OUTLINE_COLOR;
     context.lineWidth = 2 / zoom;
     context.beginPath();
     context.moveTo(first.x, first.y);
@@ -195,7 +196,7 @@ export class VectorInteractionOverlayRenderer {
     context.scale(transform.scale, transform.scale);
     context.translate(-pivotX, -pivotY);
     if (state !== "selected") {
-      context.strokeStyle = state === "hover" ? "rgba(113, 131, 206, 0.42)" : "#7183ce";
+      context.strokeStyle = state === "hover" ? SELECTION_HOVER_COLOR : SELECTION_OUTLINE_COLOR;
       context.lineCap = "round";
       context.lineJoin = "round";
       const emphasisPixels = state === "candidate" ? 2.25 : 1.5;
@@ -218,7 +219,8 @@ export class VectorInteractionOverlayRenderer {
     const context = this.#context;
     const padding = 2 / zoom;
     context.save();
-    context.strokeStyle = presentation === "candidate" ? "#7183ce" : "rgba(113, 131, 206, 0.42)";
+    context.strokeStyle =
+      presentation === "candidate" ? SELECTION_OUTLINE_COLOR : SELECTION_HOVER_COLOR;
     context.lineWidth = (presentation === "candidate" ? 2.25 : 1.5) / zoom;
     context.setLineDash(presentation === "candidate" ? [] : [4 / zoom, 3 / zoom]);
     context.strokeRect(
@@ -252,8 +254,8 @@ export class VectorInteractionOverlayRenderer {
     context.lineWidth = 1.25 / zoom / scale;
     for (const { handle, point } of points) {
       const active = handle === activeHandle;
-      context.fillStyle = active ? "#7183ce" : "#ffffff";
-      context.strokeStyle = "#7183ce";
+      context.fillStyle = active ? SELECTION_OUTLINE_COLOR : "#ffffff";
+      context.strokeStyle = SELECTION_OUTLINE_COLOR;
       context.beginPath();
       context.arc(point.x, point.y, active ? radius * 1.35 : radius, 0, Math.PI * 2);
       context.fill();

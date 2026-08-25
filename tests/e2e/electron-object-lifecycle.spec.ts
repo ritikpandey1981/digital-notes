@@ -50,6 +50,12 @@ test("duplicates and deletes one selected object through immutable History", asy
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(window.getByTestId("context-tool-palette")).toBeHidden();
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "pen");
+    await window.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
     await window.mouse.move(start.x, start.y);
     await window.mouse.down();
     await window.mouse.move(start.x + 80, start.y + 20, { steps: 8 });

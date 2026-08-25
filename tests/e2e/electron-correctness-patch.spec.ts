@@ -141,7 +141,8 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     expect(await stackingLevel(tooltipLayer)).toBeGreaterThan(await stackingLevel(shapeToolbar));
 
     const historyBeforeShapeStyle = await attributeNumber(surface, "data-history-undo-depth");
-    await shapeToolbar.getByLabel("Shape stroke color").fill("#dc2626");
+    await shapeToolbar.getByLabel("Shape stroke color").click();
+    await window.getByRole("textbox", { name: "Hex color" }).fill("#dc2626");
     await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
     await shapeToolbar.getByRole("group", { name: "Width options" }).getByRole("slider").fill("6");
     await shapeToolbar.getByRole("button", { name: "Shape stroke opacity" }).click();
@@ -211,7 +212,11 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await penButton.click();
     await penButton.click();
     await expect(palette).toBeVisible();
-    const recentColorButtons = palette.locator('[aria-label="Recent colors"]').getByRole("button");
+    await palette.getByTestId("tool-options-color-trigger").click();
+    const recentColorButtons = window
+      .getByTestId("full-color-picker")
+      .getByLabel("Recent")
+      .getByRole("button");
     await expect(recentColorButtons).toHaveCount(2);
     expect(
       await recentColorButtons.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel)),

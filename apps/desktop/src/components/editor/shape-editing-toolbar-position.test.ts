@@ -115,6 +115,15 @@ describe("shape editing toolbar placement", () => {
       expect(pointInside(placement, point, 12)).toBe(false);
     }
   });
+
+  it("treats the Quick Color Rail strip as an occupied collision zone", () => {
+    const snapshot = shapeSnapshot({ x: 780, y: 330, width: 120, height: 100 });
+    const placement = resolveShapeEditingToolbarPlacement(snapshot, TOOLBAR_SIZE, [
+      { x: 924, y: 0, width: 76, height: 800 },
+    ]);
+
+    expect(placement.left + placement.width).toBeLessThanOrEqual(912);
+  });
 });
 
 function shapeSnapshot(

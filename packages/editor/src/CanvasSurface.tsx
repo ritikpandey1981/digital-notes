@@ -51,6 +51,7 @@ import {
 } from "@folio/selection";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ContinuousVectorStyleEdit } from "./ContinuousVectorStyleEdit";
+import { SELECTION_HIGHLIGHT_COLOR, SELECTION_OUTLINE_COLOR } from "./selection-presentation";
 import { committedArtworkColor, committedVectorRecolor } from "./artwork-color-usage";
 import { EditorClipboard } from "./EditorClipboard";
 import {
@@ -637,8 +638,8 @@ export function CanvasSurface({
         canvas: selectionLayer.canvas,
         viewport,
         style: {
-          outlineColor: "#7183ce",
-          highlightColor: "rgba(113, 131, 206, 0.065)",
+          outlineColor: SELECTION_OUTLINE_COLOR,
+          highlightColor: SELECTION_HIGHLIGHT_COLOR,
           outlineWidth: 1.5,
         },
       });

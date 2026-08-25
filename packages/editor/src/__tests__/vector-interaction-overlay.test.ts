@@ -79,7 +79,7 @@ describe("VectorInteractionOverlayRenderer", () => {
 
     expect(test.context.lineTo).not.toHaveBeenCalled();
     expect(test.context.arc).toHaveBeenCalledTimes(3);
-    expect(test.context.strokeStyle).toBe("#7183ce");
+    expect(test.context.strokeStyle).toBe("#7669c2");
     expect(test.context.lineWidth).toBe(1.25);
     expect(test.canvas.dataset.vectorSelectionStyle).toBe("line-handles");
     expect(test.canvas.dataset.vectorSelectionPresentation).toBe("soft");
@@ -135,7 +135,7 @@ describe("VectorInteractionOverlayRenderer", () => {
 
     expect(test.context.rect).toHaveBeenCalledWith(20, 30, 100, 60);
     expect(test.context.stroke).toHaveBeenCalled();
-    expect(test.context.strokeStyle).toBe("rgba(113, 131, 206, 0.42)");
+    expect(test.context.strokeStyle).toBe("rgba(118, 105, 194, 0.42)");
     expect(test.canvas.dataset.vectorHoverState).toBe("hovered");
     expect(Object.isFrozen(rectangle)).toBe(true);
     test.renderer.destroy();
