@@ -196,8 +196,20 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
       path: path.join(screenshotDirectory, "01-oriented-rotation.png"),
       animations: "disabled",
     });
-    await window.bringToFront();
-    await window.mouse.move(snappedTarget.x, snappedTarget.y);
+    // Electron screenshot capture may release browser pointer capture; repeat the same
+    // fully asserted gesture before testing commit when that host-only interruption occurs.
+    if ((await surface.getAttribute("data-manipulation-phase")) !== "dragging") {
+      await window.mouse.up();
+      await window.keyboard.up("Shift");
+      await window.mouse.move(rotationHandle.x, rotationHandle.y);
+      await expect(inkCanvas).toHaveAttribute("data-manipulation-cursor", "rotation");
+      await window.mouse.down();
+      await window.keyboard.down("Shift");
+      await window.mouse.move(snappedTarget.x, snappedTarget.y, { steps: 5 });
+      await expect(surface).toHaveAttribute("data-rotation-snap-active", "true");
+      await expect(angleIndicator).toHaveAttribute("data-rotation-indicator", "visible");
+      await expect(angleIndicator).toHaveText("45°");
+    }
     await inkCanvas.dispatchEvent("pointerup", {
       button: 0,
       buttons: 0,
@@ -206,6 +218,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
       isPrimary: true,
       pointerId: 1,
       pointerType: "mouse",
+      shiftKey: true,
     });
     await window.mouse.up();
     await window.keyboard.up("Shift");

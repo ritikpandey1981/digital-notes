@@ -72,6 +72,7 @@ function ApplicationShellContent() {
           colors={editorWorkspace.colors}
           colorTarget={editorWorkspace.colorTarget}
           onSelectColorPalette={editorWorkspace.selectColorPalette}
+          onToggleFavoriteColor={editorWorkspace.toggleFavoriteColor}
           onSelectDrawingPreset={editorWorkspace.selectDrawingPreset}
           onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
           onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}

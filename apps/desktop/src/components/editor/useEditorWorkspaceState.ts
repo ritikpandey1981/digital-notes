@@ -184,6 +184,18 @@ export function useEditorWorkspaceState() {
     },
     [colorSystem, refresh],
   );
+  const toggleFavoriteColor = React.useCallback(
+    (color: string): void => {
+      const canonicalHex = colorSystem.createColor(color).hex;
+      if (colorSystem.snapshot().favoriteColors.includes(canonicalHex)) {
+        colorSystem.removeFavorite(canonicalHex);
+      } else {
+        colorSystem.addFavorite(canonicalHex);
+      }
+      refresh();
+    },
+    [colorSystem, refresh],
+  );
 
   return {
     activeTool,
@@ -197,6 +209,7 @@ export function useEditorWorkspaceState() {
     colors: colorSystem.snapshot(),
     colorTarget,
     selectColorPalette,
+    toggleFavoriteColor,
     setDrawingColor,
     selectDrawingPreset,
     setDrawingWidth,

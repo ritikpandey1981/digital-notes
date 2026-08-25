@@ -21,12 +21,26 @@ export interface RgbDraft {
   readonly blue: string;
 }
 
+export type FavoriteCollectionDisplayPolicy = "compact" | "bounded-scroll";
+
+export const FAVORITE_COMPACT_CAPACITY = 20;
+
 const VIEWPORT_PADDING = 12;
 const PICKER_GAP = 10;
 const QUICK_COLOR_TOOLS = new Set<EditorTool>(["Pencil", "Pen", "Marker", "Highlighter", "Shapes"]);
 
 export function quickColorRailSupportsTool(tool: EditorTool): boolean {
   return QUICK_COLOR_TOOLS.has(tool);
+}
+
+export function isFavoriteColor(favorites: readonly string[], color: string): boolean {
+  return favorites.includes(normalizeArtworkHex(color));
+}
+
+export function favoriteCollectionDisplayPolicy(
+  favoriteCount: number,
+): FavoriteCollectionDisplayPolicy {
+  return favoriteCount > FAVORITE_COMPACT_CAPACITY ? "bounded-scroll" : "compact";
 }
 
 export function resolveColorPickerPlacement(

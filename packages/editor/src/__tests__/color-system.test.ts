@@ -26,16 +26,19 @@ describe("workspace EditorColorSystem", () => {
 
   it("canonicalizes Favorites, appends stably, ignores duplicates, and removes in place", () => {
     const colors = createEditorColorSystem();
+    const recentBeforeFavorites = colors.snapshot().recentColors;
     colors.addFavorite("#FFF");
     colors.addFavorite("0EA5E9");
     colors.addFavorite("#ffffff");
     colors.addFavorite("#343434");
     expect(colors.snapshot().favoriteColors).toEqual(["#ffffff", "#0ea5e9", "#343434"]);
+    expect(colors.snapshot().recentColors).toBe(recentBeforeFavorites);
 
     colors.remember("#ffffff");
     expect(colors.snapshot().favoriteColors).toEqual(["#ffffff", "#0ea5e9", "#343434"]);
     colors.removeFavorite("#0EA5E9");
     expect(colors.snapshot().favoriteColors).toEqual(["#ffffff", "#343434"]);
+    expect(colors.snapshot().recentColors).toEqual(["#ffffff"]);
     expect(Object.isFrozen(colors.snapshot().favoriteColors)).toBe(true);
     expect(() => colors.addFavorite("red")).toThrow();
   });
@@ -51,13 +54,16 @@ describe("workspace EditorColorSystem", () => {
   });
 
   it("switches active palettes without mutating the catalog or compatibility swatches", () => {
-    const colors = createEditorColorSystem();
+    const colors = createEditorColorSystem({ initialFavorites: ["#4f46e5"] });
+    colors.remember("#0ea5e9");
     const before = colors.snapshot();
     const after = colors.setActivePalette("sketch");
     expect(before.activePaletteId).toBe(DEFAULT_COLOR_PALETTE_ID);
     expect(after.activePalette).toEqual(BUILT_IN_COLOR_PALETTES[1]);
     expect(after.presetColors).toBe(EDITOR_PRESET_COLORS);
     expect(after.palettes).toEqual(BUILT_IN_COLOR_PALETTES);
+    expect(after.favoriteColors).toBe(before.favoriteColors);
+    expect(after.recentColors).toBe(before.recentColors);
     expect(() => colors.setActivePalette("missing")).toThrow(/not registered/u);
     expect(colors.snapshot().activePaletteId).toBe("sketch");
   });

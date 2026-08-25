@@ -37,6 +37,7 @@ interface EditorWorkspaceProps {
   colors: EditorColorSystemSnapshot;
   colorTarget: ColorTargetAdapter | null;
   onSelectColorPalette: (paletteId: string) => void;
+  onToggleFavoriteColor: (color: string) => void;
   onSelectDrawingPreset: (presetId: string) => void;
   onChangeDrawingWidth: (width: number) => void;
   onChangeDrawingOpacity: (opacity: number) => void;
@@ -63,6 +64,7 @@ export function EditorWorkspace({
   colors,
   colorTarget,
   onSelectColorPalette,
+  onToggleFavoriteColor,
   onSelectDrawingPreset,
   onChangeDrawingWidth,
   onChangeDrawingOpacity,
@@ -236,6 +238,7 @@ export function EditorWorkspace({
           onPreviewHex={colorPicker.previewHex}
           onPreviewHsv={colorPicker.previewHsv}
           onSelectPalette={onSelectColorPalette}
+          onToggleFavorite={onToggleFavoriteColor}
           onCommit={colorPicker.commit}
           onCancel={colorPicker.cancel}
         />

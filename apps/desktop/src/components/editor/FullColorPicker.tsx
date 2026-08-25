@@ -6,7 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Star } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -22,7 +22,9 @@ import {
 import {
   adjustSvWithKeyboard,
   completeHexDraft,
+  favoriteCollectionDisplayPolicy,
   hsvFromSvPointer,
+  isFavoriteColor,
   resolveColorPickerPlacement,
   rgbDraftToHex,
   type RgbDraft,
@@ -42,6 +44,7 @@ interface FullColorPickerProps {
     schedule?: ColorPreviewSchedule,
   ) => ColorPickerSessionSnapshot | null;
   readonly onSelectPalette: (paletteId: string) => void;
+  readonly onToggleFavorite: (color: string) => void;
   readonly onCommit: () => void;
   readonly onCancel: () => void;
 }
@@ -54,6 +57,7 @@ export function FullColorPicker({
   onPreviewHex,
   onPreviewHsv,
   onSelectPalette,
+  onToggleFavorite,
   onCommit,
   onCancel,
 }: FullColorPickerProps) {
@@ -92,6 +96,7 @@ export function FullColorPicker({
   );
   const style: CSSProperties = { left: placement.left, top: placement.top };
   const ownerScopes = [floatingScope, session.ownerScope].filter(Boolean).join(" ");
+  const currentIsFavorite = isFavoriteColor(colors.favoriteColors, presentation.currentColor);
   const previewHex = (color: string, schedule?: ColorPreviewSchedule): boolean => {
     const next = onPreviewHex(color, schedule);
     if (next === null) return false;
@@ -194,7 +199,11 @@ export function FullColorPicker({
       </label>
 
       <div className="mt-3 grid grid-cols-2 gap-2" aria-label="Current and previous colors">
-        <ColorReadout label="Current" color={presentation.currentColor} />
+        <CurrentColorReadout
+          color={presentation.currentColor}
+          favorite={currentIsFavorite}
+          onToggleFavorite={() => onToggleFavorite(presentation.currentColor)}
+        />
         <ColorReadout
           label="Previous"
           color={session.previousColor}
@@ -207,9 +216,22 @@ export function FullColorPicker({
 
       <ColorCollection
         label="Recent"
+        kind="recent"
         emptyLabel="Colors appear after artwork is committed"
         colors={colors.recentColors}
         currentColor={presentation.currentColor}
+        onSelect={(color) => previewHex(color)}
+      />
+
+      <ColorCollection
+        label="Favorites"
+        kind="favorite"
+        emptyLabel="No favorites yet"
+        colors={colors.favoriteColors}
+        currentColor={presentation.currentColor}
+        displayPolicy={favoriteCollectionDisplayPolicy(colors.favoriteColors.length)}
+        compactEmpty
+        testId="favorite-colors"
         onSelect={(color) => previewHex(color)}
       />
 
@@ -247,7 +269,16 @@ export function FullColorPicker({
                   className="justify-between"
                   onSelect={() => onSelectPalette(palette.id)}
                 >
-                  {palette.name}
+                  <span className="flex-1">{palette.name}</span>
+                  <span className="flex items-center gap-0.5" aria-hidden="true">
+                    {palette.colors.slice(0, 5).map((color) => (
+                      <span
+                        key={color}
+                        className="size-2 rounded-full border border-black/15"
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </span>
                   {palette.id === colors.activePaletteId ? (
                     <Check className="size-4 text-folio-accent" aria-hidden="true" />
                   ) : null}
@@ -258,11 +289,55 @@ export function FullColorPicker({
       </div>
       <ColorCollection
         label={`${colors.activePalette.name} colors`}
+        kind="palette"
         colors={colors.activePalette.colors}
         currentColor={presentation.currentColor}
         onSelect={(color) => previewHex(color)}
       />
     </section>
+  );
+}
+
+function CurrentColorReadout({
+  color,
+  favorite,
+  onToggleFavorite,
+}: {
+  readonly color: string;
+  readonly favorite: boolean;
+  readonly onToggleFavorite: () => void;
+}) {
+  const actionLabel = favorite ? `Remove ${color} from favorites` : `Add ${color} to favorites`;
+  return (
+    <div
+      className="flex items-center gap-2 rounded-lg border border-folio-border bg-folio-surface-muted p-1.5"
+      aria-label={`Current color ${color}`}
+    >
+      <span
+        className="size-6 shrink-0 rounded-md border border-black/15 shadow-sm"
+        style={{ backgroundColor: color }}
+        aria-hidden="true"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[9px] font-medium text-folio-muted">Current</span>
+        <span className="block truncate font-mono text-[9px] uppercase text-folio-ink">
+          {color}
+        </span>
+      </span>
+      <button
+        type="button"
+        className="grid size-7 shrink-0 place-items-center rounded-md text-folio-muted hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+        aria-label={actionLabel}
+        aria-pressed={favorite}
+        data-testid="favorite-current-toggle"
+        onClick={onToggleFavorite}
+      >
+        <Star
+          className={cn("size-3.5", favorite && "fill-current text-folio-accent")}
+          aria-hidden="true"
+        />
+      </button>
+    </div>
   );
 }
 
@@ -484,26 +559,60 @@ function RgbEditors({
 
 function ColorCollection({
   label,
+  kind,
   emptyLabel,
   colors,
   currentColor,
+  displayPolicy = "compact",
+  compactEmpty = false,
+  testId,
   onSelect,
 }: {
   readonly label: string;
+  readonly kind: "recent" | "favorite" | "palette";
   readonly emptyLabel?: string;
   readonly colors: readonly string[];
   readonly currentColor: string;
+  readonly displayPolicy?: "compact" | "bounded-scroll";
+  readonly compactEmpty?: boolean;
+  readonly testId?: string;
   readonly onSelect: (color: string) => void;
 }) {
+  const accessiblePrefix =
+    kind === "recent"
+      ? "Use recent color"
+      : kind === "favorite"
+        ? "Use favorite color"
+        : "Use color";
   return (
-    <div className="mt-3">
+    <div
+      className="mt-3"
+      data-testid={testId}
+      data-display-policy={displayPolicy}
+      data-color-count={colors.length}
+    >
       <p className="mb-1.5 text-[10px] font-semibold text-folio-muted">{label}</p>
       {colors.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-folio-border px-2 py-1.5 text-[9px] text-folio-muted">
+        <p
+          className={cn(
+            "text-[9px] text-folio-muted",
+            compactEmpty
+              ? "px-0.5 py-0.5"
+              : "rounded-lg border border-dashed border-folio-border px-2 py-1.5",
+          )}
+          data-testid={kind === "favorite" ? "favorites-empty-state" : undefined}
+        >
           {emptyLabel}
         </p>
       ) : (
-        <div className="grid grid-cols-10 gap-1.5" aria-label={label}>
+        <div
+          className={cn(
+            "grid grid-cols-10 gap-1.5",
+            displayPolicy === "bounded-scroll" &&
+              "max-h-[58px] overflow-y-auto overscroll-contain py-0.5 pr-1",
+          )}
+          aria-label={label}
+        >
           {colors.map((color) => (
             <button
               key={color}
@@ -513,7 +622,7 @@ function ColorCollection({
                 color === currentColor && "ring-2 ring-folio-accent ring-offset-1",
               )}
               style={{ backgroundColor: color }}
-              aria-label={`${label === "Recent" ? "Use recent color" : "Use color"} ${color}`}
+              aria-label={`${accessiblePrefix} ${color}`}
               aria-pressed={color === currentColor}
               onClick={() => onSelect(color)}
             />

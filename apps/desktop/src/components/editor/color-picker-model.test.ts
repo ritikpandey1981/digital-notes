@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   adjustSvWithKeyboard,
   completeHexDraft,
+  favoriteCollectionDisplayPolicy,
   hsvFromSvPointer,
+  isFavoriteColor,
   quickColorRailSupportsTool,
   quickColorRailSwatchCount,
   resolveColorPickerPlacement,
@@ -58,5 +60,14 @@ describe("Phase 18B color picker model", () => {
     expect(rgbDraftToHex({ red: "43", green: "123", blue: "227" })).toBe("#2b7be3");
     expect(rgbDraftToHex({ red: "43.5", green: "123", blue: "227" })).toBeNull();
     expect(rgbDraftToHex({ red: "256", green: "123", blue: "227" })).toBeNull();
+  });
+
+  it("derives canonical Favorite state and bounds large ordered collections", () => {
+    const favorites = ["#4f46e5", "#0ea5e9"];
+    expect(isFavoriteColor(favorites, "4F46E5")).toBe(true);
+    expect(isFavoriteColor(favorites, "#dc2626")).toBe(false);
+    expect(favoriteCollectionDisplayPolicy(20)).toBe("compact");
+    expect(favoriteCollectionDisplayPolicy(21)).toBe("bounded-scroll");
+    expect(favorites).toEqual(["#4f46e5", "#0ea5e9"]);
   });
 });

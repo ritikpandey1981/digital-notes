@@ -1,3 +1,4 @@
+import { createEditorColorSystem } from "@folio/editor";
 import { describe, expect, it, vi } from "vitest";
 import { createContinuousColorTarget, createHistoryFreeColorTarget } from "./color-target-adapters";
 
@@ -60,4 +61,49 @@ describe("Phase 18B ColorTargetAdapter implementations", () => {
     expect(commit).toHaveBeenCalledTimes(1);
     expect(cancel).not.toHaveBeenCalled();
   });
+
+  it.each(["creation", "selected-vector"] as const)(
+    "keeps an explicit Favorite when a %s color transaction is cancelled",
+    (targetKind) => {
+      const colors = createEditorColorSystem();
+      let color = "#111111";
+      let original = color;
+      const target =
+        targetKind === "creation"
+          ? createHistoryFreeColorTarget({
+              id: "creation-pencil",
+              label: "Pencil Color",
+              getColor: () => color,
+              setColor: (next) => {
+                color = next;
+              },
+            })
+          : createContinuousColorTarget({
+              id: "selected-vector-rectangle-1",
+              label: "Rectangle Color",
+              getColor: () => color,
+              beginContinuousEdit: () => {
+                original = color;
+                return true;
+              },
+              previewContinuousEdit: (next) => {
+                color = next;
+                return true;
+              },
+              commitContinuousEdit: () => true,
+              cancelContinuousEdit: () => {
+                color = original;
+                return true;
+              },
+            });
+
+      expect(target.begin()).toBe(true);
+      expect(target.preview("#4f46e5")).toBe(true);
+      colors.addFavorite(color);
+      expect(target.cancel()).toBe(true);
+      expect(color).toBe("#111111");
+      expect(colors.snapshot().favoriteColors).toEqual(["#4f46e5"]);
+      expect(colors.snapshot().recentColors).toEqual([]);
+    },
+  );
 });
