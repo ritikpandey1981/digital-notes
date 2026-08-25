@@ -34,7 +34,6 @@ interface EditorWorkspaceProps {
   onChangeDrawingWidth: (width: number) => void;
   onChangeDrawingOpacity: (opacity: number) => void;
   onChangeDrawingSmoothing: (amount: number) => void;
-  onChangeShapeStyle: (patch: ShapeStylePatch) => void;
   onDrawingColorUsed: (color: string) => void;
   onDismissFloatingWidget: () => void;
   onHistoryActionsReady: (actions: WorkspaceHistoryActions | null) => void;
@@ -60,7 +59,6 @@ export function EditorWorkspace({
   onChangeDrawingWidth,
   onChangeDrawingOpacity,
   onChangeDrawingSmoothing,
-  onChangeShapeStyle,
   onDrawingColorUsed,
   onDismissFloatingWidget,
   onHistoryActionsReady,
@@ -80,7 +78,6 @@ export function EditorWorkspace({
   });
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
   const shapeEditingActionsRef = useRef<ShapeEditingActions | null>(null);
-  const continuousShapeStylePatchRef = useRef<ShapeStylePatch | null>(null);
   const [shapeEditingSnapshot, setShapeEditingSnapshot] = useState<ShapeEditingSnapshot | null>(
     null,
   );
@@ -103,22 +100,15 @@ export function EditorWorkspace({
     objectLifecycleActionsRef.current?.duplicateSelection();
   }, []);
   const beginContinuousShapeStyleEdit = useCallback(() => {
-    continuousShapeStylePatchRef.current = null;
     shapeEditingActionsRef.current?.beginContinuousStyleEdit();
   }, []);
   const previewContinuousShapeStyle = useCallback((patch: ShapeStylePatch) => {
-    const previous = continuousShapeStylePatchRef.current;
-    continuousShapeStylePatchRef.current = Object.freeze({ ...previous, ...patch });
     shapeEditingActionsRef.current?.updateContinuousStylePreview(patch);
   }, []);
   const commitContinuousShapeStyleEdit = useCallback(() => {
-    const patch = continuousShapeStylePatchRef.current;
-    continuousShapeStylePatchRef.current = null;
-    const committed = shapeEditingActionsRef.current?.commitContinuousStyleEdit() === true;
-    if (committed && patch !== null) onChangeShapeStyle(patch);
-  }, [onChangeShapeStyle]);
+    shapeEditingActionsRef.current?.commitContinuousStyleEdit();
+  }, []);
   const cancelContinuousShapeStyleEdit = useCallback(() => {
-    continuousShapeStylePatchRef.current = null;
     shapeEditingActionsRef.current?.cancelContinuousStyleEdit();
   }, []);
   return (

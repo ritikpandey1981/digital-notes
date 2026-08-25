@@ -185,6 +185,9 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
       "aria-pressed",
       "true",
     );
+    await expect(surface).toHaveAttribute("data-drawing-color", "#111111");
+    await expect(surface).toHaveAttribute("data-drawing-width", "2");
+    await expect(surface).toHaveAttribute("data-drawing-opacity", "1");
   } finally {
     await electronApp.close();
   }

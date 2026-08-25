@@ -75,7 +75,6 @@ function ApplicationShellContent() {
           onChangeDrawingWidth={editorWorkspace.setDrawingWidth}
           onChangeDrawingOpacity={editorWorkspace.setDrawingOpacity}
           onChangeDrawingSmoothing={editorWorkspace.setDrawingSmoothing}
-          onChangeShapeStyle={editorWorkspace.updateShapeStyle}
           onDrawingColorUsed={editorWorkspace.rememberColorUsage}
           onDismissFloatingWidget={editorWorkspace.dismissFloatingWidget}
           onHistoryActionsReady={handleHistoryActionsReady}

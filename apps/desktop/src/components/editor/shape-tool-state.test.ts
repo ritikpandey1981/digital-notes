@@ -32,16 +32,22 @@ describe("shape tool state", () => {
     expect(shapes.snapshot().activeShape).toBe("line");
   });
 
-  it("retains Shape color, width, opacity, and subtype without mutating drawing presets", () => {
+  it("retains Shape color, width, opacity, and subtype without mutating any brush family", () => {
     const presets = createPenPresetStore();
+    presets.updateActivePreset("pencil", { color: "#4f46e5", strokeWidth: 5, opacity: 0.7 });
     presets.updateActivePreset("pen", { color: "#2563eb", strokeWidth: 8, opacity: 0.65 });
+    presets.updateActivePreset("marker", { color: "#16a34a", strokeWidth: 10, opacity: 0.9 });
     presets.updateActivePreset("highlighter", {
       color: "#4ade80",
       strokeWidth: 16,
       opacity: 0.25,
     });
-    const penBeforeShapes = presets.activeState("pen");
-    const highlighterBeforeShapes = presets.activeState("highlighter");
+    const brushStatesBeforeShapes = Object.freeze({
+      pencil: presets.activeState("pencil"),
+      pen: presets.activeState("pen"),
+      marker: presets.activeState("marker"),
+      highlighter: presets.activeState("highlighter"),
+    });
     const shapes = createShapeToolState();
 
     shapes.selectShape("rectangle");
@@ -52,8 +58,10 @@ describe("shape tool state", () => {
       activeShape: "ellipse",
       style: { color: "#dc2626", width: 7, opacity: 0.4, pressureEnabled: false },
     });
-    expect(presets.activeState("pen")).toEqual(penBeforeShapes);
-    expect(presets.activeState("highlighter")).toEqual(highlighterBeforeShapes);
+    expect(presets.activeState("pencil")).toEqual(brushStatesBeforeShapes.pencil);
+    expect(presets.activeState("pen")).toEqual(brushStatesBeforeShapes.pen);
+    expect(presets.activeState("marker")).toEqual(brushStatesBeforeShapes.marker);
+    expect(presets.activeState("highlighter")).toEqual(brushStatesBeforeShapes.highlighter);
 
     shapes.selectShape("rectangle");
     expect(shapes.snapshot().style).toEqual({

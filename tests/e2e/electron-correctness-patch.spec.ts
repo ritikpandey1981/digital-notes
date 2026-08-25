@@ -35,6 +35,13 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await expect(contextHint).toContainText("Tip: Alt + Click → Select object beneath");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
 
+    const pencilButton = toolDock.getByRole("button", { name: "Pencil", exact: true });
+    await pencilButton.click();
+    await expect(palette).toBeHidden();
+    await expect(surface).toHaveAttribute("data-drawing-color", "#343434");
+    await expect(surface).toHaveAttribute("data-drawing-width", "2");
+    await expect(surface).toHaveAttribute("data-drawing-opacity", "0.78");
+
     const penButton = toolDock.getByRole("button", { name: "Pen", exact: true });
     await penButton.click();
     await expect(palette).toBeHidden();
@@ -49,6 +56,13 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
+
+    const markerButton = toolDock.getByRole("button", { name: "Marker", exact: true });
+    await markerButton.click();
+    await expect(palette).toBeHidden();
+    await expect(surface).toHaveAttribute("data-drawing-color", "#1f2937");
+    await expect(surface).toHaveAttribute("data-drawing-width", "8");
+    await expect(surface).toHaveAttribute("data-drawing-opacity", "0.9");
 
     const highlighterButton = toolDock.getByRole("button", {
       name: "Highlighter",
@@ -144,20 +158,40 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
       width: 6,
       opacity: 0.55,
     });
+    await window.getByRole("button", { name: "Undo", exact: true }).click();
+    expect((await vectorStyles(surface))[0]).toMatchObject({
+      color: "#dc2626",
+      width: 6,
+      opacity: 1,
+    });
+    await window.getByRole("button", { name: "Redo", exact: true }).click();
+    expect((await vectorStyles(surface))[0]).toMatchObject({
+      color: "#dc2626",
+      width: 6,
+      opacity: 0.55,
+    });
     await window.keyboard.press("Escape");
 
+    await pencilButton.click();
+    await expect(surface).toHaveAttribute("data-drawing-color", "#343434");
+    await expect(surface).toHaveAttribute("data-drawing-width", "2");
+    await expect(surface).toHaveAttribute("data-drawing-opacity", "0.78");
     await penButton.click();
     await expect(surface).toHaveAttribute("data-drawing-color", "#2563eb");
     await expect(surface).toHaveAttribute("data-drawing-width", "8");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.8");
+    await markerButton.click();
+    await expect(surface).toHaveAttribute("data-drawing-color", "#1f2937");
+    await expect(surface).toHaveAttribute("data-drawing-width", "8");
+    await expect(surface).toHaveAttribute("data-drawing-opacity", "0.9");
     await highlighterButton.click();
     await expect(surface).toHaveAttribute("data-drawing-color", "#facc15");
     await expect(surface).toHaveAttribute("data-drawing-width", "12");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.34");
     await shapesButton.click();
-    await expect(surface).toHaveAttribute("data-drawing-color", "#dc2626");
-    await expect(surface).toHaveAttribute("data-drawing-width", "6");
-    await expect(surface).toHaveAttribute("data-drawing-opacity", "0.55");
+    await expect(surface).toHaveAttribute("data-drawing-color", "#111111");
+    await expect(surface).toHaveAttribute("data-drawing-width", "2");
+    await expect(surface).toHaveAttribute("data-drawing-opacity", "1");
     await expect(shapesWidget).toBeVisible();
     await expect(
       shapesWidget.getByRole("button", { name: "Rectangle", exact: true }),
@@ -168,9 +202,9 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "2");
     expect((await vectorStyles(surface))[1]).toMatchObject({
       type: "rectangle",
-      color: "#dc2626",
-      width: 6,
-      opacity: 0.55,
+      color: "#111111",
+      width: 2,
+      opacity: 1,
     });
 
     await shapesButton.click();
