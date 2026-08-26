@@ -1,5 +1,5 @@
 import { pageOf } from "./layer-test-support";
-import { InkObject, PageDocument } from "@folio/document";
+import { InkObject, SketchbookDocument } from "@folio/document";
 import type { HistoryDocumentSession } from "@folio/history";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
 import { describe, expect, it } from "vitest";
@@ -48,6 +48,8 @@ describe("InkDocumentSession", () => {
       layerCount: 1,
       activeLayerId: "layer-1",
       membershipConsistent: true,
+      pageCount: 1,
+      activePageId: "page-1",
     });
   });
 
@@ -94,16 +96,18 @@ describe("InkDocumentSession", () => {
       createId: () => "object",
       now: () => "2026-07-27T08:00:00.000Z",
     });
-    const boundary: HistoryDocumentSession<PageDocument> = session;
+    const boundary: HistoryDocumentSession<SketchbookDocument> = session;
     session.completeStroke(stroke("stroke"));
     const initial = boundary.getDocument();
-    const successor = pageOf(initial.objects.objects);
+    const successor = initial.replacePage(
+      initial.firstPage.withContent(pageOf(initial.firstPage.content.objects.objects)),
+    );
 
     boundary.replaceDocument(successor);
 
     expect(boundary.getDocument()).toBe(successor);
-    expect(session.page).toBe(successor);
+    expect(session.page).toBe(successor.firstPage.content);
     expect(Object.isFrozen(successor)).toBe(true);
-    expect(() => boundary.replaceDocument({} as PageDocument)).toThrowError(TypeError);
+    expect(() => boundary.replaceDocument({} as SketchbookDocument)).toThrowError(TypeError);
   });
 });

@@ -4,7 +4,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { Layers, MoreHorizontal, Moon, Redo2, Settings2, Sun, Undo2 } from "lucide-react";
+import { BookOpen, Layers, MoreHorizontal, Moon, Redo2, Settings2, Sun, Undo2 } from "lucide-react";
 import type { ReactNode } from "react";
 import appIconUrl from "../../../../../assets/app-icon.svg";
 import type { WorkspaceHistoryAvailability } from "../editor/workspace-history";
@@ -17,6 +17,8 @@ interface SketchbookTopBarProps extends WorkspaceHistoryAvailability {
   readonly onRedo: () => void;
   readonly layersPanelOpen: boolean;
   readonly onToggleLayersPanel: () => void;
+  readonly pageNavigatorOpen: boolean;
+  readonly onTogglePageNavigator: () => void;
 }
 
 export function SketchbookTopBar({
@@ -26,6 +28,8 @@ export function SketchbookTopBar({
   onRedo,
   layersPanelOpen,
   onToggleLayersPanel,
+  pageNavigatorOpen,
+  onTogglePageNavigator,
 }: SketchbookTopBarProps) {
   const { openDialog } = useShellDialog();
   const { theme, toggleTheme } = useTheme();
@@ -55,6 +59,14 @@ export function SketchbookTopBar({
           <Redo2 className="size-4" aria-hidden="true" />
         </TopBarButton>
         <span className="mx-1 h-5 w-px bg-folio-border" aria-hidden="true" />
+        <TopBarButton
+          label="Pages"
+          testId="pages-toggle"
+          pressed={pageNavigatorOpen}
+          onClick={onTogglePageNavigator}
+        >
+          <BookOpen className="size-4" aria-hidden="true" />
+        </TopBarButton>
         <TopBarButton
           label="Layers"
           testId="layers-toggle"

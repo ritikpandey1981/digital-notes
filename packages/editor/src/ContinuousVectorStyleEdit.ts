@@ -66,7 +66,7 @@ export class ContinuousVectorStyleEdit {
       resolvedStyle,
       active.original.modifiedAt,
     );
-    this.#documentSession.replaceDocument(this.#documentSession.page.replace(replacement));
+    this.#documentSession.replacePageDocument(this.#documentSession.page.replace(replacement));
     active.current = replacement;
     this.#onPreviewDocumentChange(this.#documentSession.page);
     return true;
@@ -101,7 +101,7 @@ export class ContinuousVectorStyleEdit {
     const current = this.#documentSession.page.lookup(active.original.id);
     if (!isVectorObject(current)) return;
     if (current === active.original) return;
-    this.#documentSession.replaceDocument(this.#documentSession.page.replace(active.original));
+    this.#documentSession.replacePageDocument(this.#documentSession.page.replace(active.original));
     this.#onPreviewDocumentChange(this.#documentSession.page);
   }
 }

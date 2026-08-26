@@ -84,7 +84,7 @@ function createHarness() {
     geometry: { x: 20, y: 30, width: 120, height: 80 },
   });
   const session = new InkDocumentSession();
-  session.replaceDocument(pageOf([original]));
+  session.replacePageDocument(pageOf([original]));
   const coordinator = createEditorHistoryCoordinator({
     documentSession: session,
     now: () => FINAL_REVISION,

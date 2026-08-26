@@ -230,7 +230,7 @@ describe("selected Ink appearance", () => {
 describe("continuous selection style editing", () => {
   function harness(objects: readonly PageObject[]) {
     const session = new InkDocumentSession();
-    session.replaceDocument(pageOf(objects));
+    session.replacePageDocument(pageOf(objects));
     const coordinator = createEditorHistoryCoordinator({
       documentSession: session,
       now: () => TIMESTAMP,
@@ -298,7 +298,7 @@ describe("continuous selection style editing", () => {
 
   it("refuses to begin on a locked layer", () => {
     const session = new InkDocumentSession();
-    session.replaceDocument(pageOf([rectangle("rect", 0)], { locked: true }));
+    session.replacePageDocument(pageOf([rectangle("rect", 0)], { locked: true }));
     const effective = createEffectiveObjectState(() => session.page);
     const edit = new ContinuousSelectionStyleEdit({
       documentSession: session,
@@ -380,7 +380,7 @@ describe("Phase 20 performance", () => {
     expect(covered).toHaveLength(1_000);
 
     const session = new InkDocumentSession();
-    session.replaceDocument(pageOf(objects.slice(0, 100)));
+    session.replacePageDocument(pageOf(objects.slice(0, 100)));
     const coordinator = createEditorHistoryCoordinator({
       documentSession: session,
       now: () => TIMESTAMP,

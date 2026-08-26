@@ -75,6 +75,9 @@ export {
   type LayerActions,
   type LayerSnapshot,
   type LayersSnapshot,
+  type PageActions,
+  type PageSnapshot,
+  type PagesSnapshot,
   type ObjectLifecycleActions,
   type ShapeEditingActions,
   type ShapeEditingSnapshot,
@@ -115,3 +118,29 @@ export {
   type InkStylePatch,
   type InkStyleValues,
 } from "./InkStyleEdit";
+export { renderPageThumbnail } from "./VectorShapeRendering";
+export {
+  createAddPageCommand,
+  createPageGeometryCommand,
+  createPagePaperCommand,
+  createPageRenameCommand,
+  createRemovePageCommand,
+  createReorderPagesCommand,
+  liftPageCommand,
+} from "./history/page-commands";
+export {
+  MAXIMUM_PAGE_EXTENT,
+  MINIMUM_PAGE_EXTENT,
+  matchPagePreset,
+  orientPageGeometry,
+  PAGE_PRESETS,
+  pageOrientation,
+  pagePreset,
+  PAPER_COLOR_PRESETS,
+  PAPER_TYPES,
+  type Page,
+  type PageGeometry,
+  type PageOrientation,
+  type PagePresetId,
+  type PaperType,
+} from "@folio/document";

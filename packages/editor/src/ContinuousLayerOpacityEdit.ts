@@ -60,7 +60,7 @@ export class ContinuousLayerOpacityEdit {
     if (!Number.isFinite(opacity)) return false;
     const clamped = Math.min(1, Math.max(0, opacity));
     if (clamped === active.currentOpacity) return false;
-    this.#documentSession.replaceDocument(
+    this.#documentSession.replacePageDocument(
       this.#documentSession.page.updateLayer(active.layerId, { opacity: clamped }),
     );
     active.currentOpacity = clamped;
@@ -96,7 +96,7 @@ export class ContinuousLayerOpacityEdit {
   #restore(active: ActiveLayerOpacityEdit): void {
     const layer = this.#currentLayer(active.layerId);
     if (layer === undefined || layer.opacity === active.initialOpacity) return;
-    this.#documentSession.replaceDocument(
+    this.#documentSession.replacePageDocument(
       this.#documentSession.page.updateLayer(active.layerId, { opacity: active.initialOpacity }),
     );
     this.#onPreviewDocumentChange(this.#documentSession.page);

@@ -516,7 +516,8 @@ describe("EditorHistoryCoordinator", () => {
       now: () => FIRST_MOVE_TIMESTAMP,
       onDocumentChange: () => undefined,
     });
-    const firstController: IHistoryController<typeof first.page> = firstCoordinator.controller;
+    const firstController: IHistoryController<typeof first.sketchbook> =
+      firstCoordinator.controller;
 
     firstCoordinator.executeManipulation(
       createTranslationResult("session-1", { x: 0, y: 0 }, { x: 5, y: 5 }),

@@ -37,15 +37,13 @@ export interface ViewportSnapshot {
 
 export type ViewportMode = "manual" | "fit-page" | "fit-width";
 
+/** Patterned paper kinds drawn below artwork and clipped to the page. */
+export type PagePatternKind = "grid" | "ruled" | "dotted" | "isometric";
+
 export type PageBackground =
   | { readonly kind: "plain" }
   | {
-      readonly kind: "grid";
-      readonly spacing?: number;
-      readonly lineColor?: string;
-    }
-  | {
-      readonly kind: "ruled";
+      readonly kind: PagePatternKind;
       readonly spacing?: number;
       readonly lineColor?: string;
     };
@@ -53,6 +51,8 @@ export type PageBackground =
 export interface RenderPage {
   readonly rect: Rect;
   readonly background: PageBackground;
+  /** Page-owned paper color. Falls back to the theme page color when absent. */
+  readonly paperColor?: string;
 }
 
 export interface RenderTheme {

@@ -79,7 +79,11 @@ export function freezeRect(rect: Rect): Rect {
 
 export function freezeRenderPage(page: RenderPage): RenderPage {
   const background = Object.freeze({ ...page.background });
-  return Object.freeze({ rect: freezeRect(page.rect), background });
+  return Object.freeze({
+    rect: freezeRect(page.rect),
+    background,
+    ...(page.paperColor === undefined ? {} : { paperColor: page.paperColor }),
+  });
 }
 
 export function freezeRenderTheme(theme: RenderTheme): RenderTheme {

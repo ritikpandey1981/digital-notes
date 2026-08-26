@@ -108,7 +108,7 @@ function createContinuousRecentHarness() {
     style: { strokeColor: "#111111", strokeWidth: 2 },
   });
   const session = new InkDocumentSession();
-  session.replaceDocument(pageOf([original]));
+  session.replacePageDocument(pageOf([original]));
   const colors = createEditorColorSystem();
   const coordinator = createEditorHistoryCoordinator({
     documentSession: session,

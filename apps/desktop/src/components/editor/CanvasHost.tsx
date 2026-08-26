@@ -8,6 +8,8 @@ import {
   type ShapeEditingSnapshot,
   type LayerActions,
   type LayersSnapshot,
+  type PageActions,
+  type PagesSnapshot,
   type EditorViewportSnapshot,
   type ViewportActions,
 } from "@folio/editor";
@@ -35,6 +37,8 @@ interface CanvasHostProps {
   readonly onShapeEditingChange: (snapshot: ShapeEditingSnapshot | null) => void;
   readonly onLayerActionsReady: (actions: LayerActions | null) => void;
   readonly onLayersChange: (snapshot: LayersSnapshot) => void;
+  readonly onPageActionsReady: (actions: PageActions | null) => void;
+  readonly onPagesChange: (snapshot: PagesSnapshot) => void;
   readonly onDrawingColorUsed: (color: string) => void;
   readonly onHistoryActionsReady: (actions: WorkspaceHistoryActions | null) => void;
   readonly onHistoryAvailabilityChange: (availability: WorkspaceHistoryAvailability) => void;
@@ -56,6 +60,8 @@ export const CanvasHost = memo(function CanvasHost({
   onShapeEditingChange,
   onLayerActionsReady,
   onLayersChange,
+  onPageActionsReady,
+  onPagesChange,
   onDrawingColorUsed,
   onHistoryActionsReady,
   onHistoryAvailabilityChange,
@@ -355,6 +361,8 @@ export const CanvasHost = memo(function CanvasHost({
         onShapeEditingChange={onShapeEditingChange}
         onLayerActionsReady={onLayerActionsReady}
         onLayersChange={onLayersChange}
+        onPageActionsReady={onPageActionsReady}
+        onPagesChange={onPagesChange}
         onViewportActionsReady={onViewportActionsReady}
         onViewportChange={onViewportChange}
         onViewportNavigationLearned={onViewportNavigationLearned}

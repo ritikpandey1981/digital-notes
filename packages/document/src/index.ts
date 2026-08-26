@@ -91,3 +91,41 @@ export {
   validateObject,
   validateObjectCollection,
 } from "./validation";
+export {
+  createPageGeometry,
+  DEFAULT_PAGE_GEOMETRY,
+  MAXIMUM_PAGE_EXTENT,
+  MINIMUM_PAGE_EXTENT,
+  matchPagePreset,
+  orientPageGeometry,
+  PAGE_PRESETS,
+  pageOrientation,
+  pagePreset,
+  type PageGeometry,
+  type PageOrientation,
+  type PagePreset,
+  type PagePresetId,
+} from "./page-geometry";
+export {
+  createPagePaper,
+  DEFAULT_PAGE_PAPER,
+  DEFAULT_PAPER_COLOR,
+  MAXIMUM_PAPER_SPACING,
+  MINIMUM_PAPER_SPACING,
+  PAPER_COLOR_PRESETS,
+  PAPER_TYPES,
+  paperTypeDefinition,
+  samePagePaper,
+  type PagePaper,
+  type PagePaperInput,
+  type PaperType,
+  type PaperTypeDefinition,
+} from "./page-paper";
+export {
+  createPageLike,
+  duplicatePage,
+  Page,
+  SketchbookDocument,
+  type PageIdentityFactory,
+  type PageInput,
+} from "./sketchbook-document";

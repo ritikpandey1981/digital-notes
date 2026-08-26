@@ -5,6 +5,8 @@ import type {
   EditorColorSystemSnapshot,
   LayerActions,
   LayersSnapshot,
+  PageActions,
+  PagesSnapshot,
   ObjectLifecycleActions,
   ShapeEditingActions,
   ShapeEditingSnapshot,
@@ -17,6 +19,8 @@ import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
 import { LayersPanel } from "./LayersPanel";
+import { PageNavigator } from "./PageNavigator";
+import { PageSettingsPanel } from "./PageSettingsPanel";
 import { useNotifications } from "../notifications/NotificationProvider";
 import { ShapesWidget } from "./ShapesWidget";
 import { ShapeEditingToolbar } from "./ShapeEditingToolbar";
@@ -33,6 +37,11 @@ import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./wo
 interface EditorWorkspaceProps {
   layersPanelOpen: boolean;
   onDismissLayersPanel: () => void;
+  pageNavigatorOpen: boolean;
+  onDismissPageNavigator: () => void;
+  pageSettingsOpen: boolean;
+  onOpenPageSettings: () => void;
+  onDismissPageSettings: () => void;
   activeTool: EditorTool;
   activeShape: ShapeToolKind;
   armedShape: ShapeToolKind | null;
@@ -62,6 +71,11 @@ interface EditorWorkspaceProps {
 export function EditorWorkspace({
   layersPanelOpen,
   onDismissLayersPanel,
+  pageNavigatorOpen,
+  onDismissPageNavigator,
+  pageSettingsOpen,
+  onOpenPageSettings,
+  onDismissPageSettings,
   activeTool,
   activeShape,
   armedShape,
@@ -88,6 +102,19 @@ export function EditorWorkspace({
   onViewportNavigationLearned,
 }: EditorWorkspaceProps) {
   const workspaceRef = useRef<HTMLElement | null>(null);
+  const [pageActions, setPageActions] = useState<PageActions | null>(null);
+  const [pagesSnapshot, setPagesSnapshot] = useState<PagesSnapshot>(() =>
+    Object.freeze({ pages: Object.freeze([]), activePageId: "" }),
+  );
+  const [thumbnailRevision, setThumbnailRevision] = useState(0);
+  const handlePageActionsReady = useCallback((actions: PageActions | null) => {
+    setPageActions(actions);
+  }, []);
+  const handlePagesChange = useCallback((snapshot: PagesSnapshot) => {
+    setPagesSnapshot(snapshot);
+    // Thumbnails redraw on committed document changes only, never per pointer move.
+    setThumbnailRevision((revision) => revision + 1);
+  }, []);
   const renderCountRef = useRef(0);
   useLayoutEffect(() => {
     renderCountRef.current += 1;
@@ -111,6 +138,10 @@ export function EditorWorkspace({
     setLayersSnapshot(snapshot);
   }, []);
   const { notify } = useNotifications();
+  const notifyPageDeleted = useCallback(
+    (message: string) => notify({ title: "Page deleted", description: message }),
+    [notify],
+  );
   const notifyLayerDeleted = useCallback(
     (message: string) => notify({ title: "Layer deleted", description: message }),
     [notify],
@@ -279,6 +310,8 @@ export function EditorWorkspace({
         onShapeEditingChange={handleShapeEditingChange}
         onLayerActionsReady={handleLayerActionsReady}
         onLayersChange={handleLayersChange}
+        onPageActionsReady={handlePageActionsReady}
+        onPagesChange={handlePagesChange}
         onDrawingColorUsed={onDrawingColorUsed}
         onHistoryActionsReady={onHistoryActionsReady}
         onHistoryAvailabilityChange={onHistoryAvailabilityChange}
@@ -287,6 +320,22 @@ export function EditorWorkspace({
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
       <ToolDock activeTool={activeTool} onSelectTool={onSelectTool} />
+      <PageNavigator
+        open={pageNavigatorOpen}
+        snapshot={pagesSnapshot}
+        actions={pageActions}
+        getPage={pageActions?.getPage ?? null}
+        thumbnailRevision={thumbnailRevision}
+        onDismiss={onDismissPageNavigator}
+        onOpenPageSettings={onOpenPageSettings}
+        onNotify={notifyPageDeleted}
+      />
+      <PageSettingsPanel
+        open={pageSettingsOpen}
+        snapshot={pagesSnapshot}
+        actions={pageActions}
+        onDismiss={onDismissPageSettings}
+      />
       <LayersPanel
         open={layersPanelOpen}
         snapshot={layersSnapshot}

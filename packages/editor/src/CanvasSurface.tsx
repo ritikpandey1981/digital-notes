@@ -4,7 +4,13 @@ import {
   isVectorObject,
   type EllipseGeometry,
   type LineGeometry,
+  orientPageGeometry,
+  Page,
   PageDocument,
+  paperTypeDefinition,
+  SketchbookDocument,
+  type PageOrientation,
+  type PaperType,
   type PageObject,
   type RectangleGeometry,
   type VectorPageObject,
@@ -36,6 +42,7 @@ import {
   type CanvasBounds,
   type CanvasControllerSnapshot,
   type Point,
+  type RenderPage,
   type RenderTheme,
   type Viewport,
 } from "@folio/rendering";
@@ -194,6 +201,49 @@ export interface LayerActions {
   readonly deleteLayer: (layerId: string) => number | null;
 }
 
+/** Immutable presentation row for one sketchbook page, first page first. */
+export interface PageSnapshot {
+  readonly id: string;
+  readonly name: string;
+  readonly index: number;
+  readonly width: number;
+  readonly height: number;
+  readonly orientation: PageOrientation;
+  readonly paperType: PaperType;
+  readonly paperColor: string;
+  readonly paperSpacing: number | null;
+  readonly objectCount: number;
+  readonly layerCount: number;
+}
+
+/** Immutable sketchbook presentation state for the page navigator. */
+export interface PagesSnapshot {
+  readonly pages: readonly PageSnapshot[];
+  readonly activePageId: string;
+}
+
+/** Session-bound sketchbook page operations exposed to the desktop workspace. */
+export interface PageActions {
+  /** Selects the active page. Never produces document History. */
+  readonly setActivePage: (pageId: string) => boolean;
+  readonly addPage: () => string | null;
+  readonly duplicatePage: (pageId: string) => string | null;
+  readonly deletePage: (pageId: string) => number | null;
+  readonly movePage: (pageId: string, targetIndex: number) => boolean;
+  readonly renamePage: (pageId: string, name: string) => boolean;
+  readonly setPageGeometry: (pageId: string, width: number, height: number) => boolean;
+  readonly setPageOrientation: (pageId: string, orientation: "portrait" | "landscape") => boolean;
+  readonly setPaperType: (pageId: string, type: PaperType) => boolean;
+  readonly beginPaperColorEdit: (pageId: string) => boolean;
+  readonly previewPaperColor: (color: string) => boolean;
+  readonly commitPaperColorEdit: () => boolean;
+  readonly cancelPaperColorEdit: () => boolean;
+  /** True when any artwork on the page lies outside its current boundary. */
+  readonly hasArtworkOutsideBounds: (pageId: string) => boolean;
+  /** Immutable page value used for navigator thumbnails. */
+  readonly getPage: (pageId: string) => Page | null;
+}
+
 export interface ShapeEditingActions {
   readonly updateStyle: (patch: ShapeStylePatch) => boolean;
   /** Moves the whole current selection into one Layer as a single History action. */
@@ -251,7 +301,7 @@ export interface CanvasSurfaceProps {
   /** Receives the extensible mounted tool registry and null during cleanup. */
   readonly onToolRegistryReady?: (registry: EditorToolRegistry | null) => void;
   /** Receives the interface-oriented History controller for programmatic operations. */
-  readonly onHistoryControllerReady?: (controller: IHistoryController<PageDocument>) => void;
+  readonly onHistoryControllerReady?: (controller: IHistoryController<SketchbookDocument>) => void;
   /** Receives session-bound delete/duplicate actions and null during cleanup. */
   readonly onObjectLifecycleActionsReady?: (actions: ObjectLifecycleActions | null) => void;
   /** Receives session-bound vector appearance actions and null during cleanup. */
@@ -262,6 +312,10 @@ export interface CanvasSurfaceProps {
   readonly onLayerActionsReady?: (actions: LayerActions | null) => void;
   /** Receives an immutable Layer presentation snapshot after every Layer change. */
   readonly onLayersChange?: (snapshot: LayersSnapshot) => void;
+  /** Receives session-bound sketchbook page actions and null during cleanup. */
+  readonly onPageActionsReady?: (actions: PageActions | null) => void;
+  /** Receives an immutable page snapshot after every sketchbook change. */
+  readonly onPagesChange?: (snapshot: PagesSnapshot) => void;
   /** Receives immutable selection state only after logical changes. */
   readonly onSelectionChange?: (state: SelectionState) => void;
   /** Receives immutable manipulation state only after logical transitions. */
@@ -376,6 +430,8 @@ export function CanvasSurface({
   onShapeEditingChange,
   onLayerActionsReady,
   onLayersChange,
+  onPageActionsReady,
+  onPagesChange,
   onSelectionChange,
   onManipulationChange,
   onHistoryChange,
@@ -425,6 +481,8 @@ export function CanvasSurface({
   const shapeEditingChangeRef = useRef(onShapeEditingChange);
   const layerActionsReadyRef = useRef(onLayerActionsReady);
   const layersChangeRef = useRef(onLayersChange);
+  const pageActionsReadyRef = useRef(onPageActionsReady);
+  const pagesChangeRef = useRef(onPagesChange);
   const viewportActionsReadyRef = useRef(onViewportActionsReady);
   const viewportChangeRef = useRef(onViewportChange);
   const viewportNavigationLearnedRef = useRef(onViewportNavigationLearned);
@@ -516,6 +574,14 @@ export function CanvasSurface({
   useEffect(() => {
     layersChangeRef.current = onLayersChange;
   }, [onLayersChange]);
+
+  useEffect(() => {
+    pageActionsReadyRef.current = onPageActionsReady;
+  }, [onPageActionsReady]);
+
+  useEffect(() => {
+    pagesChangeRef.current = onPagesChange;
+  }, [onPagesChange]);
 
   useEffect(() => {
     viewportActionsReadyRef.current = onViewportActionsReady;
@@ -1090,6 +1156,7 @@ export function CanvasSurface({
         host.dataset.historyLastCommandId = state.lastCommand?.id ?? "";
       };
       let publishLayersRef: (() => void) | null = null;
+      let publishPagesRef: (() => void) | null = null;
       const synchronizeDocumentFromHistory = (): void => {
         const inkObjects = documentSession.collection.objects.filter(
           (object): object is InkObject => object instanceof InkObject,
@@ -1153,6 +1220,7 @@ export function CanvasSurface({
         onDocumentChange: () => {
           synchronizeDocumentFromHistory();
           publishLayersRef?.();
+          publishPagesRef?.();
         },
         onHistoryChange: (notification) => {
           updateHistoryDiagnostics(notification.state);
@@ -1491,8 +1559,280 @@ export function CanvasSurface({
           }
         },
       });
+      const renderPageFor = (page: Page): RenderPage =>
+        Object.freeze({
+          rect: Object.freeze({
+            x: 0,
+            y: 0,
+            width: page.geometry.width,
+            height: page.geometry.height,
+          }),
+          background:
+            page.paper.type === "blank"
+              ? Object.freeze({ kind: "plain" as const })
+              : Object.freeze({
+                  kind: page.paper.type,
+                  ...(page.paper.spacing === undefined ? {} : { spacing: page.paper.spacing }),
+                }),
+          paperColor: page.paper.color,
+        });
+      const publishPages = (): void => {
+        const sketchbook = documentSession.sketchbook;
+        const activePageId = documentSession.activePageId;
+        host.dataset.pageCount = String(sketchbook.pageCount);
+        host.dataset.activePageId = activePageId;
+        host.dataset.pageOrder = JSON.stringify(sketchbook.pages.map((page) => page.id));
+        const active = documentSession.activePage;
+        host.dataset.pageWidth = String(active.geometry.width);
+        host.dataset.pageHeight = String(active.geometry.height);
+        host.dataset.pageOrientation = active.orientation;
+        host.dataset.pagePaperType = active.paper.type;
+        host.dataset.pagePaperColor = active.paper.color;
+        pagesChangeRef.current?.(
+          Object.freeze({
+            pages: Object.freeze(
+              sketchbook.pages.map((page, index) =>
+                Object.freeze({
+                  id: page.id,
+                  name: page.name,
+                  index,
+                  width: page.geometry.width,
+                  height: page.geometry.height,
+                  orientation: page.orientation,
+                  paperType: page.paper.type,
+                  paperColor: page.paper.color,
+                  paperSpacing: page.paper.spacing ?? null,
+                  objectCount: page.objectCount,
+                  layerCount: page.content.layerCount,
+                }),
+              ),
+            ),
+            activePageId,
+          }),
+        );
+      };
+      // The controller owns page geometry and refits; the editor only tells it
+      // which page is current.
+      const applyActivePageToViewport = (restoreMemory: boolean): void => {
+        const page = documentSession.activePage;
+        const memory = restoreMemory ? documentSession.viewportMemory(page.id) : null;
+        controller.setPage(renderPageFor(page), memory === null);
+        if (memory !== null) {
+          viewport.camera.setZoom(memory.zoom);
+          viewport.camera.setPosition(memory.position);
+          controller.requestRender({ kind: "viewport" });
+        }
+        synchronizeDocumentFromHistory();
+        publishLayers();
+        publishPages();
+        updateViewportDiagnostics();
+      };
+      const rememberActiveViewport = (): void => {
+        const snapshot = viewport.snapshot();
+        documentSession.rememberViewport(documentSession.activePageId, {
+          zoom: snapshot.camera.zoom,
+          position: { x: snapshot.camera.position.x, y: snapshot.camera.position.y },
+          mode: controller.viewportMode,
+        });
+      };
+      /** Cancels every transient interaction before leaving a page. */
+      const releaseTransientInteractions = (): void => {
+        cancelContinuousStyleEdit();
+        activeLayerOpacityEdit.cancel();
+        activeManipulationController.cancelManipulation();
+        releaseManipulationPointerCapture();
+        activeVectorInteractionRenderer.setMarquee(null);
+        marqueeOrigin = null;
+        marqueeAdditive = false;
+        marqueeBaseIds = Object.freeze([]);
+        selectEditorObjects([]);
+      };
+      const switchToPage = (pageId: string, restoreMemory = true): boolean => {
+        if (pageId === documentSession.activePageId) return false;
+        if (documentSession.sketchbook.page(pageId) === undefined) return false;
+        rememberActiveViewport();
+        releaseTransientInteractions();
+        if (!documentSession.setActivePageId(pageId)) return false;
+        applyActivePageToViewport(restoreMemory);
+        return true;
+      };
+      const runPageOperation = <TResult,>(
+        operation: () => TResult,
+        message: string,
+      ): TResult | null => {
+        try {
+          return operation();
+        } catch (cause) {
+          reportEditingFailure(cause, message);
+          return null;
+        }
+      };
+      const continuousPaperColorEdit = {
+        pageId: null as string | null,
+        initialColor: "",
+        currentColor: "",
+      };
+      const pageActions: PageActions = Object.freeze({
+        setActivePage: (pageId: string): boolean => switchToPage(pageId),
+        addPage: (): string | null =>
+          runPageOperation(() => {
+            rememberActiveViewport();
+            releaseTransientInteractions();
+            const { pageId, state } = activeHistoryCoordinator.executeAddPage();
+            updateHistoryDiagnostics(state);
+            documentSession.setActivePageId(pageId);
+            applyActivePageToViewport(false);
+            return pageId;
+          }, "Adding a page failed."),
+        duplicatePage: (pageId: string): string | null =>
+          runPageOperation(() => {
+            rememberActiveViewport();
+            releaseTransientInteractions();
+            const result = activeHistoryCoordinator.executeDuplicatePage(pageId);
+            updateHistoryDiagnostics(result.state);
+            documentSession.setActivePageId(result.pageId);
+            applyActivePageToViewport(false);
+            return result.pageId;
+          }, "Duplicating a page failed."),
+        deletePage: (pageId: string): number | null =>
+          runPageOperation(() => {
+            releaseTransientInteractions();
+            const result = activeHistoryCoordinator.executeRemovePage(pageId);
+            updateHistoryDiagnostics(result.state);
+            documentSession.setActivePageId(result.nextActivePageId);
+            applyActivePageToViewport(true);
+            return result.objectCount;
+          }, "Deleting a page failed."),
+        movePage: (pageId: string, targetIndex: number): boolean =>
+          runPageOperation(() => {
+            const state = activeHistoryCoordinator.executeReorderPage(pageId, targetIndex);
+            if (state === null) return false;
+            updateHistoryDiagnostics(state);
+            publishPages();
+            return true;
+          }, "Reordering pages failed.") ?? false,
+        renamePage: (pageId: string, name: string): boolean =>
+          runPageOperation(() => {
+            const state = activeHistoryCoordinator.executePageRename(pageId, name);
+            if (state === null) return false;
+            updateHistoryDiagnostics(state);
+            publishPages();
+            return true;
+          }, "Renaming a page failed.") ?? false,
+        setPageGeometry: (pageId: string, width: number, height: number): boolean =>
+          runPageOperation(() => {
+            const state = activeHistoryCoordinator.executePageGeometry(pageId, { width, height });
+            if (state === null) return false;
+            updateHistoryDiagnostics(state);
+            if (pageId === documentSession.activePageId) applyActivePageToViewport(false);
+            else publishPages();
+            return true;
+          }, "Resizing the page failed.") ?? false,
+        setPageOrientation: (pageId: string, orientation: "portrait" | "landscape"): boolean =>
+          runPageOperation(() => {
+            const page = documentSession.sketchbook.requirePage(pageId);
+            const next = orientPageGeometry(page.geometry, orientation);
+            const state = activeHistoryCoordinator.executePageGeometry(
+              pageId,
+              next,
+              orientation === "portrait" ? "Use portrait page" : "Use landscape page",
+            );
+            if (state === null) return false;
+            updateHistoryDiagnostics(state);
+            if (pageId === documentSession.activePageId) applyActivePageToViewport(false);
+            else publishPages();
+            return true;
+          }, "Changing page orientation failed.") ?? false,
+        setPaperType: (pageId: string, type: PaperType): boolean =>
+          runPageOperation(() => {
+            const definition = paperTypeDefinition(type);
+            const state = activeHistoryCoordinator.executePagePaper(
+              pageId,
+              {
+                type,
+                ...(definition.defaultSpacing === null
+                  ? {}
+                  : { spacing: definition.defaultSpacing }),
+              },
+              `Use ${definition.label.toLowerCase()} paper`,
+            );
+            if (state === null) return false;
+            updateHistoryDiagnostics(state);
+            if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
+            else publishPages();
+            return true;
+          }, "Changing paper failed.") ?? false,
+        beginPaperColorEdit: (pageId: string): boolean => {
+          const page = documentSession.sketchbook.page(pageId);
+          if (page === undefined) return false;
+          continuousPaperColorEdit.pageId = pageId;
+          continuousPaperColorEdit.initialColor = page.paper.color;
+          continuousPaperColorEdit.currentColor = page.paper.color;
+          return true;
+        },
+        previewPaperColor: (color: string): boolean => {
+          const pageId = continuousPaperColorEdit.pageId;
+          if (pageId === null) return false;
+          const page = documentSession.sketchbook.page(pageId);
+          if (page === undefined) return false;
+          const next = page.withPaper({ color });
+          if (next === page) return false;
+          // Paper previews replace the page outside History, mirroring the
+          // proven continuous-edit lifecycle used elsewhere in the editor.
+          documentSession.replaceDocument(documentSession.sketchbook.replacePage(next));
+          continuousPaperColorEdit.currentColor = next.paper.color;
+          if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
+          else publishPages();
+          return true;
+        },
+        commitPaperColorEdit: (): boolean => {
+          const pageId = continuousPaperColorEdit.pageId;
+          continuousPaperColorEdit.pageId = null;
+          if (pageId === null) return false;
+          const finalColor = continuousPaperColorEdit.currentColor;
+          const initialColor = continuousPaperColorEdit.initialColor;
+          if (finalColor === initialColor) return false;
+          return (
+            runPageOperation(() => {
+              const restored = documentSession.sketchbook.requirePage(pageId).withPaper({
+                color: initialColor,
+              });
+              documentSession.replaceDocument(documentSession.sketchbook.replacePage(restored));
+              const state = activeHistoryCoordinator.executePagePaper(
+                pageId,
+                { color: finalColor },
+                "Change paper color",
+              );
+              if (state === null) return false;
+              updateHistoryDiagnostics(state);
+              if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
+              else publishPages();
+              return true;
+            }, "Changing paper color failed.") ?? false
+          );
+        },
+        cancelPaperColorEdit: (): boolean => {
+          const pageId = continuousPaperColorEdit.pageId;
+          continuousPaperColorEdit.pageId = null;
+          if (pageId === null) return false;
+          const page = documentSession.sketchbook.page(pageId);
+          if (page === undefined) return false;
+          const restored = page.withPaper({ color: continuousPaperColorEdit.initialColor });
+          if (restored === page) return false;
+          documentSession.replaceDocument(documentSession.sketchbook.replacePage(restored));
+          if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
+          else publishPages();
+          return true;
+        },
+        hasArtworkOutsideBounds: (pageId: string): boolean =>
+          documentSession.sketchbook.page(pageId)?.hasArtworkOutsideBounds() ?? false,
+        getPage: (pageId: string): Page | null => documentSession.sketchbook.page(pageId) ?? null,
+      });
+      pageActionsReadyRef.current?.(pageActions);
       layerActionsReadyRef.current?.(layerActions);
       publishLayersRef = publishLayers;
+      publishPagesRef = publishPages;
+      applyActivePageToViewport(false);
       publishLayers();
       const deleteSelectedObjects = (): boolean => {
         cancelContinuousStyleEdit();
@@ -3140,6 +3480,7 @@ export function CanvasSurface({
       selectionGeometry.clear();
       historyCoordinator?.destroy();
       objectLifecycleActionsReadyRef.current?.(null);
+      pageActionsReadyRef.current?.(null);
       layerActionsReadyRef.current?.(null);
       shapeEditingActionsReadyRef.current?.(null);
       shapeEditingChangeRef.current?.(null);

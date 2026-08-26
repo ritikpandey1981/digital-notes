@@ -1,3 +1,4 @@
+import type { Page } from "@folio/document";
 import {
   InkObject,
   isVectorObject,
@@ -228,4 +229,83 @@ export function appendVectorGeometryPath(
       );
     }
   }
+}
+
+/**
+ * Draws one page into a thumbnail context.
+ *
+ * This deliberately reuses the same per-object draw helpers the live compositor
+ * uses, so thumbnails cannot drift from the canvas. It is a pure function of the
+ * page: no controller, no viewport, and no second rendering engine.
+ */
+export function renderPageThumbnail(
+  context: CanvasRenderingContext2D,
+  page: Page,
+  size: Readonly<{ width: number; height: number }>,
+  theme: Readonly<{ pageLineColor: string }>,
+): void {
+  const scale = Math.min(size.width / page.geometry.width, size.height / page.geometry.height);
+  const width = page.geometry.width * scale;
+  const height = page.geometry.height * scale;
+  const offsetX = (size.width - width) / 2;
+  const offsetY = (size.height - height) / 2;
+
+  context.clearRect(0, 0, size.width, size.height);
+  context.save();
+  context.fillStyle = page.paper.color;
+  context.fillRect(offsetX, offsetY, width, height);
+  context.beginPath();
+  context.rect(offsetX, offsetY, width, height);
+  context.clip();
+  context.translate(offsetX, offsetY);
+  context.scale(scale, scale);
+
+  const spacing = page.paper.spacing;
+  if (page.paper.type !== "blank" && spacing !== undefined && spacing * scale >= 2) {
+    context.save();
+    context.strokeStyle = theme.pageLineColor;
+    context.fillStyle = theme.pageLineColor;
+    context.lineWidth = 1 / scale;
+    context.beginPath();
+    if (page.paper.type === "dotted") {
+      const radius = Math.min(1.1 / scale, spacing / 6);
+      for (let y = spacing; y < page.geometry.height; y += spacing) {
+        for (let x = spacing; x < page.geometry.width; x += spacing) {
+          context.moveTo(x + radius, y);
+          context.arc(x, y, radius, 0, Math.PI * 2);
+        }
+      }
+      context.fill();
+    } else {
+      for (let y = spacing; y < page.geometry.height; y += spacing) {
+        context.moveTo(0, y);
+        context.lineTo(page.geometry.width, y);
+      }
+      if (page.paper.type !== "ruled") {
+        for (let x = spacing; x < page.geometry.width; x += spacing) {
+          context.moveTo(x, 0);
+          context.lineTo(x, page.geometry.height);
+        }
+      }
+      context.stroke();
+    }
+    context.restore();
+  }
+
+  for (const layer of page.content.layers) {
+    if (!layer.visible) continue;
+    context.save();
+    context.globalAlpha *= layer.opacity;
+    for (const objectId of layer.objectIds) {
+      const object = page.content.lookup(objectId);
+      if (object === undefined || !object.visible) continue;
+      if (object instanceof InkObject) {
+        drawInkObject(context, object, createStrokeVisual(object.stroke, object.transform.scale));
+      } else if (isVectorObject(object)) {
+        drawVectorObject(context, object);
+      }
+    }
+    context.restore();
+  }
+  context.restore();
 }

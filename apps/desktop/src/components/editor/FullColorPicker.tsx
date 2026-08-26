@@ -137,6 +137,10 @@ export function FullColorPicker({
   const toolDockBounds = rectFromElement(toolDock);
   const layersPanel = document.querySelector<HTMLElement>('[data-testid="layers-panel"]');
   const layersPanelBounds = rectFromElement(layersPanel);
+  const pageNavigator = document.querySelector<HTMLElement>('[data-testid="page-navigator"]');
+  const pageNavigatorBounds = rectFromElement(pageNavigator);
+  const pageSettings = document.querySelector<HTMLElement>('[data-testid="page-settings"]');
+  const pageSettingsBounds = rectFromElement(pageSettings);
   const avoidRect =
     workspaceAvoidRect === undefined
       ? undefined
@@ -172,6 +176,8 @@ export function FullColorPicker({
         quickColorRailBounds,
         toolDockBounds,
         layersPanelBounds,
+        pageNavigatorBounds,
+        pageSettingsBounds,
       ].filter((rect): rect is PickerRect => rect !== undefined),
     },
   );

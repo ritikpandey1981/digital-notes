@@ -27,6 +27,13 @@ export class DocumentObjectError extends Error {
 
 export type LayerMembershipErrorCode =
   | "DUPLICATE_LAYER_ID"
+  | "DUPLICATE_PAGE_ID"
+  | "INVALID_PAGE"
+  | "INVALID_PAGE_GEOMETRY"
+  | "INVALID_PAGE_INDEX"
+  | "INVALID_PAPER"
+  | "PAGE_NOT_FOUND"
+  | "PAGE_REQUIRED"
   | "DUPLICATE_LAYER_MEMBERSHIP"
   | "INVALID_LAYER"
   | "INVALID_LAYER_INDEX"

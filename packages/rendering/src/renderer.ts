@@ -1,4 +1,6 @@
 import { RenderingError } from "./errors";
+
+const MINIMUM_PATTERN_SCREEN_SPACING = 2;
 import { DirtyRegionAccumulator } from "./internal/dirty-regions";
 import {
   assertFiniteNumber,
@@ -116,7 +118,8 @@ export class Renderer {
     context.shadowBlur = 28 / input.viewport.camera.zoom;
     context.shadowOffsetX = 0;
     context.shadowOffsetY = 10 / input.viewport.camera.zoom;
-    context.fillStyle = input.theme.pageColor;
+    // Paper color is page state; the theme only supplies the fallback.
+    context.fillStyle = input.page.paperColor ?? input.theme.pageColor;
     context.fillRect(x, y, width, height);
     context.restore();
 
@@ -134,20 +137,61 @@ export class Renderer {
 
     const { context } = this;
     const { x, y, width, height } = input.page.rect;
-    const spacing = background.spacing ?? (background.kind === "grid" ? 24 : 28);
+    const spacing = background.spacing ?? (background.kind === "ruled" ? 28 : 24);
     if (!Number.isFinite(spacing) || spacing <= 0) {
       throw new RenderingError("INVALID_GEOMETRY", "Page background spacing must be positive.", {
         spacing,
       });
     }
 
+    const zoom = input.viewport.camera.zoom;
+    // Pattern spacing is page-anchored, so zooming magnifies the same physical
+    // paper. Below roughly two screen pixels of spacing the pattern reads as a
+    // flat tint, so it is skipped rather than drawn as millions of primitives.
+    if (spacing * zoom < MINIMUM_PATTERN_SCREEN_SPACING) return;
+
     context.save();
     context.beginPath();
     context.rect(x, y, width, height);
     context.clip();
-    context.beginPath();
     context.strokeStyle = background.lineColor ?? input.theme.pageLineColor;
-    context.lineWidth = 1 / input.viewport.camera.zoom;
+    context.fillStyle = background.lineColor ?? input.theme.pageLineColor;
+    context.lineWidth = 1 / zoom;
+
+    if (background.kind === "dotted") {
+      const radius = Math.min(1.1 / zoom, spacing / 6);
+      context.beginPath();
+      for (let dotY = y + spacing; dotY < y + height; dotY += spacing) {
+        for (let dotX = x + spacing; dotX < x + width; dotX += spacing) {
+          context.moveTo(dotX + radius, dotY);
+          context.arc(dotX, dotY, radius, 0, Math.PI * 2);
+        }
+      }
+      context.fill();
+      context.restore();
+      return;
+    }
+
+    context.beginPath();
+    if (background.kind === "isometric") {
+      // Two 30-degree families plus verticals, laid out from page-space origin.
+      const step = spacing;
+      const slope = Math.tan(Math.PI / 6);
+      const span = width * slope;
+      for (let originY = y - span; originY < y + height + span; originY += step) {
+        context.moveTo(x, originY);
+        context.lineTo(x + width, originY + span);
+        context.moveTo(x, originY + span);
+        context.lineTo(x + width, originY);
+      }
+      for (let lineX = x + step; lineX < x + width; lineX += step) {
+        context.moveTo(lineX, y);
+        context.lineTo(lineX, y + height);
+      }
+      context.stroke();
+      context.restore();
+      return;
+    }
 
     for (let lineY = y + spacing; lineY < y + height; lineY += spacing) {
       context.moveTo(x, lineY);

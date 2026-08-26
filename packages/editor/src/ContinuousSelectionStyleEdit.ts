@@ -96,7 +96,7 @@ export class ContinuousSelectionStyleEdit {
       changed = true;
     }
     if (!changed) return false;
-    this.#documentSession.replaceDocument(page);
+    this.#documentSession.replacePageDocument(page);
     this.#onPreviewDocumentChange(this.#documentSession.page);
     return true;
   }
@@ -190,7 +190,7 @@ export class ContinuousSelectionStyleEdit {
       changed = true;
     }
     if (!changed) return;
-    this.#documentSession.replaceDocument(page);
+    this.#documentSession.replacePageDocument(page);
     this.#onPreviewDocumentChange(this.#documentSession.page);
   }
 }

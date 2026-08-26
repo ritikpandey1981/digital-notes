@@ -1,4 +1,4 @@
-import { InkObject, Layer, PageDocument } from "@folio/document";
+import { InkObject, Layer, PageDocument, SketchbookDocument } from "@folio/document";
 import { Stroke, type StrokePoint } from "@folio/ink";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ContinuousLayerOpacityEdit } from "../ContinuousLayerOpacityEdit";
@@ -380,8 +380,9 @@ describe("PageDocument History document boundary", () => {
   it("keeps layer structure inside the immutable History document", () => {
     const session = createSession();
     const document = session.getDocument();
-    expect(document).toBeInstanceOf(PageDocument);
-    expect(document.layers[0]).toBeInstanceOf(Layer);
+    expect(document).toBeInstanceOf(SketchbookDocument);
+    expect(document.firstPage.content).toBeInstanceOf(PageDocument);
+    expect(document.firstPage.content.layers[0]).toBeInstanceOf(Layer);
     expect(session.collection.objects).toEqual([]);
     expect(
       session.page.layers.every((layer) =>

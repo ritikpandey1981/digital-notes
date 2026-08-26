@@ -31,8 +31,24 @@ function ApplicationShellContent() {
     useState<WorkspaceHistoryAvailability>(EMPTY_WORKSPACE_HISTORY);
   const [navigationTeachingLearned, setNavigationTeachingLearned] = useState(false);
   const [layersPanelOpen, setLayersPanelOpen] = useState(false);
-  const toggleLayersPanel = useCallback(() => setLayersPanelOpen((open) => !open), []);
+  const [pageNavigatorOpen, setPageNavigatorOpen] = useState(false);
+  const [pageSettingsOpen, setPageSettingsOpen] = useState(false);
+  // Page Settings and the Layers panel share the top-right slot, so opening one
+  // closes the other. The bottom page filmstrip coexists with both.
+  const toggleLayersPanel = useCallback(() => {
+    setLayersPanelOpen((open) => {
+      if (!open) setPageSettingsOpen(false);
+      return !open;
+    });
+  }, []);
   const dismissLayersPanel = useCallback(() => setLayersPanelOpen(false), []);
+  const togglePageNavigator = useCallback(() => setPageNavigatorOpen((open) => !open), []);
+  const dismissPageNavigator = useCallback(() => setPageNavigatorOpen(false), []);
+  const openPageSettings = useCallback(() => {
+    setLayersPanelOpen(false);
+    setPageSettingsOpen(true);
+  }, []);
+  const dismissPageSettings = useCallback(() => setPageSettingsOpen(false), []);
   const learnViewportNavigation = useCallback(() => setNavigationTeachingLearned(true), []);
   const handleHistoryActionsReady = useCallback((actions: WorkspaceHistoryActions | null) => {
     historyActionsRef.current = actions;
@@ -59,6 +75,8 @@ function ApplicationShellContent() {
         onRedo={redo}
         layersPanelOpen={layersPanelOpen}
         onToggleLayersPanel={toggleLayersPanel}
+        pageNavigatorOpen={pageNavigatorOpen}
+        onTogglePageNavigator={togglePageNavigator}
       />
       <main
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-folio-workspace"
@@ -68,6 +86,11 @@ function ApplicationShellContent() {
         <EditorWorkspace
           layersPanelOpen={layersPanelOpen}
           onDismissLayersPanel={dismissLayersPanel}
+          pageNavigatorOpen={pageNavigatorOpen}
+          onDismissPageNavigator={dismissPageNavigator}
+          pageSettingsOpen={pageSettingsOpen}
+          onOpenPageSettings={openPageSettings}
+          onDismissPageSettings={dismissPageSettings}
           activeTool={editorWorkspace.activeTool}
           activeShape={editorWorkspace.activeShape}
           armedShape={editorWorkspace.armedShape}

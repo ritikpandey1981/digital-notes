@@ -3,6 +3,9 @@ import {
   type EditableStyleInput,
   Layer,
   PageDocument,
+  SketchbookDocument,
+  type PageGeometry,
+  type PagePaperInput,
   type PageObject,
   type VectorPageObject,
 } from "@folio/document";
@@ -11,6 +14,7 @@ import {
   createHistoryController,
   type HistoryListener,
   type HistoryNotification,
+  type EditorCommand,
   type IHistoryController,
   type IHistoryState,
 } from "@folio/history";
@@ -31,6 +35,15 @@ import {
   createReorderLayersCommand,
   createUpdateLayerCommand,
 } from "./layer-commands";
+import {
+  createAddPageCommand,
+  createPageGeometryCommand,
+  createPagePaperCommand,
+  createPageRenameCommand,
+  createRemovePageCommand,
+  createReorderPagesCommand,
+  liftPageCommand,
+} from "./page-commands";
 import { createCommandForManipulation } from "./manipulation-command-adapter";
 import { createUpdateInkStyleCommand } from "./update-ink-style-command";
 import { createUpdateVectorStyleCommand } from "./update-vector-style-command";
@@ -49,7 +62,7 @@ interface EditorHistoryCoordinatorOptions {
 
 /** Package-private editor boundary around one manager/controller lifetime. */
 export interface EditorHistoryCoordinator {
-  readonly controller: IHistoryController<PageDocument>;
+  readonly controller: IHistoryController<SketchbookDocument>;
   readonly executeStroke: (object: InkObject) => IHistoryState;
   readonly executeObjectCreation: (object: PageObject) => IHistoryState;
   readonly executeVectorStyleUpdate: (
@@ -91,13 +104,32 @@ export interface EditorHistoryCoordinator {
     targetLayerId: string,
     targetLocalIndex?: number,
   ) => IHistoryState | null;
+  readonly executePageGeometry: (
+    pageId: string,
+    geometry: PageGeometry,
+    description?: string,
+  ) => IHistoryState | null;
+  readonly executePagePaper: (
+    pageId: string,
+    paper: PagePaperInput,
+    description?: string,
+  ) => IHistoryState | null;
+  readonly executePageRename: (pageId: string, name: string) => IHistoryState | null;
+  readonly executeAddPage: () => Readonly<{ pageId: string; state: IHistoryState }>;
+  readonly executeDuplicatePage: (
+    pageId: string,
+  ) => Readonly<{ pageId: string; state: IHistoryState }>;
+  readonly executeRemovePage: (
+    pageId: string,
+  ) => Readonly<{ nextActivePageId: string; objectCount: number; state: IHistoryState }>;
+  readonly executeReorderPage: (pageId: string, targetIndex: number) => IHistoryState | null;
   readonly undo: () => IHistoryState;
   readonly redo: () => IHistoryState;
   readonly destroy: () => void;
 }
 
 class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator {
-  readonly controller: IHistoryController<PageDocument>;
+  readonly controller: IHistoryController<SketchbookDocument>;
   readonly #documentSession: InkDocumentSession;
   readonly #now: () => string;
   readonly #unsubscribe: () => void;
@@ -133,7 +165,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       timestamp: this.#now(),
       activeLayerId: this.#documentSession.activeLayerId,
     });
-    return this.controller.executeCommand(command);
+    return this.#executePageCommand(command);
   }
 
   executeManipulations(
@@ -156,7 +188,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
   }
 
   executeStroke(object: InkObject): IHistoryState {
-    return this.controller.executeCommand(
+    return this.#executePageCommand(
       createAddStrokeCommand({
         object,
         insertionIndex: object.zIndex,
@@ -167,7 +199,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
   }
 
   executeObjectCreation(object: PageObject): IHistoryState {
-    return this.controller.executeCommand(
+    return this.#executePageCommand(
       createInsertObjectCommand({
         object,
         insertionIndex: object.zIndex,
@@ -181,7 +213,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
 
   executeVectorStyleUpdate(object: VectorPageObject, style: EditableStyleInput): IHistoryState {
     const timestamp = this.#now();
-    return this.controller.executeCommand(
+    return this.#executePageCommand(
       createUpdateVectorStyleCommand({
         objectId: object.id,
         expectedObjectModifiedAt: object.modifiedAt,
@@ -213,7 +245,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       `Paste ${objects.length} object${objects.length === 1 ? "" : "s"}`,
       () => {
         for (const object of objects) {
-          this.controller.executeCommand(
+          this.#executePageCommand(
             createInsertObjectCommand({
               object,
               insertionIndex: object.zIndex,
@@ -280,7 +312,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const layerIndex =
       page.layerIndex(page.resolveActiveLayerId(this.#documentSession.activeLayerId)) + 1;
     const layer = new Layer({ id: layerId, name: name ?? `Layer ${this.#nextLayerOrdinal()}` });
-    const state = this.controller.executeCommand(
+    const state = this.#executePageCommand(
       createAddLayerCommand({ layer, layerIndex, timestamp: this.#now() }),
     );
     return Object.freeze({ layerId, state });
@@ -302,7 +334,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       finalPatch[key] = next;
     }
     if (Object.keys(finalPatch).length === 0) return null;
-    return this.controller.executeCommand(
+    return this.#executePageCommand(
       createUpdateLayerCommand({
         layerId,
         initialPatch,
@@ -335,7 +367,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       objects,
       timestamp: this.#now(),
     });
-    const state = this.controller.executeCommand(command);
+    const state = this.#executePageCommand(command);
     return Object.freeze({ removedObjectCount: command.removedObjectCount, state });
   }
 
@@ -344,7 +376,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const fromIndex = page.layerIndex(layerId);
     const toIndex = Math.min(Math.max(targetIndex, 0), page.layerCount - 1);
     if (fromIndex === toIndex) return null;
-    return this.controller.executeCommand(
+    return this.#executePageCommand(
       createReorderLayersCommand({ layerId, fromIndex, toIndex, timestamp: this.#now() }),
     );
   }
@@ -355,12 +387,10 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     if (total === 0) return null;
     const run = (): void => {
       for (const edit of edits.inkEdits) {
-        this.controller.executeCommand(
-          createUpdateInkStyleCommand({ ...edit, timestamp: this.#now() }),
-        );
+        this.#executePageCommand(createUpdateInkStyleCommand({ ...edit, timestamp: this.#now() }));
       }
       for (const edit of edits.vectorEdits) {
-        this.controller.executeCommand(
+        this.#executePageCommand(
           createUpdateVectorStyleCommand({
             objectId: edit.original.id,
             expectedObjectModifiedAt: edit.original.modifiedAt,
@@ -428,7 +458,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const toLocalIndex =
       targetLocalIndex ?? (fromLayerId === targetLayerId ? target.size - 1 : target.size);
     if (fromLayerId === targetLayerId && fromLocalIndex === toLocalIndex) return null;
-    return this.controller.executeCommand(
+    return this.#executePageCommand(
       createMoveObjectToLayerCommand({
         objectId,
         fromLayerId,
@@ -461,6 +491,123 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     this.#destroyed = true;
     this.#unsubscribe();
     this.controller.destroy();
+  }
+
+  executePageGeometry(
+    pageId: string,
+    geometry: PageGeometry,
+    description?: string,
+  ): IHistoryState | null {
+    const page = this.#documentSession.sketchbook.requirePage(pageId);
+    const next = page.withGeometry(geometry);
+    if (next === page) return null;
+    return this.controller.executeCommand(
+      createPageGeometryCommand({
+        pageId,
+        initialGeometry: page.geometry,
+        finalGeometry: next.geometry,
+        timestamp: this.#now(),
+        ...(description === undefined ? {} : { description }),
+      }),
+    );
+  }
+
+  executePagePaper(
+    pageId: string,
+    paper: PagePaperInput,
+    description?: string,
+  ): IHistoryState | null {
+    const page = this.#documentSession.sketchbook.requirePage(pageId);
+    const next = page.withPaper(paper);
+    if (next === page) return null;
+    return this.controller.executeCommand(
+      createPagePaperCommand({
+        pageId,
+        initialPaper: page.paper,
+        finalPaper: next.paper,
+        timestamp: this.#now(),
+        ...(description === undefined ? {} : { description }),
+      }),
+    );
+  }
+
+  executePageRename(pageId: string, name: string): IHistoryState | null {
+    const page = this.#documentSession.sketchbook.requirePage(pageId);
+    const trimmed = name.trim();
+    if (trimmed === page.name) return null;
+    return this.controller.executeCommand(
+      createPageRenameCommand({
+        pageId,
+        initialName: page.name,
+        finalName: trimmed,
+        timestamp: this.#now(),
+      }),
+    );
+  }
+
+  executeAddPage(): Readonly<{ pageId: string; state: IHistoryState }> {
+    const sketchbook = this.#documentSession.sketchbook;
+    const page = this.#documentSession.createInheritedPage();
+    const index = sketchbook.pageIndex(this.#documentSession.activePageId) + 1;
+    const state = this.controller.executeCommand(
+      createAddPageCommand({ page, index, timestamp: this.#now() }),
+    );
+    return Object.freeze({ pageId: page.id, state });
+  }
+
+  executeDuplicatePage(pageId: string): Readonly<{ pageId: string; state: IHistoryState }> {
+    const sketchbook = this.#documentSession.sketchbook;
+    const duplicate = this.#documentSession.duplicatePageById(pageId);
+    const state = this.controller.executeCommand(
+      createAddPageCommand({
+        page: duplicate,
+        index: sketchbook.pageIndex(pageId) + 1,
+        timestamp: this.#now(),
+        description: "Duplicate page",
+      }),
+    );
+    return Object.freeze({ pageId: duplicate.id, state });
+  }
+
+  executeRemovePage(
+    pageId: string,
+  ): Readonly<{ nextActivePageId: string; objectCount: number; state: IHistoryState }> {
+    const sketchbook = this.#documentSession.sketchbook;
+    const page = sketchbook.requirePage(pageId);
+    if (sketchbook.pageCount === 1) {
+      throw new Error("The final remaining page cannot be removed.");
+    }
+    const neighbor = sketchbook.neighborPageId(pageId);
+    if (neighbor === null) throw new Error("No neighboring page is available.");
+    const state = this.controller.executeCommand(
+      createRemovePageCommand({
+        page,
+        index: sketchbook.pageIndex(pageId),
+        timestamp: this.#now(),
+      }),
+    );
+    return Object.freeze({
+      nextActivePageId: neighbor,
+      objectCount: page.objectCount,
+      state,
+    });
+  }
+
+  executeReorderPage(pageId: string, targetIndex: number): IHistoryState | null {
+    const sketchbook = this.#documentSession.sketchbook;
+    const fromIndex = sketchbook.pageIndex(pageId);
+    const toIndex = Math.min(Math.max(targetIndex, 0), sketchbook.pageCount - 1);
+    if (fromIndex === toIndex) return null;
+    return this.controller.executeCommand(
+      createReorderPagesCommand({ pageId, fromIndex, toIndex, timestamp: this.#now() }),
+    );
+  }
+
+  /** Executes one page-scoped command against the active page. */
+  #executePageCommand(command: EditorCommand<PageDocument>): IHistoryState {
+    return this.controller.executeCommand(
+      liftPageCommand(command, this.#documentSession.activePageId),
+    );
   }
 
   #runTransaction(id: string, description: string, execute: () => void): IHistoryState {
