@@ -1,6 +1,6 @@
 import {
   InkObject,
-  ObjectCollection,
+  PageDocument,
   ObjectFactory,
   isVectorObject,
   type PageObject,
@@ -8,6 +8,7 @@ import {
 import type { EditorCommand } from "@folio/history";
 import {
   assertLifecycleCommandInput,
+  requireLayerId,
   assertLifecycleIndex,
   assertStoredLifecycleObject,
   lifecycleStateMismatch,
@@ -21,19 +22,21 @@ import {
 export interface DuplicateCommandInput {
   readonly sourceObject: PageObject;
   readonly insertionIndex: number;
+  readonly layerId: string;
   readonly duplicateObjectId?: string;
   readonly id?: string;
   readonly timestamp?: string;
   readonly description?: string;
 }
 
-class DuplicateCommand implements EditorCommand<ObjectCollection> {
+class DuplicateCommand implements EditorCommand<PageDocument> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
   readonly duplicateObjectId: string;
   readonly #duplicateObject: PageObject;
   readonly #insertionIndex: number;
+  readonly #layerId: string;
   readonly #metadata: ResolvedLifecycleMetadata;
 
   constructor(input: DuplicateCommandInput) {
@@ -69,14 +72,15 @@ class DuplicateCommand implements EditorCommand<ObjectCollection> {
     this.#duplicateObject = duplicate;
     this.duplicateObjectId = duplicate.id;
     this.#insertionIndex = input.insertionIndex;
+    this.#layerId = requireLayerId(input.layerId);
     Object.freeze(this);
   }
 
-  execute(document: ObjectCollection): ObjectCollection {
+  execute(document: PageDocument): PageDocument {
     return this.#insert(document, "execute");
   }
 
-  undo(document: ObjectCollection): ObjectCollection {
+  undo(document: PageDocument): PageDocument {
     const current = requireLifecycleDocument("duplicate", document, "undo");
     const duplicate = current.lookup(this.#duplicateObject.id);
     if (!matchesStoredDuplicate(duplicate, this.#duplicateObject, this.#insertionIndex)) {
@@ -97,11 +101,11 @@ class DuplicateCommand implements EditorCommand<ObjectCollection> {
     }
   }
 
-  redo(document: ObjectCollection): ObjectCollection {
+  redo(document: PageDocument): PageDocument {
     return this.#insert(document, "redo");
   }
 
-  #insert(document: ObjectCollection, operation: "execute" | "redo"): ObjectCollection {
+  #insert(document: PageDocument, operation: "execute" | "redo"): PageDocument {
     const current = requireLifecycleDocument("duplicate", document, operation);
     requireLifecycleObject(
       "duplicate",
@@ -130,14 +134,14 @@ class DuplicateCommand implements EditorCommand<ObjectCollection> {
       );
     }
     try {
-      return current.insert(this.#duplicateObject, this.#insertionIndex);
+      return current.insert(this.#duplicateObject, this.#insertionIndex, this.#layerId);
     } catch (cause) {
       throw lifecycleTransitionFailed("duplicate", operation, this.#duplicateObject.id, cause);
     }
   }
 }
 
-export interface DuplicateEditorCommand extends EditorCommand<ObjectCollection> {
+export interface DuplicateEditorCommand extends EditorCommand<PageDocument> {
   readonly duplicateObjectId: string;
 }
 
@@ -146,7 +150,7 @@ export function createDuplicateCommand(input: DuplicateCommandInput): DuplicateE
 }
 
 function matchesStoredDuplicate(
-  candidate: ReturnType<ObjectCollection["lookup"]>,
+  candidate: ReturnType<PageDocument["lookup"]>,
   stored: PageObject,
   insertionIndex: number,
 ): candidate is PageObject {

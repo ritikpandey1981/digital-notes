@@ -5,18 +5,23 @@ import type { ObjectSerializationContract, PageObject, SerializedPageObject } fr
 describe("@folio/document public API", () => {
   it("exposes only document models, factories, collections, validation, and errors", () => {
     expect(Object.keys(document).sort()).toEqual([
+      "DEFAULT_LAYER_NAME",
       "DocumentObjectError",
       "EllipseObject",
       "InkObject",
+      "Layer",
+      "LayerMembershipError",
       "LineObject",
       "ObjectCollection",
       "ObjectFactory",
       "ObjectValidationError",
+      "PageDocument",
       "RectangleObject",
       "Transform",
       "assertValidObject",
       "assertValidObjectCollection",
       "cloneObject",
+      "createDefaultLayer",
       "createEditableColor",
       "createEditableStyle",
       "createEllipseObject",

@@ -1,4 +1,5 @@
-import { InkObject, ObjectCollection, ObjectFactory, Transform } from "@folio/document";
+import { pageOf } from "./layer-test-support";
+import { InkObject, PageDocument, ObjectFactory, Transform } from "@folio/document";
 import {
   HistoryError,
   createEditorHistoryManager,
@@ -249,7 +250,7 @@ describe("MoveCommand", () => {
 
   it("rejects a missing object", () => {
     expectMoveFailure(
-      () => createMoveCommand(moveInput()).execute(ObjectCollection.empty()),
+      () => createMoveCommand(moveInput()).execute(pageOf()),
       "MOVE_OBJECT_NOT_FOUND",
     );
   });
@@ -262,7 +263,7 @@ describe("MoveCommand", () => {
   });
 
   it("rejects a structurally valid non-InkObject implementation", () => {
-    const collection = new ObjectCollection([createPlainInkObject()]);
+    const collection = pageOf([createPlainInkObject()]);
 
     expectMoveFailure(
       () => createMoveCommand(moveInput()).execute(collection),
@@ -306,13 +307,10 @@ function moveInput(): MoveCommandInput {
   };
 }
 
-function createCollection(options: CollectionOptions = {}): ObjectCollection {
+function createCollection(options: CollectionOptions = {}): PageDocument {
   const first = createInkObject(options);
-  if (!options.includeSecondObject) return new ObjectCollection([first]);
-  return new ObjectCollection([
-    first,
-    createInkObject({ id: "object-2", modifiedAt: OBJECT_TIMESTAMP }),
-  ]);
+  if (!options.includeSecondObject) return pageOf([first]);
+  return pageOf([first, createInkObject({ id: "object-2", modifiedAt: OBJECT_TIMESTAMP })]);
 }
 
 function createInkObject(options: CollectionOptions = {}): InkObject {
@@ -373,23 +371,23 @@ function createPlainInkObject() {
   });
 }
 
-function expectInkObject(collection: ObjectCollection, objectId: string): InkObject {
+function expectInkObject(collection: PageDocument, objectId: string): InkObject {
   const object = collection.lookup(objectId);
   expect(object).toBeInstanceOf(InkObject);
   return object as InkObject;
 }
 
-function createCollectionSession(initial: ObjectCollection): {
-  readonly session: HistoryDocumentSession<ObjectCollection>;
-  readonly current: ObjectCollection;
-  readonly replacements: readonly ObjectCollection[];
+function createCollectionSession(initial: PageDocument): {
+  readonly session: HistoryDocumentSession<PageDocument>;
+  readonly current: PageDocument;
+  readonly replacements: readonly PageDocument[];
 } {
   let current = initial;
-  const replacements: ObjectCollection[] = [];
+  const replacements: PageDocument[] = [];
   return {
     session: Object.freeze({
       getDocument: () => current,
-      replaceDocument: (document: ObjectCollection) => {
+      replaceDocument: (document: PageDocument) => {
         current = document;
         replacements.push(document);
       },

@@ -48,18 +48,28 @@ export class EditorClipboard {
     return true;
   }
 
-  preparePaste(document: ObjectCollection): EditorPasteBatch | null {
+  /**
+   * Prepares one paste batch.
+   *
+   * `insertionIndex` is the canonical flattened position at which the batch
+   * enters the document, which the editor resolves from the active Layer.
+   */
+  preparePaste(document: ObjectCollection, insertionIndex?: number): EditorPasteBatch | null {
     if (!(document instanceof ObjectCollection)) {
       throw new TypeError("Clipboard paste requires an ObjectCollection document.");
     }
     if (this.#objects.length === 0) return null;
+    const baseIndex = insertionIndex ?? document.size;
+    if (!Number.isSafeInteger(baseIndex) || baseIndex < 0 || baseIndex > document.size) {
+      throw new RangeError("Clipboard paste insertion index is outside the document.");
+    }
     const ordinal = this.#pasteCount + 1;
     const distance = PASTE_OFFSET_STEP * ordinal;
     const offset = Object.freeze({ x: distance, y: distance });
     const identities = new Set(document.objects.map(({ id }) => id));
     const objects = this.#objects.map((source, index) => {
       const clone = this.#factory.cloneObject(source, {
-        zIndex: document.size + index,
+        zIndex: baseIndex + index,
         transform: source.transform.translatedBy(offset),
       });
       if (identities.has(clone.id)) {

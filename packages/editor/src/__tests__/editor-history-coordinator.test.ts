@@ -23,7 +23,7 @@ const SECOND_MOVE_TIMESTAMP = "2026-07-28T08:02:00.000Z";
 describe("EditorHistoryCoordinator", () => {
   it("adapts a translation manipulation result into one immutable History successor", () => {
     const session = createDocumentSession();
-    const initial = session.collection;
+    const initial = session.page;
     const source = expectInkObject(session);
     const synchronizedDocuments: (typeof initial)[] = [];
     const notifications: HistoryNotification[] = [];
@@ -53,7 +53,7 @@ describe("EditorHistoryCoordinator", () => {
     expect(moved.stroke).toBe(source.stroke);
     expect(moved.transform.translation).toEqual({ x: 12, y: -8 });
     expect(source.transform.translation).toEqual({ x: 0, y: 0 });
-    expect(synchronizedDocuments).toEqual([session.collection]);
+    expect(synchronizedDocuments).toEqual([session.page]);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]).toMatchObject({
       operation: "execute",
@@ -69,7 +69,7 @@ describe("EditorHistoryCoordinator", () => {
     const session = createDocumentSession();
     const source = expectInkObject(session);
     const synchronized: Array<{
-      readonly document: typeof session.collection;
+      readonly document: typeof session.page;
       readonly id: string;
       readonly boundsX: number;
       readonly boundsY: number;
@@ -516,8 +516,7 @@ describe("EditorHistoryCoordinator", () => {
       now: () => FIRST_MOVE_TIMESTAMP,
       onDocumentChange: () => undefined,
     });
-    const firstController: IHistoryController<typeof first.collection> =
-      firstCoordinator.controller;
+    const firstController: IHistoryController<typeof first.page> = firstCoordinator.controller;
 
     firstCoordinator.executeManipulation(
       createTranslationResult("session-1", { x: 0, y: 0 }, { x: 5, y: 5 }),

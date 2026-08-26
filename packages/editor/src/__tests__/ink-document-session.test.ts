@@ -1,4 +1,5 @@
-import { InkObject, ObjectCollection } from "@folio/document";
+import { pageOf } from "./layer-test-support";
+import { InkObject, PageDocument } from "@folio/document";
 import type { HistoryDocumentSession } from "@folio/history";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
 import { describe, expect, it } from "vitest";
@@ -44,6 +45,9 @@ describe("InkDocumentSession", () => {
       objectCount: 2,
       inkObjectCount: 2,
       allObjectsImmutable: true,
+      layerCount: 1,
+      activeLayerId: "layer-1",
+      membershipConsistent: true,
     });
   });
 
@@ -90,16 +94,16 @@ describe("InkDocumentSession", () => {
       createId: () => "object",
       now: () => "2026-07-27T08:00:00.000Z",
     });
-    const boundary: HistoryDocumentSession<ObjectCollection> = session;
+    const boundary: HistoryDocumentSession<PageDocument> = session;
     session.completeStroke(stroke("stroke"));
     const initial = boundary.getDocument();
-    const successor = new ObjectCollection(initial.objects);
+    const successor = pageOf(initial.objects.objects);
 
     boundary.replaceDocument(successor);
 
     expect(boundary.getDocument()).toBe(successor);
-    expect(session.collection).toBe(successor);
+    expect(session.page).toBe(successor);
     expect(Object.isFrozen(successor)).toBe(true);
-    expect(() => boundary.replaceDocument({} as ObjectCollection)).toThrowError(TypeError);
+    expect(() => boundary.replaceDocument({} as PageDocument)).toThrowError(TypeError);
   });
 });

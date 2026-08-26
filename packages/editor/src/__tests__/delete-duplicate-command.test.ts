@@ -1,4 +1,5 @@
-import { InkObject, ObjectCollection, ObjectFactory, Transform } from "@folio/document";
+import { pageOf, TEST_LAYER_ID } from "./layer-test-support";
+import { InkObject, PageDocument, ObjectFactory, Transform } from "@folio/document";
 import { createEditorHistoryManager, createHistoryController } from "@folio/history";
 import type { HistoryDocumentSession, HistoryNotification } from "@folio/history";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
@@ -21,6 +22,7 @@ describe("DeleteCommand", () => {
     const command = createDeleteCommand({
       deletedObject: deleted,
       originalInsertionIndex: 1,
+      layerId: TEST_LAYER_ID,
       id: "delete-b",
       timestamp: T1,
     });
@@ -39,7 +41,7 @@ describe("DeleteCommand", () => {
   });
 
   it.each([
-    ["missing", ObjectCollection.empty(), "DELETE_OBJECT_NOT_FOUND"],
+    ["missing", pageOf(), "DELETE_OBJECT_NOT_FOUND"],
     ["hidden", collectionWith({ visible: false }), "DELETE_OBJECT_HIDDEN"],
     ["locked", collectionWith({ locked: true }), "DELETE_OBJECT_LOCKED"],
     ["stale", collectionWith({ modifiedAt: T1 }), "DELETE_OBJECT_STALE"],
@@ -48,6 +50,7 @@ describe("DeleteCommand", () => {
     const command = createDeleteCommand({
       deletedObject: source,
       originalInsertionIndex: 0,
+      layerId: TEST_LAYER_ID,
       timestamp: T2,
     });
     expect(() => command.execute(document)).toThrowError(expect.objectContaining({ code }));
@@ -62,6 +65,7 @@ describe("DuplicateCommand", () => {
     const command = createDuplicateCommand({
       sourceObject: source,
       insertionIndex: 1,
+      layerId: TEST_LAYER_ID,
       duplicateObjectId: "a-copy",
       id: "duplicate-a",
       timestamp: T1,
@@ -93,6 +97,7 @@ describe("DuplicateCommand", () => {
       createDuplicateCommand({
         sourceObject: source,
         insertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         duplicateObjectId: source.id,
         timestamp: T1,
       }),
@@ -106,6 +111,7 @@ describe("DuplicateCommand", () => {
       const command = createDuplicateCommand({
         sourceObject: source,
         insertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         duplicateObjectId: "copy",
         timestamp: T2,
       });
@@ -126,6 +132,7 @@ describe("object lifecycle History integration", () => {
         createDeleteCommand({
           deletedObject: transformed,
           originalInsertionIndex: 0,
+          layerId: TEST_LAYER_ID,
           id: `delete-after-${kind}`,
           timestamp: T2,
         }),
@@ -153,6 +160,7 @@ describe("object lifecycle History integration", () => {
         createDuplicateCommand({
           sourceObject: transformed,
           insertionIndex: 1,
+          layerId: TEST_LAYER_ID,
           duplicateObjectId: `${kind}-copy`,
           id: `duplicate-after-${kind}`,
           timestamp: T2,
@@ -177,6 +185,7 @@ describe("object lifecycle History integration", () => {
       createDeleteCommand({
         deletedObject: ink(first.current, "a"),
         originalInsertionIndex: 0,
+        layerId: TEST_LAYER_ID,
         timestamp: T1,
       }),
     );
@@ -184,6 +193,7 @@ describe("object lifecycle History integration", () => {
       createDuplicateCommand({
         sourceObject: ink(first.current, "b"),
         insertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         duplicateObjectId: "b-copy",
         timestamp: T2,
       }),
@@ -198,6 +208,7 @@ describe("object lifecycle History integration", () => {
     const duplicate = createDuplicateCommand({
       sourceObject: ink(second.current, "a"),
       insertionIndex: 1,
+      layerId: TEST_LAYER_ID,
       duplicateObjectId: "a-copy",
       timestamp: T1,
     });
@@ -206,6 +217,7 @@ describe("object lifecycle History integration", () => {
       createDeleteCommand({
         deletedObject: ink(second.current, duplicate.duplicateObjectId),
         originalInsertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         timestamp: T2,
       }),
     );
@@ -227,6 +239,7 @@ describe("object lifecycle History integration", () => {
       createDeleteCommand({
         deletedObject: ink(fixture.current, "a"),
         originalInsertionIndex: 0,
+        layerId: TEST_LAYER_ID,
         timestamp: T1,
       }),
     );
@@ -234,6 +247,7 @@ describe("object lifecycle History integration", () => {
       createDuplicateCommand({
         sourceObject: ink(fixture.current, "b"),
         insertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         duplicateObjectId: "b-copy",
         timestamp: T2,
       }),
@@ -260,6 +274,7 @@ describe("object lifecycle History integration", () => {
       createDuplicateCommand({
         sourceObject: ink(fixture.current, "a"),
         insertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         duplicateObjectId: "a-copy",
         timestamp: T1,
       }),
@@ -270,6 +285,7 @@ describe("object lifecycle History integration", () => {
       createDeleteCommand({
         deletedObject: ink(fixture.current, "b"),
         originalInsertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         timestamp: T2,
       }),
     );
@@ -290,6 +306,7 @@ describe("object lifecycle History integration", () => {
       const duplicate = createDuplicateCommand({
         sourceObject: ink(fixture.current, "a"),
         insertionIndex: 1,
+        layerId: TEST_LAYER_ID,
         duplicateObjectId: "a-copy",
         timestamp: T1,
       });
@@ -314,6 +331,7 @@ describe("object lifecycle History integration", () => {
     const duplicate = createDuplicateCommand({
       sourceObject: ink(fixture.current, "a"),
       insertionIndex: 1,
+      layerId: TEST_LAYER_ID,
       duplicateObjectId: "a-copy",
       timestamp: T1,
     });
@@ -340,8 +358,8 @@ describe("object lifecycle History integration", () => {
 });
 
 function executeTransform(
-  manager: Pick<ReturnType<typeof createEditorHistoryManager<ObjectCollection>>, "executeCommand">,
-  document: ObjectCollection,
+  manager: Pick<ReturnType<typeof createEditorHistoryManager<PageDocument>>, "executeCommand">,
+  document: PageDocument,
   kind: "move" | "rotate" | "scale",
   objectId = "a",
   timestamp = T1,
@@ -380,12 +398,12 @@ function executeTransform(
   }
 }
 
-function collection(...objectIds: string[]): ObjectCollection {
-  return new ObjectCollection(objectIds.map((id, index) => object(id, { zIndex: index })));
+function collection(...objectIds: string[]): PageDocument {
+  return pageOf(objectIds.map((id, index) => object(id, { zIndex: index })));
 }
 
-function collectionWith(options: Parameters<typeof object>[1]): ObjectCollection {
-  return new ObjectCollection([object("object-1", options)]);
+function collectionWith(options: Parameters<typeof object>[1]): PageDocument {
+  return pageOf([object("object-1", options)]);
 }
 
 function object(
@@ -425,23 +443,23 @@ function object(
   });
 }
 
-function ids(document: ObjectCollection): string[] {
-  return document.objects.map(({ id }) => id);
+function ids(document: PageDocument): string[] {
+  return document.objects.objects.map(({ id }) => id);
 }
 
-function ink(document: ObjectCollection, id: string): InkObject {
+function ink(document: PageDocument, id: string): InkObject {
   const value = document.lookup(id);
   expect(value).toBeInstanceOf(InkObject);
   return value as InkObject;
 }
 
-function session(initial: ObjectCollection): {
-  current: ObjectCollection;
-  readonly documentSession: HistoryDocumentSession<ObjectCollection>;
+function session(initial: PageDocument): {
+  current: PageDocument;
+  readonly documentSession: HistoryDocumentSession<PageDocument>;
 } {
   const fixture = {
     current: initial,
-    documentSession: undefined as unknown as HistoryDocumentSession<ObjectCollection>,
+    documentSession: undefined as unknown as HistoryDocumentSession<PageDocument>,
   };
   fixture.documentSession = {
     getDocument: () => fixture.current,

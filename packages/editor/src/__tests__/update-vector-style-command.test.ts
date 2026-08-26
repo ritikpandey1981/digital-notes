@@ -1,9 +1,5 @@
-import {
-  ObjectCollection,
-  ObjectFactory,
-  isVectorObject,
-  serializeVectorObject,
-} from "@folio/document";
+import { pageOf } from "./layer-test-support";
+import { ObjectFactory, isVectorObject, serializeVectorObject } from "@folio/document";
 import { describe, expect, it } from "vitest";
 import { createUpdateVectorStyleCommand } from "../history/update-vector-style-command";
 
@@ -16,7 +12,7 @@ describe("UpdateVectorStyleCommand", () => {
       id: "styled-rectangle",
       geometry: { x: 20, y: 30, width: 120, height: 80 },
     });
-    const document = new ObjectCollection([object]);
+    const document = pageOf([object]);
     const command = createUpdateVectorStyleCommand({
       objectId: object.id,
       expectedObjectModifiedAt: object.modifiedAt,
@@ -73,6 +69,6 @@ describe("UpdateVectorStyleCommand", () => {
       geometry: object.geometry,
       style: object.style,
     });
-    expect(() => command.execute(new ObjectCollection([locked]))).toThrow(/cannot be styled/u);
+    expect(() => command.execute(pageOf([locked]))).toThrow(/cannot be styled/u);
   });
 });

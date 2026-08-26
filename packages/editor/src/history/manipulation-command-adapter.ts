@@ -1,4 +1,4 @@
-import type { ObjectCollection, PageObject } from "@folio/document";
+import type { PageDocument, PageObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 import type {
   DeleteManipulationResult,
@@ -15,8 +15,10 @@ import { createRotateCommand } from "./rotate-command";
 import { createScaleCommand } from "./scale-command";
 
 interface ManipulationCommandContext {
-  readonly document: ObjectCollection;
+  readonly document: PageDocument;
   readonly timestamp: string;
+  /** Destination Layer for newly created artwork such as duplicates. */
+  readonly activeLayerId: string;
 }
 
 /**
@@ -27,7 +29,7 @@ interface ManipulationCommandContext {
 export function createCommandForManipulation(
   result: ManipulationResult,
   context: ManipulationCommandContext,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   switch (result.kind) {
     case "translation":
       return createTranslationCommand(result, context);
@@ -45,11 +47,16 @@ export function createCommandForManipulation(
 function createDeleteManipulationCommand(
   result: DeleteManipulationResult,
   context: ManipulationCommandContext,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   const object = currentObject(result.objectId, context.document);
+  const layerId = context.document.layerIdForObject(object.id);
+  if (layerId === undefined) {
+    throw new Error(`Object '${object.id}' has no owning Layer and cannot be deleted.`);
+  }
   return createDeleteCommand({
     deletedObject: object,
     originalInsertionIndex: object.zIndex,
+    layerId,
     id: `delete-${result.sessionId}`,
     timestamp: nextRevisionTimestamp(object.modifiedAt, context.timestamp),
     description: `Delete object ${result.objectId}`,
@@ -59,11 +66,19 @@ function createDeleteManipulationCommand(
 function createDuplicateManipulationCommand(
   result: DuplicateManipulationResult,
   context: ManipulationCommandContext,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   const object = currentObject(result.objectId, context.document);
+  // Frozen decision: duplicates enter the active Layer. When the source already
+  // lives there the duplicate stays directly above it; otherwise it appends.
+  const activeLayerId = context.document.resolveActiveLayerId(context.activeLayerId);
+  const insertionIndex =
+    context.document.layerIdForObject(object.id) === activeLayerId
+      ? object.zIndex + 1
+      : context.document.appendIndexFor(activeLayerId);
   return createDuplicateCommand({
     sourceObject: object,
-    insertionIndex: object.zIndex + 1,
+    insertionIndex,
+    layerId: activeLayerId,
     id: `duplicate-${result.sessionId}`,
     timestamp: nextRevisionTimestamp(object.modifiedAt, context.timestamp),
     description: `Duplicate object ${result.objectId}`,
@@ -73,7 +88,7 @@ function createDuplicateManipulationCommand(
 function createRotationCommand(
   result: RotationManipulationResult,
   context: ManipulationCommandContext,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   const expectedObjectModifiedAt = currentRevision(result.objectId, context.document);
   return createRotateCommand({
     objectId: result.objectId,
@@ -89,7 +104,7 @@ function createRotationCommand(
 function createScaleManipulationCommand(
   result: ScaleManipulationResult,
   context: ManipulationCommandContext,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   const expectedObjectModifiedAt = currentRevision(result.objectId, context.document);
   return createScaleCommand({
     objectId: result.objectId,
@@ -105,7 +120,7 @@ function createScaleManipulationCommand(
 function createTranslationCommand(
   result: TranslationManipulationResult,
   context: ManipulationCommandContext,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   const expectedObjectModifiedAt = currentRevision(result.objectId, context.document);
   return createMoveCommand({
     objectId: result.objectId,
@@ -118,12 +133,12 @@ function createTranslationCommand(
   });
 }
 
-function currentRevision(objectId: string, document: ObjectCollection): string {
+function currentRevision(objectId: string, document: PageDocument): string {
   const object = document.lookup(objectId);
   return object?.modifiedAt ?? new Date(0).toISOString();
 }
 
-function currentObject(objectId: string, document: ObjectCollection): PageObject {
+function currentObject(objectId: string, document: PageDocument): PageObject {
   const object = document.lookup(objectId);
   if (object === undefined) {
     throw new TypeError(`Object '${objectId}' is not in the current document.`);

@@ -9,8 +9,18 @@ import {
 } from "react";
 import type { ToolOptionPropertyDescriptor } from "./tool-options-registry";
 
+/**
+ * Structural descriptor accepted by the slider.
+ *
+ * Tool options satisfy this directly; workspace controls such as Layer opacity
+ * supply their own key without widening the tool-option union.
+ */
+export type ContinuousSliderDescriptor = Omit<ToolOptionPropertyDescriptor, "key" | "control"> & {
+  readonly key: string;
+};
+
 interface ContinuousSliderProps {
-  readonly descriptor: ToolOptionPropertyDescriptor;
+  readonly descriptor: ContinuousSliderDescriptor;
   readonly onChange: (value: number) => void;
   readonly onInteractionStart?: () => void;
   readonly onInteractionCommit?: () => void;

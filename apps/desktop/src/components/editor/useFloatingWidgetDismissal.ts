@@ -8,6 +8,11 @@ export function useFloatingWidgetDismissal(
   options: Readonly<{
     onEscape?: () => void;
     canvasPageDismissal?: "microtask" | "synchronous";
+    /**
+     * Workspace panels such as Layers stay open until they are explicitly
+     * closed. Tool widgets keep the default outside-pointer dismissal.
+     */
+    outsidePointerDismissal?: "dismiss" | "ignore";
     scopeId?: string;
   }> = {},
 ): string {
@@ -17,6 +22,7 @@ export function useFloatingWidgetDismissal(
   useEffect(() => {
     if (!open) return;
     const handleOutsidePointerDown = (event: PointerEvent): void => {
+      if (options.outsidePointerDismissal === "ignore") return;
       if (!(event.target instanceof Node)) return;
       if (boundaryRef.current?.contains(event.target) === true) return;
       if (event.target instanceof Element && isOwnedFloatingSurface(event.target, scopeId)) return;

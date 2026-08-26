@@ -1,20 +1,22 @@
-import { InkObject, ObjectCollection, isVectorObject, type PageObject } from "@folio/document";
+import { InkObject, PageDocument, isVectorObject, type PageObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 
 interface InsertObjectCommandInput {
   readonly object: PageObject;
   readonly insertionIndex: number;
+  readonly layerId: string;
   readonly id?: string;
   readonly timestamp?: string;
   readonly description?: string;
 }
 
-class InsertObjectCommand implements EditorCommand<ObjectCollection> {
+class InsertObjectCommand implements EditorCommand<PageDocument> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
   readonly #object: PageObject;
   readonly #insertionIndex: number;
+  readonly #layerId: string;
 
   constructor(input: InsertObjectCommandInput) {
     if (
@@ -23,7 +25,9 @@ class InsertObjectCommand implements EditorCommand<ObjectCollection> {
       !Object.isFrozen(input.object) ||
       !Number.isSafeInteger(input.insertionIndex) ||
       input.insertionIndex < 0 ||
-      input.object.zIndex !== input.insertionIndex
+      input.object.zIndex !== input.insertionIndex ||
+      typeof input.layerId !== "string" ||
+      input.layerId.trim().length === 0
     ) {
       throw new TypeError("InsertObjectCommand requires an immutable, correctly ordered object.");
     }
@@ -38,15 +42,16 @@ class InsertObjectCommand implements EditorCommand<ObjectCollection> {
     this.description = description;
     this.#object = input.object;
     this.#insertionIndex = input.insertionIndex;
+    this.#layerId = input.layerId;
     Object.freeze(this);
   }
 
-  execute(document: ObjectCollection): ObjectCollection {
+  execute(document: PageDocument): PageDocument {
     return this.#insert(document, "execute");
   }
 
-  undo(document: ObjectCollection): ObjectCollection {
-    const current = requireCollection(document);
+  undo(document: PageDocument): PageDocument {
+    const current = requirePage(document);
     const candidate = current.lookup(this.#object.id);
     if (!matchesStoredObject(candidate, this.#object, this.#insertionIndex)) {
       throw new Error(`Pasted object '${this.#object.id}' is not in the state required for undo.`);
@@ -54,37 +59,37 @@ class InsertObjectCommand implements EditorCommand<ObjectCollection> {
     return current.remove(this.#object.id);
   }
 
-  redo(document: ObjectCollection): ObjectCollection {
+  redo(document: PageDocument): PageDocument {
     return this.#insert(document, "redo");
   }
 
-  #insert(document: ObjectCollection, operation: "execute" | "redo"): ObjectCollection {
-    const current = requireCollection(document);
+  #insert(document: PageDocument, operation: "execute" | "redo"): PageDocument {
+    const current = requirePage(document);
     if (current.has(this.#object.id)) {
       throw new Error(`Pasted object '${this.#object.id}' already exists during ${operation}.`);
     }
     if (this.#insertionIndex > current.size) {
       throw new Error(`Pasted object '${this.#object.id}' cannot use its stored insertion index.`);
     }
-    return current.insert(this.#object, this.#insertionIndex);
+    return current.insert(this.#object, this.#insertionIndex, this.#layerId);
   }
 }
 
 export function createInsertObjectCommand(
   input: InsertObjectCommandInput,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   return new InsertObjectCommand(input);
 }
 
-function requireCollection(document: ObjectCollection): ObjectCollection {
-  if (!(document instanceof ObjectCollection)) {
-    throw new TypeError("InsertObjectCommand requires an ObjectCollection document.");
+function requirePage(document: PageDocument): PageDocument {
+  if (!(document instanceof PageDocument)) {
+    throw new TypeError("InsertObjectCommand requires a PageDocument.");
   }
   return document;
 }
 
 function matchesStoredObject(
-  candidate: ReturnType<ObjectCollection["lookup"]>,
+  candidate: ReturnType<PageDocument["lookup"]>,
   stored: PageObject,
   insertionIndex: number,
 ): boolean {

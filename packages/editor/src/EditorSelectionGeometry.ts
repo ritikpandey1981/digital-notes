@@ -22,13 +22,12 @@ export class EditorSelectionGeometry {
   resolve(
     document: ObjectCollection,
     objectIds: readonly string[],
+    isEditable: (object: PageObject) => boolean = defaultEditable,
   ): EditorSelectionGeometrySnapshot | null {
     if (this.#document === document && this.#objectIds === objectIds) return this.#snapshot;
     const selectedIds = new Set(objectIds);
     const objects = Object.freeze(
-      document.objects.filter(
-        (object) => selectedIds.has(object.id) && object.visible && !object.locked,
-      ),
+      document.objects.filter((object) => selectedIds.has(object.id) && isEditable(object)),
     );
     const primaryObject = objects.at(-1);
     this.#document = document;
@@ -85,4 +84,8 @@ function createGroupTarget(primary: PageObject, bounds: ObjectBounds): PageObjec
     zIndex: primary.zIndex,
     transform: Transform.identity(),
   });
+}
+
+function defaultEditable(object: PageObject): boolean {
+  return object.visible && !object.locked;
 }

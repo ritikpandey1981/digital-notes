@@ -4,7 +4,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { MoreHorizontal, Moon, Redo2, Settings2, Sun, Undo2 } from "lucide-react";
+import { Layers, MoreHorizontal, Moon, Redo2, Settings2, Sun, Undo2 } from "lucide-react";
 import type { ReactNode } from "react";
 import appIconUrl from "../../../../../assets/app-icon.svg";
 import type { WorkspaceHistoryAvailability } from "../editor/workspace-history";
@@ -15,9 +15,18 @@ import { useTheme } from "../theme/ThemeProvider";
 interface SketchbookTopBarProps extends WorkspaceHistoryAvailability {
   readonly onUndo: () => void;
   readonly onRedo: () => void;
+  readonly layersPanelOpen: boolean;
+  readonly onToggleLayersPanel: () => void;
 }
 
-export function SketchbookTopBar({ canUndo, canRedo, onUndo, onRedo }: SketchbookTopBarProps) {
+export function SketchbookTopBar({
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  layersPanelOpen,
+  onToggleLayersPanel,
+}: SketchbookTopBarProps) {
   const { openDialog } = useShellDialog();
   const { theme, toggleTheme } = useTheme();
 
@@ -44,6 +53,15 @@ export function SketchbookTopBar({ canUndo, canRedo, onUndo, onRedo }: Sketchboo
         </TopBarButton>
         <TopBarButton label="Redo" disabled={!canRedo} onClick={onRedo}>
           <Redo2 className="size-4" aria-hidden="true" />
+        </TopBarButton>
+        <span className="mx-1 h-5 w-px bg-folio-border" aria-hidden="true" />
+        <TopBarButton
+          label="Layers"
+          testId="layers-toggle"
+          pressed={layersPanelOpen}
+          onClick={onToggleLayersPanel}
+        >
+          <Layers className="size-4" aria-hidden="true" />
         </TopBarButton>
         <span className="mx-1 h-5 w-px bg-folio-border" aria-hidden="true" />
         <DropdownMenu>
@@ -75,12 +93,16 @@ export function SketchbookTopBar({ canUndo, canRedo, onUndo, onRedo }: Sketchboo
 
 function TopBarButton({
   label,
-  disabled,
+  disabled = false,
+  pressed,
+  testId,
   onClick,
   children,
 }: {
   readonly label: string;
-  readonly disabled: boolean;
+  readonly disabled?: boolean;
+  readonly pressed?: boolean;
+  readonly testId?: string;
   readonly onClick: () => void;
   readonly children: ReactNode;
 }) {
@@ -90,6 +112,8 @@ function TopBarButton({
       className="folio-chrome-button"
       aria-label={label}
       disabled={disabled}
+      {...(pressed === undefined ? {} : { "aria-pressed": pressed })}
+      {...(testId === undefined ? {} : { "data-testid": testId })}
       onClick={onClick}
     >
       {children}

@@ -30,6 +30,9 @@ function ApplicationShellContent() {
   const [historyAvailability, setHistoryAvailability] =
     useState<WorkspaceHistoryAvailability>(EMPTY_WORKSPACE_HISTORY);
   const [navigationTeachingLearned, setNavigationTeachingLearned] = useState(false);
+  const [layersPanelOpen, setLayersPanelOpen] = useState(false);
+  const toggleLayersPanel = useCallback(() => setLayersPanelOpen((open) => !open), []);
+  const dismissLayersPanel = useCallback(() => setLayersPanelOpen(false), []);
   const learnViewportNavigation = useCallback(() => setNavigationTeachingLearned(true), []);
   const handleHistoryActionsReady = useCallback((actions: WorkspaceHistoryActions | null) => {
     historyActionsRef.current = actions;
@@ -54,6 +57,8 @@ function ApplicationShellContent() {
         canRedo={historyAvailability.canRedo}
         onUndo={undo}
         onRedo={redo}
+        layersPanelOpen={layersPanelOpen}
+        onToggleLayersPanel={toggleLayersPanel}
       />
       <main
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-folio-workspace"
@@ -61,6 +66,8 @@ function ApplicationShellContent() {
         data-workspace-presentation="focused-canvas"
       >
         <EditorWorkspace
+          layersPanelOpen={layersPanelOpen}
+          onDismissLayersPanel={dismissLayersPanel}
           activeTool={editorWorkspace.activeTool}
           activeShape={editorWorkspace.activeShape}
           armedShape={editorWorkspace.armedShape}

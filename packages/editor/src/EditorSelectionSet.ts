@@ -27,10 +27,11 @@ export class EditorSelectionSet {
     return this.replace(objectId === null ? [] : [objectId]);
   }
 
-  selectAllEditable(document: ObjectCollection): readonly string[] {
-    return this.replace(
-      document.objects.filter((object) => object.visible && !object.locked).map(({ id }) => id),
-    );
+  selectAllEditable(
+    document: ObjectCollection,
+    isEditable: (object: PageObject) => boolean = defaultEditable,
+  ): readonly string[] {
+    return this.replace(document.objects.filter(isEditable).map(({ id }) => id));
   }
 
   selectedObjects(document: ObjectCollection): readonly PageObject[] {
@@ -49,4 +50,8 @@ export class EditorSelectionSet {
 
 function sameIds(first: readonly string[], second: readonly string[]): boolean {
   return first.length === second.length && first.every((id, index) => id === second[index]);
+}
+
+function defaultEditable(object: PageObject): boolean {
+  return object.visible && !object.locked;
 }

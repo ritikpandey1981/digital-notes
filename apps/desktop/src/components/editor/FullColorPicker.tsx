@@ -135,6 +135,8 @@ export function FullColorPicker({
   const quickColorRailBounds = rectFromElement(quickColorRail);
   const toolDock = document.querySelector<HTMLElement>("[data-tool-dock-layout]");
   const toolDockBounds = rectFromElement(toolDock);
+  const layersPanel = document.querySelector<HTMLElement>('[data-testid="layers-panel"]');
+  const layersPanelBounds = rectFromElement(layersPanel);
   const avoidRect =
     workspaceAvoidRect === undefined
       ? undefined
@@ -165,9 +167,12 @@ export function FullColorPicker({
     {
       bounds: placementBounds,
       avoidRect,
-      occupiedRects: [viewportControlBounds, quickColorRailBounds, toolDockBounds].filter(
-        (rect): rect is PickerRect => rect !== undefined,
-      ),
+      occupiedRects: [
+        viewportControlBounds,
+        quickColorRailBounds,
+        toolDockBounds,
+        layersPanelBounds,
+      ].filter((rect): rect is PickerRect => rect !== undefined),
     },
   );
   const style: CSSProperties = {

@@ -3,7 +3,7 @@ import {
   isVectorObject,
   type EditableStyle,
   type EditableStyleInput,
-  type ObjectCollection,
+  type PageDocument,
   type VectorPageObject,
 } from "@folio/document";
 import type { IHistoryState } from "@folio/history";
@@ -13,7 +13,9 @@ import { createVectorStyleReplacement } from "./history/update-vector-style-comm
 interface ContinuousVectorStyleEditOptions {
   readonly documentSession: InkDocumentSession;
   readonly commit: (original: VectorPageObject, finalStyle: EditableStyle) => IHistoryState;
-  readonly onPreviewDocumentChange: (document: ObjectCollection) => void;
+  readonly onPreviewDocumentChange: (document: PageDocument) => void;
+  /** Effective editability, so Layer lock is resolved in one place. */
+  readonly isEditable: (object: VectorPageObject) => boolean;
 }
 
 interface ActiveVectorStyleEdit {
@@ -26,12 +28,14 @@ export class ContinuousVectorStyleEdit {
   readonly #documentSession: InkDocumentSession;
   readonly #commit: ContinuousVectorStyleEditOptions["commit"];
   readonly #onPreviewDocumentChange: ContinuousVectorStyleEditOptions["onPreviewDocumentChange"];
+  readonly #isEditable: ContinuousVectorStyleEditOptions["isEditable"];
   #active: ActiveVectorStyleEdit | null = null;
 
   constructor(options: ContinuousVectorStyleEditOptions) {
     this.#documentSession = options.documentSession;
     this.#commit = options.commit;
     this.#onPreviewDocumentChange = options.onPreviewDocumentChange;
+    this.#isEditable = options.isEditable;
   }
 
   get active(): boolean {
@@ -41,8 +45,8 @@ export class ContinuousVectorStyleEdit {
   begin(object: VectorPageObject): boolean {
     if (this.#active?.original.id === object.id) return true;
     this.cancel();
-    const current = this.#documentSession.collection.lookup(object.id);
-    if (!isVectorObject(current) || !current.visible || current.locked) return false;
+    const current = this.#documentSession.page.lookup(object.id);
+    if (!isVectorObject(current) || !this.#isEditable(current)) return false;
     this.#active = { original: current, current };
     return true;
   }
@@ -50,8 +54,8 @@ export class ContinuousVectorStyleEdit {
   update(style: EditableStyleInput): boolean {
     const active = this.#active;
     if (active === null) return false;
-    const current = this.#documentSession.collection.lookup(active.original.id);
-    if (!isVectorObject(current) || !current.visible || current.locked) {
+    const current = this.#documentSession.page.lookup(active.original.id);
+    if (!isVectorObject(current) || !this.#isEditable(current)) {
       this.#active = null;
       return false;
     }
@@ -62,9 +66,9 @@ export class ContinuousVectorStyleEdit {
       resolvedStyle,
       active.original.modifiedAt,
     );
-    this.#documentSession.replaceDocument(this.#documentSession.collection.replace(replacement));
+    this.#documentSession.replaceDocument(this.#documentSession.page.replace(replacement));
     active.current = replacement;
-    this.#onPreviewDocumentChange(this.#documentSession.collection);
+    this.#onPreviewDocumentChange(this.#documentSession.page);
     return true;
   }
 
@@ -94,13 +98,11 @@ export class ContinuousVectorStyleEdit {
   }
 
   #restore(active: ActiveVectorStyleEdit): void {
-    const current = this.#documentSession.collection.lookup(active.original.id);
+    const current = this.#documentSession.page.lookup(active.original.id);
     if (!isVectorObject(current)) return;
     if (current === active.original) return;
-    this.#documentSession.replaceDocument(
-      this.#documentSession.collection.replace(active.original),
-    );
-    this.#onPreviewDocumentChange(this.#documentSession.collection);
+    this.#documentSession.replaceDocument(this.#documentSession.page.replace(active.original));
+    this.#onPreviewDocumentChange(this.#documentSession.page);
   }
 }
 

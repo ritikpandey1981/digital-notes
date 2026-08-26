@@ -1,4 +1,5 @@
-import { InkObject, ObjectCollection, ObjectFactory } from "@folio/document";
+import { pageOf, TEST_LAYER_ID } from "./layer-test-support";
+import { InkObject, PageDocument, ObjectFactory } from "@folio/document";
 import { createEditorHistoryManager } from "@folio/history";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
 import { describe, expect, it } from "vitest";
@@ -12,7 +13,11 @@ describe("AddStrokeCommand", () => {
   it("creates exactly one History entry and restores the same immutable stroke on redo", () => {
     const fixture = createFixture();
     const manager = createEditorHistoryManager({ documentSession: fixture.session });
-    const command = createAddStrokeCommand({ object: fixture.object, insertionIndex: 0 });
+    const command = createAddStrokeCommand({
+      object: fixture.object,
+      insertionIndex: 0,
+      layerId: TEST_LAYER_ID,
+    });
 
     manager.executeCommand(command);
     expect(fixture.session.current.lookup(fixture.object.id)).toBe(fixture.object);
@@ -32,7 +37,9 @@ describe("AddStrokeCommand", () => {
   it("supports mixed draw and transform histories without retaining document snapshots", () => {
     const fixture = createFixture();
     const manager = createEditorHistoryManager({ documentSession: fixture.session });
-    manager.executeCommand(createAddStrokeCommand({ object: fixture.object, insertionIndex: 0 }));
+    manager.executeCommand(
+      createAddStrokeCommand({ object: fixture.object, insertionIndex: 0, layerId: TEST_LAYER_ID }),
+    );
     manager.executeCommand(
       createMoveCommand({
         objectId: fixture.object.id,
@@ -56,12 +63,14 @@ describe("AddStrokeCommand", () => {
 
   it("rejects duplicate insertion and invalid construction state consistently", () => {
     const fixture = createFixture();
-    const command = createAddStrokeCommand({ object: fixture.object, insertionIndex: 0 });
-    expect(() => command.execute(new ObjectCollection([fixture.object]))).toThrowError(
-      /already exists/u,
-    );
+    const command = createAddStrokeCommand({
+      object: fixture.object,
+      insertionIndex: 0,
+      layerId: TEST_LAYER_ID,
+    });
+    expect(() => command.execute(pageOf([fixture.object]))).toThrowError(/already exists/u);
     expect(() =>
-      createAddStrokeCommand({ object: fixture.object, insertionIndex: 1 }),
+      createAddStrokeCommand({ object: fixture.object, insertionIndex: 1, layerId: TEST_LAYER_ID }),
     ).toThrowError(/correctly ordered/u);
   });
 });
@@ -72,11 +81,11 @@ function createFixture() {
     now: () => CREATED_AT,
   }).createInkObject({ stroke: createStroke() });
   const session = {
-    current: ObjectCollection.empty(),
+    current: pageOf(),
     getDocument() {
       return this.current;
     },
-    replaceDocument(document: ObjectCollection) {
+    replaceDocument(document: PageDocument) {
       this.current = document;
     },
   };
@@ -104,7 +113,7 @@ function createStroke() {
   return builder.finalize();
 }
 
-function ink(collection: ObjectCollection): InkObject {
+function ink(collection: PageDocument): InkObject {
   const object = collection.lookup("drawn-object");
   if (!(object instanceof InkObject)) throw new Error("Expected the drawn InkObject.");
   return object;

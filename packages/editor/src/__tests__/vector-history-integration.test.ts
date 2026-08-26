@@ -1,4 +1,5 @@
-import { ObjectCollection, ObjectFactory, isVectorObject } from "@folio/document";
+import { pageOf } from "./layer-test-support";
+import { ObjectFactory, isVectorObject } from "@folio/document";
 import {
   createDeleteManipulationResult,
   createDuplicateManipulationResult,
@@ -26,7 +27,7 @@ function rectangle() {
 describe("vector History integration", () => {
   it("executes immutable move, rotate, and scale command lifecycles", () => {
     const source = rectangle();
-    const initial = new ObjectCollection([source]);
+    const initial = pageOf([source]);
     const move = createMoveCommand({
       objectId: source.id,
       expectedObjectModifiedAt: firstRevision,

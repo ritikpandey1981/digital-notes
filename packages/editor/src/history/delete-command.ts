@@ -1,7 +1,8 @@
-import { ObjectCollection, type PageObject } from "@folio/document";
+import { PageDocument, type PageObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 import {
   assertLifecycleCommandInput,
+  requireLayerId,
   assertLifecycleIndex,
   assertStoredLifecycleObject,
   lifecycleStateMismatch,
@@ -15,17 +16,19 @@ import {
 export interface DeleteCommandInput {
   readonly deletedObject: PageObject;
   readonly originalInsertionIndex: number;
+  readonly layerId: string;
   readonly id?: string;
   readonly timestamp?: string;
   readonly description?: string;
 }
 
-class DeleteCommand implements EditorCommand<ObjectCollection> {
+class DeleteCommand implements EditorCommand<PageDocument> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
   readonly #deletedObject: PageObject;
   readonly #originalInsertionIndex: number;
+  readonly #layerId: string;
   readonly #metadata: ResolvedLifecycleMetadata;
 
   constructor(input: DeleteCommandInput) {
@@ -55,14 +58,15 @@ class DeleteCommand implements EditorCommand<ObjectCollection> {
     this.description = this.#metadata.description;
     this.#deletedObject = input.deletedObject;
     this.#originalInsertionIndex = input.originalInsertionIndex;
+    this.#layerId = requireLayerId(input.layerId);
     Object.freeze(this);
   }
 
-  execute(document: ObjectCollection): ObjectCollection {
+  execute(document: PageDocument): PageDocument {
     return this.#remove(document, "execute");
   }
 
-  undo(document: ObjectCollection): ObjectCollection {
+  undo(document: PageDocument): PageDocument {
     const current = requireLifecycleDocument("delete", document, "undo");
     if (current.has(this.#deletedObject.id)) {
       throw lifecycleStateMismatch(
@@ -84,17 +88,17 @@ class DeleteCommand implements EditorCommand<ObjectCollection> {
       );
     }
     try {
-      return current.insert(this.#deletedObject, this.#originalInsertionIndex);
+      return current.insert(this.#deletedObject, this.#originalInsertionIndex, this.#layerId);
     } catch (cause) {
       throw lifecycleTransitionFailed("delete", "undo", this.#deletedObject.id, cause);
     }
   }
 
-  redo(document: ObjectCollection): ObjectCollection {
+  redo(document: PageDocument): PageDocument {
     return this.#remove(document, "redo");
   }
 
-  #remove(document: ObjectCollection, operation: "execute" | "redo"): ObjectCollection {
+  #remove(document: PageDocument, operation: "execute" | "redo"): PageDocument {
     const current = requireLifecycleDocument("delete", document, operation);
     const object = requireLifecycleObject(
       "delete",
@@ -123,6 +127,6 @@ class DeleteCommand implements EditorCommand<ObjectCollection> {
   }
 }
 
-export function createDeleteCommand(input: DeleteCommandInput): EditorCommand<ObjectCollection> {
+export function createDeleteCommand(input: DeleteCommandInput): EditorCommand<PageDocument> {
   return new DeleteCommand(input);
 }

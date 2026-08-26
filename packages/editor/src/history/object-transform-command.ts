@@ -1,6 +1,6 @@
 import {
   InkObject,
-  ObjectCollection,
+  PageDocument,
   ObjectFactory,
   isVectorObject,
   type Transform,
@@ -108,19 +108,19 @@ export function resolveScalarTransformCommandInput(
 
 export function transitionScalarTransform(
   kind: ScalarTransformKind,
-  document: ObjectCollection,
+  document: PageDocument,
   input: ResolvedScalarTransformCommandInput,
   operation: TransformCommandOperation,
   expectedValue: number,
   targetValue: number,
   expectedModifiedAt: string,
   targetModifiedAt: string,
-): ObjectCollection {
+): PageDocument {
   const prefix = kind.toUpperCase() as Uppercase<ScalarTransformKind>;
-  if (!(document instanceof ObjectCollection)) {
+  if (!(document instanceof PageDocument)) {
     throw commandError(
       `${prefix}_OBJECT_UNSUPPORTED`,
-      `${label(kind)}Command requires an ObjectCollection document.`,
+      `${label(kind)}Command requires a PageDocument.`,
       { operation },
     );
   }

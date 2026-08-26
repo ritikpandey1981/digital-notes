@@ -1,5 +1,5 @@
 import {
-  ObjectCollection,
+  PageDocument,
   ObjectFactory,
   createEditableStyle,
   isVectorObject,
@@ -19,7 +19,7 @@ export interface UpdateVectorStyleCommandInput {
   readonly description?: string;
 }
 
-class UpdateVectorStyleCommand implements EditorCommand<ObjectCollection> {
+class UpdateVectorStyleCommand implements EditorCommand<PageDocument> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
@@ -57,7 +57,7 @@ class UpdateVectorStyleCommand implements EditorCommand<ObjectCollection> {
     Object.freeze(this);
   }
 
-  execute(document: ObjectCollection): ObjectCollection {
+  execute(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "execute",
@@ -68,7 +68,7 @@ class UpdateVectorStyleCommand implements EditorCommand<ObjectCollection> {
     );
   }
 
-  undo(document: ObjectCollection): ObjectCollection {
+  undo(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "undo",
@@ -79,7 +79,7 @@ class UpdateVectorStyleCommand implements EditorCommand<ObjectCollection> {
     );
   }
 
-  redo(document: ObjectCollection): ObjectCollection {
+  redo(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "redo",
@@ -91,15 +91,15 @@ class UpdateVectorStyleCommand implements EditorCommand<ObjectCollection> {
   }
 
   #transition(
-    document: ObjectCollection,
+    document: PageDocument,
     operation: "execute" | "undo" | "redo",
     expectedStyle: EditableStyle,
     targetStyle: EditableStyle,
     expectedModifiedAt: string,
     targetModifiedAt: string,
-  ): ObjectCollection {
-    if (!(document instanceof ObjectCollection)) {
-      throw new TypeError("Vector style commands require an ObjectCollection document.");
+  ): PageDocument {
+    if (!(document instanceof PageDocument)) {
+      throw new TypeError("Vector style commands require an PageDocument document.");
     }
     const object = document.lookup(this.#objectId);
     if (!isVectorObject(object)) {
@@ -117,7 +117,7 @@ class UpdateVectorStyleCommand implements EditorCommand<ObjectCollection> {
 
 export function createUpdateVectorStyleCommand(
   input: UpdateVectorStyleCommandInput,
-): EditorCommand<ObjectCollection> {
+): EditorCommand<PageDocument> {
   return new UpdateVectorStyleCommand(input);
 }
 

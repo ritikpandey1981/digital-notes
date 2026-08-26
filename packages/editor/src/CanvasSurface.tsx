@@ -5,7 +5,7 @@ import {
   type EllipseGeometry,
   type LineGeometry,
   type ObjectBounds,
-  type ObjectCollection,
+  PageDocument,
   type PageObject,
   type RectangleGeometry,
   type VectorPageObject,
@@ -73,6 +73,8 @@ import {
 import { createEditorGroupManipulationPlan, transformGroupBounds } from "./EditorGroupManipulation";
 import { EditorSelectionGeometry } from "./EditorSelectionGeometry";
 import { EditorSelectionSet } from "./EditorSelectionSet";
+import { ContinuousLayerOpacityEdit } from "./ContinuousLayerOpacityEdit";
+import { createEffectiveObjectState } from "./EffectiveObjectState";
 import { firstErasableInkCandidate } from "./EraserEligibility";
 import {
   createEditorSelectionHitTestEngine,
@@ -154,6 +156,38 @@ export interface ShapeStylePatch {
   readonly opacity?: number;
 }
 
+/** Immutable presentation row for one Layer, ordered bottom to top. */
+export interface LayerSnapshot {
+  readonly id: string;
+  readonly name: string;
+  readonly visible: boolean;
+  readonly locked: boolean;
+  readonly opacity: number;
+  readonly objectCount: number;
+}
+
+/** Immutable Layer presentation state for the workspace panel. */
+export interface LayersSnapshot {
+  readonly layers: readonly LayerSnapshot[];
+  readonly activeLayerId: string;
+}
+
+/** Session-bound Layer operations exposed to the desktop workspace. */
+export interface LayerActions {
+  /** Selects the active Layer. Never produces document History. */
+  readonly setActiveLayer: (layerId: string) => boolean;
+  readonly addLayer: () => string | null;
+  readonly renameLayer: (layerId: string, name: string) => boolean;
+  readonly setLayerVisible: (layerId: string, visible: boolean) => boolean;
+  readonly setLayerLocked: (layerId: string, locked: boolean) => boolean;
+  readonly beginLayerOpacityEdit: (layerId: string) => boolean;
+  readonly previewLayerOpacity: (opacity: number) => boolean;
+  readonly commitLayerOpacityEdit: () => boolean;
+  readonly cancelLayerOpacityEdit: () => boolean;
+  readonly moveLayer: (layerId: string, targetIndex: number) => boolean;
+  readonly deleteLayer: (layerId: string) => number | null;
+}
+
 export interface ShapeEditingActions {
   readonly updateStyle: (patch: ShapeStylePatch) => boolean;
   readonly beginContinuousStyleEdit: () => boolean;
@@ -203,13 +237,17 @@ export interface CanvasSurfaceProps {
   /** Receives the extensible mounted tool registry and null during cleanup. */
   readonly onToolRegistryReady?: (registry: EditorToolRegistry | null) => void;
   /** Receives the interface-oriented History controller for programmatic operations. */
-  readonly onHistoryControllerReady?: (controller: IHistoryController<ObjectCollection>) => void;
+  readonly onHistoryControllerReady?: (controller: IHistoryController<PageDocument>) => void;
   /** Receives session-bound delete/duplicate actions and null during cleanup. */
   readonly onObjectLifecycleActionsReady?: (actions: ObjectLifecycleActions | null) => void;
   /** Receives session-bound vector appearance actions and null during cleanup. */
   readonly onShapeEditingActionsReady?: (actions: ShapeEditingActions | null) => void;
   /** Receives presentation data for one selected vector object, or null. */
   readonly onShapeEditingChange?: (snapshot: ShapeEditingSnapshot | null) => void;
+  /** Receives session-bound Layer actions and null during cleanup. */
+  readonly onLayerActionsReady?: (actions: LayerActions | null) => void;
+  /** Receives an immutable Layer presentation snapshot after every Layer change. */
+  readonly onLayersChange?: (snapshot: LayersSnapshot) => void;
   /** Receives immutable selection state only after logical changes. */
   readonly onSelectionChange?: (state: SelectionState) => void;
   /** Receives immutable manipulation state only after logical transitions. */
@@ -363,6 +401,8 @@ export function CanvasSurface({
   onObjectLifecycleActionsReady,
   onShapeEditingActionsReady,
   onShapeEditingChange,
+  onLayerActionsReady,
+  onLayersChange,
   onSelectionChange,
   onManipulationChange,
   onHistoryChange,
@@ -410,6 +450,8 @@ export function CanvasSurface({
   const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
   const shapeEditingActionsReadyRef = useRef(onShapeEditingActionsReady);
   const shapeEditingChangeRef = useRef(onShapeEditingChange);
+  const layerActionsReadyRef = useRef(onLayerActionsReady);
+  const layersChangeRef = useRef(onLayersChange);
   const viewportActionsReadyRef = useRef(onViewportActionsReady);
   const viewportChangeRef = useRef(onViewportChange);
   const viewportNavigationLearnedRef = useRef(onViewportNavigationLearned);
@@ -495,6 +537,14 @@ export function CanvasSurface({
   }, [onShapeEditingChange]);
 
   useEffect(() => {
+    layerActionsReadyRef.current = onLayerActionsReady;
+  }, [onLayerActionsReady]);
+
+  useEffect(() => {
+    layersChangeRef.current = onLayersChange;
+  }, [onLayersChange]);
+
+  useEffect(() => {
     viewportActionsReadyRef.current = onViewportActionsReady;
   }, [onViewportActionsReady]);
 
@@ -516,6 +566,8 @@ export function CanvasSurface({
     const editorClipboard = new EditorClipboard();
     const editorSelection = new EditorSelectionSet();
     const selectionGeometry = new EditorSelectionGeometry();
+    // One resolver owns every Layer eligibility rule for this editor instance.
+    const effective = createEffectiveObjectState(() => documentSession.page);
     let synchronizeViewportLayers: (snapshot: CanvasControllerSnapshot) => void = () => undefined;
     const controller = new CanvasController({
       theme: readTheme(),
@@ -525,6 +577,7 @@ export function CanvasSurface({
           (objectIds) => {
             host.dataset.renderedObjectOrder = JSON.stringify(objectIds);
           },
+          effective,
         ),
       ],
       onViewportChange: (snapshot) => synchronizeViewportLayers(snapshot),
@@ -650,9 +703,15 @@ export function CanvasSurface({
         finalizedPresentation: "external",
       });
       const activeStrokeRenderer = strokeRenderer;
+      // Hidden Layers are removed at the injected source, so @folio/selection
+      // and @folio/manipulation stay unaware of Layers. Locked Layers remain
+      // reachable here and are refused at the editable boundary below.
       const objectSource = {
-        getObjects: () => documentSession.collection.objects,
-        getObject: (objectId: string) => documentSession.collection.lookup(objectId),
+        getObjects: () => documentSession.collection.objects.filter(effective.selectable),
+        getObject: (objectId: string) => {
+          const object = documentSession.collection.lookup(objectId);
+          return object !== undefined && effective.selectable(object) ? object : undefined;
+        },
       };
       const selectionManager = createSelectionManager();
       const hitTestEngine = createEditorSelectionHitTestEngine(
@@ -803,6 +862,7 @@ export function CanvasSurface({
         const selectedGeometry = selectionGeometry.resolve(
           documentSession.collection,
           editorSelection.ids,
+          effective.editable,
         );
         const selectionBounds = selectedGeometry?.bounds;
         const selectedVector =
@@ -892,19 +952,19 @@ export function CanvasSurface({
       };
       const selectedEditableObjects = (): readonly PageObject[] =>
         Object.freeze(
-          editorSelection
-            .selectedObjects(documentSession.collection)
-            .filter((object) => object.visible && !object.locked),
+          editorSelection.selectedObjects(documentSession.collection).filter(effective.editable),
         );
       const manipulationObjectSource = {
         getObject: (objectId: string): PageObject | undefined => {
           const geometry = selectionGeometry.resolve(
             documentSession.collection,
             editorSelection.ids,
+            effective.editable,
           );
-          return geometry?.primaryObject.id === objectId
-            ? geometry.manipulationTarget
-            : documentSession.collection.lookup(objectId);
+          if (geometry?.primaryObject.id === objectId) return geometry.manipulationTarget;
+          const object = documentSession.collection.lookup(objectId);
+          // Locked Layers keep read-only selection but refuse manipulation.
+          return object !== undefined && effective.editable(object) ? object : undefined;
         },
       };
       manipulationLayer = controller.createOverlayLayer({
@@ -1031,6 +1091,9 @@ export function CanvasSurface({
         Readonly<{ object: VectorPageObject; scale: number; visual: VectorShapeVisual }>
       >();
       let renderedDocumentObjects: readonly PageObject[] = documentSession.collection.objects;
+      // Layer presentation changes preserve object identity by design, so the
+      // compositor also tracks the immutable layer array.
+      let renderedLayers = documentSession.page.layers;
       const updateHistoryDiagnostics = (state: IHistoryState): void => {
         host.dataset.historyCanUndo = String(state.canUndo);
         host.dataset.historyCanRedo = String(state.canRedo);
@@ -1040,6 +1103,7 @@ export function CanvasSurface({
         host.dataset.historyExecutionCount = String(state.executionCounter);
         host.dataset.historyLastCommandId = state.lastCommand?.id ?? "";
       };
+      let publishLayersRef: (() => void) | null = null;
       const synchronizeDocumentFromHistory = (): void => {
         const inkObjects = documentSession.collection.objects.filter(
           (object): object is InkObject => object instanceof InkObject,
@@ -1059,17 +1123,31 @@ export function CanvasSurface({
         }
         activeVectorInteractionRenderer.setHover(null);
         const nextDocumentObjects = documentSession.collection.objects;
+        const nextLayers = documentSession.page.layers;
         const documentChanged =
           nextDocumentObjects.length !== renderedDocumentObjects.length ||
-          nextDocumentObjects.some((object, index) => object !== renderedDocumentObjects[index]);
+          nextDocumentObjects.some((object, index) => object !== renderedDocumentObjects[index]) ||
+          nextLayers !== renderedLayers;
         renderedDocumentObjects = nextDocumentObjects;
+        renderedLayers = nextLayers;
         if (documentChanged) controller.requestRender({ kind: "page" });
         updateDocumentDiagnostics();
         editorSelection.reconcile(documentSession.collection);
+        // Hiding a Layer removes its artwork from interaction, so any selection
+        // it still holds is dropped here rather than in each layer action.
+        const unselectableIds = editorSelection.ids.filter((objectId) => {
+          const object = documentSession.collection.lookup(objectId);
+          return object !== undefined && !effective.selectable(object);
+        });
+        if (unselectableIds.length > 0) {
+          const dropped = new Set(unselectableIds);
+          editorSelection.replace(editorSelection.ids.filter((objectId) => !dropped.has(objectId)));
+        }
         let selection = activeSelectionController.getSelection();
         if (
           selection.selectedObjectId !== null &&
-          !documentSession.collection.has(selection.selectedObjectId)
+          (!documentSession.collection.has(selection.selectedObjectId) ||
+            unselectableIds.includes(selection.selectedObjectId))
         ) {
           synchronizePrimaryIntoEditorSelection = false;
           try {
@@ -1086,7 +1164,10 @@ export function CanvasSurface({
       };
       historyCoordinator = createEditorHistoryCoordinator({
         documentSession,
-        onDocumentChange: () => synchronizeDocumentFromHistory(),
+        onDocumentChange: () => {
+          synchronizeDocumentFromHistory();
+          publishLayersRef?.();
+        },
         onHistoryChange: (notification) => {
           updateHistoryDiagnostics(notification.state);
           historyChangeRef.current?.(notification);
@@ -1108,6 +1189,7 @@ export function CanvasSurface({
             const selection = selectionGeometry.resolve(
               documentSession.collection,
               editorSelection.ids,
+              effective.editable,
             );
             if (
               selection !== null &&
@@ -1179,6 +1261,7 @@ export function CanvasSurface({
           return state;
         },
         onPreviewDocumentChange: () => synchronizeDocumentFromHistory(),
+        isEditable: effective.editable,
       });
       const activeContinuousVectorStyleEdit = continuousVectorStyleEdit;
       const cancelContinuousStyleEdit = (): boolean => activeContinuousVectorStyleEdit.cancel();
@@ -1237,6 +1320,151 @@ export function CanvasSurface({
         cancelContinuousStyleEdit,
       });
       shapeEditingActionsReadyRef.current?.(shapeEditingActions);
+      const publishLayers = (): void => {
+        const page = documentSession.page;
+        host.dataset.layerCount = String(page.layerCount);
+        host.dataset.activeLayerId = documentSession.activeLayerId;
+        host.dataset.layerOrder = JSON.stringify(page.layers.map((layer) => layer.id));
+        host.dataset.layerMembership = JSON.stringify(
+          page.layers.map((layer) => layer.objectIds.length),
+        );
+        layersChangeRef.current?.(
+          Object.freeze({
+            layers: Object.freeze(
+              page.layers.map((layer) =>
+                Object.freeze({
+                  id: layer.id,
+                  name: layer.name,
+                  visible: layer.visible,
+                  locked: layer.locked,
+                  opacity: layer.opacity,
+                  objectCount: layer.objectIds.length,
+                }),
+              ),
+            ),
+            activeLayerId: documentSession.activeLayerId,
+          }),
+        );
+      };
+      const continuousLayerOpacityEdit = new ContinuousLayerOpacityEdit({
+        documentSession,
+        commit: (layerId, _initialOpacity, finalOpacity) => {
+          const state =
+            activeHistoryCoordinator.executeLayerPatch(
+              layerId,
+              { opacity: finalOpacity },
+              "Set layer opacity",
+            ) ?? activeHistoryCoordinator.controller.getHistoryState();
+          updateHistoryDiagnostics(state);
+          return state;
+        },
+        onPreviewDocumentChange: () => {
+          synchronizeDocumentFromHistory();
+          publishLayers();
+        },
+      });
+      const activeLayerOpacityEdit = continuousLayerOpacityEdit;
+      const runLayerOperation = (operation: () => boolean): boolean => {
+        try {
+          const changed = operation();
+          if (changed) {
+            synchronizeDocumentFromHistory();
+            updateHistoryDiagnostics(activeHistoryCoordinator.controller.getHistoryState());
+            publishLayers();
+          }
+          return changed;
+        } catch (cause) {
+          reportEditingFailure(cause, "Layer operation failed.");
+          return false;
+        }
+      };
+      const layerActions: LayerActions = Object.freeze({
+        setActiveLayer: (layerId: string): boolean => {
+          // Active-layer selection is editor state: no History, no document change.
+          if (!documentSession.setActiveLayerId(layerId)) return false;
+          publishLayers();
+          return true;
+        },
+        addLayer: (): string | null => {
+          try {
+            const { layerId, state } = activeHistoryCoordinator.executeAddLayer();
+            documentSession.setActiveLayerId(layerId);
+            updateHistoryDiagnostics(state);
+            publishLayers();
+            return layerId;
+          } catch (cause) {
+            reportEditingFailure(cause, "Adding a layer failed.");
+            return null;
+          }
+        },
+        renameLayer: (layerId: string, name: string): boolean =>
+          runLayerOperation(
+            () =>
+              name.trim().length > 0 &&
+              activeHistoryCoordinator.executeLayerPatch(
+                layerId,
+                { name: name.trim() },
+                "Rename layer",
+              ) !== null,
+          ),
+        setLayerVisible: (layerId: string, visible: boolean): boolean =>
+          runLayerOperation(
+            () =>
+              activeHistoryCoordinator.executeLayerPatch(
+                layerId,
+                { visible },
+                visible ? "Show layer" : "Hide layer",
+              ) !== null,
+          ),
+        setLayerLocked: (layerId: string, locked: boolean): boolean =>
+          runLayerOperation(
+            () =>
+              activeHistoryCoordinator.executeLayerPatch(
+                layerId,
+                { locked },
+                locked ? "Lock layer" : "Unlock layer",
+              ) !== null,
+          ),
+        beginLayerOpacityEdit: (layerId: string): boolean => activeLayerOpacityEdit.begin(layerId),
+        previewLayerOpacity: (opacity: number): boolean => activeLayerOpacityEdit.update(opacity),
+        commitLayerOpacityEdit: (): boolean => {
+          const committed = activeLayerOpacityEdit.commit();
+          synchronizeDocumentFromHistory();
+          publishLayers();
+          return committed !== null;
+        },
+        cancelLayerOpacityEdit: (): boolean => {
+          const cancelled = activeLayerOpacityEdit.cancel();
+          if (cancelled) {
+            synchronizeDocumentFromHistory();
+            publishLayers();
+          }
+          return cancelled;
+        },
+        moveLayer: (layerId: string, targetIndex: number): boolean =>
+          runLayerOperation(
+            () => activeHistoryCoordinator.executeReorderLayer(layerId, targetIndex) !== null,
+          ),
+        deleteLayer: (layerId: string): number | null => {
+          cancelContinuousStyleEdit();
+          try {
+            const { removedObjectCount, state } =
+              activeHistoryCoordinator.executeRemoveLayer(layerId);
+            editorSelection.clear();
+            updateSelection(activeSelectionController.getSelection(), false);
+            synchronizeDocumentFromHistory();
+            updateHistoryDiagnostics(state);
+            publishLayers();
+            return removedObjectCount;
+          } catch (cause) {
+            reportEditingFailure(cause, "Deleting a layer failed.");
+            return null;
+          }
+        },
+      });
+      layerActionsReadyRef.current?.(layerActions);
+      publishLayersRef = publishLayers;
+      publishLayers();
       const deleteSelectedObjects = (): boolean => {
         cancelContinuousStyleEdit();
         const objects = selectedEditableObjects();
@@ -1293,7 +1521,10 @@ export function CanvasSurface({
         },
         paste: () => {
           try {
-            const batch = editorClipboard.preparePaste(documentSession.collection);
+            const batch = editorClipboard.preparePaste(
+              documentSession.collection,
+              documentSession.activeInsertionIndex(),
+            );
             if (batch === null) return false;
             const state = activeHistoryCoordinator.executePaste(batch.objects);
             editorClipboard.confirmPaste(batch);
@@ -1307,7 +1538,10 @@ export function CanvasSurface({
         },
         duplicate: duplicateSelectedObjects,
         selectAll: () => {
-          const selectedIds = editorSelection.selectAllEditable(documentSession.collection);
+          const selectedIds = editorSelection.selectAllEditable(
+            documentSession.collection,
+            effective.editable,
+          );
           if (selectedIds.length === 0) return false;
           selectEditorObjects(selectedIds);
           return true;
@@ -1362,6 +1596,7 @@ export function CanvasSurface({
         const selectedGeometry = selectionGeometry.resolve(
           documentSession.collection,
           editorSelection.ids,
+          effective.editable,
         );
         const isGroupManipulation =
           selectedGeometry !== null &&
@@ -1690,6 +1925,7 @@ export function CanvasSurface({
         const selection = selectionGeometry.resolve(
           documentSession.collection,
           editorSelection.ids,
+          effective.editable,
         );
         const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
         if (selection === null || pagePosition === null) {
@@ -1837,6 +2073,7 @@ export function CanvasSurface({
             const selectedGeometry = selectionGeometry.resolve(
               documentSession.collection,
               editorSelection.ids,
+              effective.editable,
             );
             const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
             const selectedLine =
@@ -2331,6 +2568,7 @@ export function CanvasSurface({
             }),
           ),
           eraserObjectIds,
+          effective.erasable,
         );
         if (object === null) return;
         try {
@@ -2818,6 +3056,7 @@ export function CanvasSurface({
       selectionGeometry.clear();
       historyCoordinator?.destroy();
       objectLifecycleActionsReadyRef.current?.(null);
+      layerActionsReadyRef.current?.(null);
       shapeEditingActionsReadyRef.current?.(null);
       shapeEditingChangeRef.current?.(null);
       selectionController?.destroy();

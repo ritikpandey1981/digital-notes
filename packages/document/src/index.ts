@@ -1,4 +1,17 @@
-export { DocumentObjectError, ObjectValidationError } from "./errors";
+export {
+  DocumentObjectError,
+  LayerMembershipError,
+  ObjectValidationError,
+  type LayerMembershipErrorCode,
+} from "./errors";
+export {
+  createDefaultLayer,
+  DEFAULT_LAYER_NAME,
+  Layer,
+  type LayerData,
+  type LayerPatch,
+} from "./layer";
+export { PageDocument, type LayerRange } from "./page-document";
 export {
   createEditableColor,
   createEditableStyle,

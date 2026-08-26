@@ -1,4 +1,4 @@
-import { InkObject, ObjectCollection, ObjectFactory, isVectorObject } from "@folio/document";
+import { InkObject, PageDocument, ObjectFactory, isVectorObject } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 
 interface TranslationVector {
@@ -44,7 +44,7 @@ class MoveCommandError extends Error {
   }
 }
 
-class MoveCommand implements EditorCommand<ObjectCollection> {
+class MoveCommand implements EditorCommand<PageDocument> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
@@ -65,7 +65,7 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
     Object.freeze(this);
   }
 
-  execute(document: ObjectCollection): ObjectCollection {
+  execute(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "execute",
@@ -76,7 +76,7 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
     );
   }
 
-  undo(document: ObjectCollection): ObjectCollection {
+  undo(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "undo",
@@ -87,7 +87,7 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
     );
   }
 
-  redo(document: ObjectCollection): ObjectCollection {
+  redo(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "redo",
@@ -99,19 +99,17 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
   }
 
   #transition(
-    document: ObjectCollection,
+    document: PageDocument,
     operation: "execute" | "redo" | "undo",
     expectedTranslation: TranslationVector,
     targetTranslation: TranslationVector,
     expectedModifiedAt: string,
     targetModifiedAt: string,
-  ): ObjectCollection {
-    if (!(document instanceof ObjectCollection)) {
-      throw moveError(
-        "MOVE_OBJECT_UNSUPPORTED",
-        "MoveCommand requires an ObjectCollection document.",
-        { operation },
-      );
+  ): PageDocument {
+    if (!(document instanceof PageDocument)) {
+      throw moveError("MOVE_OBJECT_UNSUPPORTED", "MoveCommand requires a PageDocument.", {
+        operation,
+      });
     }
 
     const object = document.lookup(this.#objectId);
@@ -186,7 +184,7 @@ class MoveCommand implements EditorCommand<ObjectCollection> {
 }
 
 /** Creates the private editor-owned command accepted by generic History. */
-export function createMoveCommand(input: MoveCommandInput): EditorCommand<ObjectCollection> {
+export function createMoveCommand(input: MoveCommandInput): EditorCommand<PageDocument> {
   return new MoveCommand(input);
 }
 

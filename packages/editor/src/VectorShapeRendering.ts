@@ -63,10 +63,17 @@ export function createVectorObjectRenderHook(
   };
 }
 
+/** Layer-derived presentation applied around one object's normal drawing. */
+export interface ObjectPresentationResolver {
+  readonly renderable: (object: PageObject) => boolean;
+  readonly layerOpacity: (object: PageObject) => number;
+}
+
 /** Renders every finalized PageObject through one document-ordered compositor. */
 export function createPageObjectRenderHook(
   getObjects: () => readonly PageObject[],
   onRenderOrder?: (objectIds: readonly string[]) => void,
+  presentation?: ObjectPresentationResolver,
 ): OverlayRenderHook {
   const strokeVisuals = new WeakMap<Stroke, Map<number, StrokeVisual>>();
   return (context, input) => {
@@ -84,7 +91,17 @@ export function createPageObjectRenderHook(
     context.translate(input.page.rect.x, input.page.rect.y);
     const renderedObjectIds: string[] = [];
     for (const object of objects) {
-      if (!object.visible) continue;
+      const visible = presentation?.renderable(object) ?? object.visible;
+      if (!visible) continue;
+      // Every object draw path multiplies into globalAlpha, so seeding it with
+      // the Layer opacity yields `layer opacity x object opacity` without any
+      // isolated group compositing or offscreen canvas.
+      const layerOpacity = presentation?.layerOpacity(object) ?? 1;
+      const composited = layerOpacity !== 1;
+      if (composited) {
+        context.save();
+        context.globalAlpha *= layerOpacity;
+      }
       if (object instanceof InkObject) {
         drawInkObject(context, object, resolveStrokeVisual(strokeVisuals, object));
         renderedObjectIds.push(object.id);
@@ -92,6 +109,7 @@ export function createPageObjectRenderHook(
         drawVectorObject(context, object);
         renderedObjectIds.push(object.id);
       }
+      if (composited) context.restore();
     }
     onRenderOrder?.(Object.freeze(renderedObjectIds));
     context.restore();

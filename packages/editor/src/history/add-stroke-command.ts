@@ -1,20 +1,22 @@
-import { InkObject, ObjectCollection } from "@folio/document";
+import { InkObject, PageDocument } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 
 interface AddStrokeCommandInput {
   readonly object: InkObject;
   readonly insertionIndex: number;
+  readonly layerId: string;
   readonly id?: string;
   readonly timestamp?: string;
   readonly description?: string;
 }
 
-class AddStrokeCommand implements EditorCommand<ObjectCollection> {
+class AddStrokeCommand implements EditorCommand<PageDocument> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
   readonly #object: InkObject;
   readonly #insertionIndex: number;
+  readonly #layerId: string;
 
   constructor(input: AddStrokeCommandInput) {
     if (
@@ -24,7 +26,9 @@ class AddStrokeCommand implements EditorCommand<ObjectCollection> {
       !Object.isFrozen(input.object) ||
       !Number.isSafeInteger(input.insertionIndex) ||
       input.insertionIndex < 0 ||
-      input.object.zIndex !== input.insertionIndex
+      input.object.zIndex !== input.insertionIndex ||
+      typeof input.layerId !== "string" ||
+      input.layerId.trim().length === 0
     ) {
       throw new TypeError("AddStrokeCommand requires an immutable, correctly ordered InkObject.");
     }
@@ -39,15 +43,16 @@ class AddStrokeCommand implements EditorCommand<ObjectCollection> {
     this.description = description;
     this.#object = input.object;
     this.#insertionIndex = input.insertionIndex;
+    this.#layerId = input.layerId;
     Object.freeze(this);
   }
 
-  execute(document: ObjectCollection): ObjectCollection {
+  execute(document: PageDocument): PageDocument {
     return this.#insert(document, "execute");
   }
 
-  undo(document: ObjectCollection): ObjectCollection {
-    const current = requireCollection(document);
+  undo(document: PageDocument): PageDocument {
+    const current = requirePage(document);
     const candidate = current.lookup(this.#object.id);
     if (!matchesStoredStroke(candidate, this.#object, this.#insertionIndex)) {
       throw new Error(`Stroke '${this.#object.id}' is not in the state required for undo.`);
@@ -55,38 +60,36 @@ class AddStrokeCommand implements EditorCommand<ObjectCollection> {
     return current.remove(this.#object.id);
   }
 
-  redo(document: ObjectCollection): ObjectCollection {
+  redo(document: PageDocument): PageDocument {
     return this.#insert(document, "redo");
   }
 
-  #insert(document: ObjectCollection, operation: "execute" | "redo"): ObjectCollection {
-    const current = requireCollection(document);
+  #insert(document: PageDocument, operation: "execute" | "redo"): PageDocument {
+    const current = requirePage(document);
     if (current.has(this.#object.id)) {
       throw new Error(`Stroke '${this.#object.id}' already exists during ${operation}.`);
     }
     if (this.#insertionIndex > current.size) {
       throw new Error(`Stroke '${this.#object.id}' cannot be restored at its original position.`);
     }
-    return current.insert(this.#object, this.#insertionIndex);
+    return current.insert(this.#object, this.#insertionIndex, this.#layerId);
   }
 }
 
 /** Creates one editor-private command for one completed immutable stroke. */
-export function createAddStrokeCommand(
-  input: AddStrokeCommandInput,
-): EditorCommand<ObjectCollection> {
+export function createAddStrokeCommand(input: AddStrokeCommandInput): EditorCommand<PageDocument> {
   return new AddStrokeCommand(input);
 }
 
-function requireCollection(document: ObjectCollection): ObjectCollection {
-  if (!(document instanceof ObjectCollection)) {
-    throw new TypeError("AddStrokeCommand requires an ObjectCollection document.");
+function requirePage(document: PageDocument): PageDocument {
+  if (!(document instanceof PageDocument)) {
+    throw new TypeError("AddStrokeCommand requires a PageDocument.");
   }
   return document;
 }
 
 function matchesStoredStroke(
-  candidate: ReturnType<ObjectCollection["lookup"]>,
+  candidate: ReturnType<PageDocument["lookup"]>,
   stored: InkObject,
   insertionIndex: number,
 ): candidate is InkObject {

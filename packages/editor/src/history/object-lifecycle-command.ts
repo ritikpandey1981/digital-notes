@@ -1,6 +1,6 @@
 import {
   InkObject,
-  ObjectCollection,
+  PageDocument,
   assertValidObject,
   isVectorObject,
   type PageObject,
@@ -96,16 +96,24 @@ export function resolveLifecycleMetadata(
   });
 }
 
+/** Validates the owning Layer identity captured by one lifecycle command. */
+export function requireLayerId(layerId: string): string {
+  if (typeof layerId !== "string" || layerId.trim().length === 0) {
+    throw new TypeError("Object lifecycle commands require an owning Layer id.");
+  }
+  return layerId;
+}
+
 export function requireLifecycleDocument(
   kind: ObjectLifecycleCommandKind,
-  document: ObjectCollection,
+  document: PageDocument,
   operation: ObjectLifecycleCommandOperation,
-): ObjectCollection {
-  if (!(document instanceof ObjectCollection)) {
+): PageDocument {
+  if (!(document instanceof PageDocument)) {
     throw lifecycleError(
       kind,
       "OBJECT_UNSUPPORTED",
-      `${label(kind)}Command requires an ObjectCollection document.`,
+      `${label(kind)}Command requires a PageDocument.`,
       { operation },
     );
   }
@@ -114,7 +122,7 @@ export function requireLifecycleDocument(
 
 export function requireLifecycleObject(
   kind: ObjectLifecycleCommandKind,
-  document: ObjectCollection,
+  document: PageDocument,
   objectId: string,
   expectedModifiedAt: string,
   operation: ObjectLifecycleCommandOperation,

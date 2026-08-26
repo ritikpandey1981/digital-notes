@@ -1,9 +1,5 @@
-import {
-  ObjectCollection,
-  ObjectFactory,
-  isVectorObject,
-  type EditableStyleInput,
-} from "@folio/document";
+import { pageOf } from "./layer-test-support";
+import { ObjectFactory, isVectorObject, type EditableStyleInput } from "@folio/document";
 import { describe, expect, it } from "vitest";
 import { ContinuousVectorStyleEdit } from "../ContinuousVectorStyleEdit";
 import { InkDocumentSession } from "../InkDocumentSession";
@@ -88,7 +84,7 @@ function createHarness() {
     geometry: { x: 20, y: 30, width: 120, height: 80 },
   });
   const session = new InkDocumentSession();
-  session.replaceDocument(new ObjectCollection([original]));
+  session.replaceDocument(pageOf([original]));
   const coordinator = createEditorHistoryCoordinator({
     documentSession: session,
     now: () => FINAL_REVISION,
@@ -98,6 +94,7 @@ function createHarness() {
     documentSession: session,
     commit: (object, style) => coordinator.executeVectorStyleUpdate(object, style),
     onPreviewDocumentChange: () => undefined,
+    isEditable: (object) => object.visible && !object.locked,
   });
   return { original, session, coordinator, edit };
 }

@@ -1,4 +1,5 @@
-import { InkObject, ObjectCollection, ObjectFactory, Transform } from "@folio/document";
+import { pageOf } from "./layer-test-support";
+import { InkObject, PageDocument, ObjectFactory, Transform } from "@folio/document";
 import { createEditorHistoryManager } from "@folio/history";
 import type { HistoryDocumentSession } from "@folio/history";
 import { StrokeBuilder, StrokeSmoother } from "@folio/ink";
@@ -193,7 +194,7 @@ describe("transform command integration", () => {
   });
 
   it.each([
-    ["missing", ObjectCollection.empty(), "ROTATION_OBJECT_NOT_FOUND"],
+    ["missing", pageOf(), "ROTATION_OBJECT_NOT_FOUND"],
     ["hidden", createCollection({ visible: false }), "ROTATION_OBJECT_HIDDEN"],
     ["locked", createCollection({ locked: true }), "ROTATION_OBJECT_LOCKED"],
     [
@@ -208,7 +209,7 @@ describe("transform command integration", () => {
   });
 
   it.each([
-    ["missing", ObjectCollection.empty(), "SCALE_OBJECT_NOT_FOUND"],
+    ["missing", pageOf(), "SCALE_OBJECT_NOT_FOUND"],
     ["hidden", createCollection({ visible: false }), "SCALE_OBJECT_HIDDEN"],
     ["locked", createCollection({ locked: true }), "SCALE_OBJECT_LOCKED"],
     ["stale", createCollection({ modifiedAt: "2026-07-28T02:00:30.000Z" }), "SCALE_OBJECT_STALE"],
@@ -269,7 +270,7 @@ function createCollection(
     rotation: number;
     scale: number;
   }> = {},
-): ObjectCollection {
+): PageDocument {
   const builder = new StrokeBuilder({
     id: "stroke-1",
     timestamp: 0,
@@ -300,22 +301,22 @@ function createCollection(
       scale: options.scale ?? 1,
     }),
   });
-  return new ObjectCollection([ink]);
+  return pageOf([ink]);
 }
 
-function object(collection: ObjectCollection): InkObject {
+function object(collection: PageDocument): InkObject {
   const value = collection.lookup("object-1");
   expect(value).toBeInstanceOf(InkObject);
   return value as InkObject;
 }
 
-function session(initial: ObjectCollection): {
-  current: ObjectCollection;
-  readonly documentSession: HistoryDocumentSession<ObjectCollection>;
+function session(initial: PageDocument): {
+  current: PageDocument;
+  readonly documentSession: HistoryDocumentSession<PageDocument>;
 } {
   const fixture = {
     current: initial,
-    documentSession: undefined as unknown as HistoryDocumentSession<ObjectCollection>,
+    documentSession: undefined as unknown as HistoryDocumentSession<PageDocument>,
   };
   fixture.documentSession = {
     getDocument: () => fixture.current,

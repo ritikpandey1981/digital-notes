@@ -3,6 +3,8 @@ import type {
   CanvasDrawingStyle,
   ColorTargetAdapter,
   EditorColorSystemSnapshot,
+  LayerActions,
+  LayersSnapshot,
   ObjectLifecycleActions,
   ShapeEditingActions,
   ShapeEditingSnapshot,
@@ -14,6 +16,8 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
+import { LayersPanel } from "./LayersPanel";
+import { useNotifications } from "../notifications/NotificationProvider";
 import { ShapesWidget } from "./ShapesWidget";
 import { ShapeEditingToolbar } from "./ShapeEditingToolbar";
 import { ToolDock } from "./ToolDock";
@@ -27,6 +31,8 @@ import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
 interface EditorWorkspaceProps {
+  layersPanelOpen: boolean;
+  onDismissLayersPanel: () => void;
   activeTool: EditorTool;
   activeShape: ShapeToolKind;
   armedShape: ShapeToolKind | null;
@@ -54,6 +60,8 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace({
+  layersPanelOpen,
+  onDismissLayersPanel,
   activeTool,
   activeShape,
   armedShape,
@@ -89,6 +97,21 @@ export function EditorWorkspace({
   });
   const objectLifecycleActionsRef = useRef<ObjectLifecycleActions | null>(null);
   const shapeEditingActionsRef = useRef<ShapeEditingActions | null>(null);
+  const [layerActions, setLayerActions] = useState<LayerActions | null>(null);
+  const [layersSnapshot, setLayersSnapshot] = useState<LayersSnapshot>(() =>
+    Object.freeze({ layers: Object.freeze([]), activeLayerId: "" }),
+  );
+  const handleLayerActionsReady = useCallback((actions: LayerActions | null) => {
+    setLayerActions(actions);
+  }, []);
+  const handleLayersChange = useCallback((snapshot: LayersSnapshot) => {
+    setLayersSnapshot(snapshot);
+  }, []);
+  const { notify } = useNotifications();
+  const notifyLayerDeleted = useCallback(
+    (message: string) => notify({ title: "Layer deleted", description: message }),
+    [notify],
+  );
   const [shapeEditingSnapshot, setShapeEditingSnapshot] = useState<ShapeEditingSnapshot | null>(
     null,
   );
@@ -251,6 +274,8 @@ export function EditorWorkspace({
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
         onShapeEditingActionsReady={handleShapeEditingActionsReady}
         onShapeEditingChange={handleShapeEditingChange}
+        onLayerActionsReady={handleLayerActionsReady}
+        onLayersChange={handleLayersChange}
         onDrawingColorUsed={onDrawingColorUsed}
         onHistoryActionsReady={onHistoryActionsReady}
         onHistoryAvailabilityChange={onHistoryAvailabilityChange}
@@ -259,6 +284,13 @@ export function EditorWorkspace({
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
       <ToolDock activeTool={activeTool} onSelectTool={onSelectTool} />
+      <LayersPanel
+        open={layersPanelOpen}
+        snapshot={layersSnapshot}
+        actions={layerActions}
+        onDismiss={onDismissLayersPanel}
+        onNotify={notifyLayerDeleted}
+      />
       <ShapesWidget
         open={activeTool === "Shapes" && activeFloatingWidget === "shapes"}
         activeShape={activeShape}

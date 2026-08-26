@@ -1,4 +1,4 @@
-import type { ObjectCollection } from "@folio/document";
+import type { PageDocument } from "@folio/document";
 import type { EditorCommand } from "@folio/history";
 import {
   type ResolvedScalarTransformCommandInput,
@@ -17,7 +17,7 @@ export interface RotateCommandInput {
   readonly description?: string;
 }
 
-class RotateCommand implements EditorCommand<ObjectCollection> {
+class RotateCommand implements EditorCommand<PageDocument> {
   readonly id: string;
   readonly timestamp: string;
   readonly description: string;
@@ -31,7 +31,7 @@ class RotateCommand implements EditorCommand<ObjectCollection> {
     Object.freeze(this);
   }
 
-  execute(document: ObjectCollection): ObjectCollection {
+  execute(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "execute",
@@ -42,7 +42,7 @@ class RotateCommand implements EditorCommand<ObjectCollection> {
     );
   }
 
-  undo(document: ObjectCollection): ObjectCollection {
+  undo(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "undo",
@@ -53,7 +53,7 @@ class RotateCommand implements EditorCommand<ObjectCollection> {
     );
   }
 
-  redo(document: ObjectCollection): ObjectCollection {
+  redo(document: PageDocument): PageDocument {
     return this.#transition(
       document,
       "redo",
@@ -65,13 +65,13 @@ class RotateCommand implements EditorCommand<ObjectCollection> {
   }
 
   #transition(
-    document: ObjectCollection,
+    document: PageDocument,
     operation: "execute" | "undo" | "redo",
     expected: number,
     target: number,
     expectedModifiedAt: string,
     targetModifiedAt: string,
-  ): ObjectCollection {
+  ): PageDocument {
     return transitionScalarTransform(
       "rotation",
       document,
@@ -85,7 +85,7 @@ class RotateCommand implements EditorCommand<ObjectCollection> {
   }
 }
 
-export function createRotateCommand(input: RotateCommandInput): EditorCommand<ObjectCollection> {
+export function createRotateCommand(input: RotateCommandInput): EditorCommand<PageDocument> {
   return new RotateCommand(input);
 }
 

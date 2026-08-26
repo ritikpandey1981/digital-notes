@@ -1,7 +1,8 @@
 import {
   InkObject,
   type EditableStyleInput,
-  type ObjectCollection,
+  Layer,
+  PageDocument,
   type PageObject,
   type VectorPageObject,
 } from "@folio/document";
@@ -22,6 +23,13 @@ import type {
 import type { InkDocumentSession } from "../InkDocumentSession";
 import { createAddStrokeCommand } from "./add-stroke-command";
 import { createInsertObjectCommand } from "./insert-object-command";
+import {
+  createAddLayerCommand,
+  createMoveObjectToLayerCommand,
+  createRemoveLayerCommand,
+  createReorderLayersCommand,
+  createUpdateLayerCommand,
+} from "./layer-commands";
 import { createCommandForManipulation } from "./manipulation-command-adapter";
 import { createUpdateVectorStyleCommand } from "./update-vector-style-command";
 
@@ -30,7 +38,7 @@ interface EditorHistoryCoordinatorOptions {
   readonly historyLimit?: number;
   readonly now?: () => string;
   readonly onDocumentChange: (
-    document: ObjectCollection,
+    document: PageDocument,
     notification: HistoryNotification & { readonly outcome: "succeeded" },
   ) => void;
   readonly onHistoryChange?: HistoryListener;
@@ -39,7 +47,7 @@ interface EditorHistoryCoordinatorOptions {
 
 /** Package-private editor boundary around one manager/controller lifetime. */
 export interface EditorHistoryCoordinator {
-  readonly controller: IHistoryController<ObjectCollection>;
+  readonly controller: IHistoryController<PageDocument>;
   readonly executeStroke: (object: InkObject) => IHistoryState;
   readonly executeObjectCreation: (object: PageObject) => IHistoryState;
   readonly executeVectorStyleUpdate: (
@@ -61,13 +69,28 @@ export interface EditorHistoryCoordinator {
     results: readonly DuplicateManipulationResult[],
     offset: Readonly<{ x: number; y: number }>,
   ) => Readonly<{ duplicateObjectIds: readonly string[]; state: IHistoryState }>;
+  readonly executeAddLayer: (name?: string) => Readonly<{ layerId: string; state: IHistoryState }>;
+  readonly executeLayerPatch: (
+    layerId: string,
+    patch: Readonly<{ name?: string; visible?: boolean; locked?: boolean; opacity?: number }>,
+    description?: string,
+  ) => IHistoryState | null;
+  readonly executeRemoveLayer: (
+    layerId: string,
+  ) => Readonly<{ removedObjectCount: number; state: IHistoryState }>;
+  readonly executeReorderLayer: (layerId: string, targetIndex: number) => IHistoryState | null;
+  readonly executeMoveObjectToLayer: (
+    objectId: string,
+    targetLayerId: string,
+    targetLocalIndex?: number,
+  ) => IHistoryState | null;
   readonly undo: () => IHistoryState;
   readonly redo: () => IHistoryState;
   readonly destroy: () => void;
 }
 
 class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator {
-  readonly controller: IHistoryController<ObjectCollection>;
+  readonly controller: IHistoryController<PageDocument>;
   readonly #documentSession: InkDocumentSession;
   readonly #now: () => string;
   readonly #unsubscribe: () => void;
@@ -84,7 +107,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     this.#unsubscribe = this.controller.subscribe((notification) => {
       if (notification.outcome === "succeeded") {
         try {
-          options.onDocumentChange(this.#documentSession.collection, notification);
+          options.onDocumentChange(this.#documentSession.page, notification);
         } catch (cause) {
           options.onError?.(normalizeError(cause, "Editor History synchronization failed."));
         }
@@ -99,8 +122,9 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
 
   executeManipulation(result: ManipulationResult): IHistoryState {
     const command = createCommandForManipulation(result, {
-      document: this.#documentSession.collection,
+      document: this.#documentSession.page,
       timestamp: this.#now(),
+      activeLayerId: this.#documentSession.activeLayerId,
     });
     return this.controller.executeCommand(command);
   }
@@ -129,6 +153,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       createAddStrokeCommand({
         object,
         insertionIndex: object.zIndex,
+        layerId: this.#documentSession.activeLayerId,
         timestamp: object.modifiedAt,
       }),
     );
@@ -139,6 +164,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       createInsertObjectCommand({
         object,
         insertionIndex: object.zIndex,
+        layerId: this.#documentSession.activeLayerId,
         id: `create-${object.type}-${object.id}`,
         timestamp: object.modifiedAt,
         description: `Create ${object.type} object`,
@@ -184,6 +210,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
             createInsertObjectCommand({
               object,
               insertionIndex: object.zIndex,
+              layerId: this.#documentSession.activeLayerId,
               timestamp: object.modifiedAt,
             }),
           );
@@ -222,9 +249,11 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       `Duplicate ${results.length} object${results.length === 1 ? "" : "s"}`,
       () => {
         for (const result of results) {
-          const originalIds = new Set(this.#documentSession.collection.objects.map(({ id }) => id));
+          const originalIds = new Set(
+            this.#documentSession.page.objects.objects.map(({ id }) => id),
+          );
           this.executeManipulation(result);
-          const duplicate = this.#documentSession.collection.objects.find(
+          const duplicate = this.#documentSession.page.objects.objects.find(
             ({ id }) => !originalIds.has(id),
           );
           if (duplicate === undefined) {
@@ -236,6 +265,114 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
       },
     );
     return Object.freeze({ duplicateObjectIds: Object.freeze(duplicateObjectIds), state });
+  }
+
+  executeAddLayer(name?: string): Readonly<{ layerId: string; state: IHistoryState }> {
+    const page = this.#documentSession.page;
+    const layerId = `layer-${this.#nextLayerOrdinal()}`;
+    const layerIndex =
+      page.layerIndex(page.resolveActiveLayerId(this.#documentSession.activeLayerId)) + 1;
+    const layer = new Layer({ id: layerId, name: name ?? `Layer ${this.#nextLayerOrdinal()}` });
+    const state = this.controller.executeCommand(
+      createAddLayerCommand({ layer, layerIndex, timestamp: this.#now() }),
+    );
+    return Object.freeze({ layerId, state });
+  }
+
+  executeLayerPatch(
+    layerId: string,
+    patch: Readonly<{ name?: string; visible?: boolean; locked?: boolean; opacity?: number }>,
+    description?: string,
+  ): IHistoryState | null {
+    const layer = this.#documentSession.page.layer(layerId);
+    if (layer === undefined) return null;
+    const initialPatch: Record<string, unknown> = {};
+    const finalPatch: Record<string, unknown> = {};
+    for (const key of ["name", "visible", "locked", "opacity"] as const) {
+      const next = patch[key];
+      if (next === undefined || next === layer[key]) continue;
+      initialPatch[key] = layer[key];
+      finalPatch[key] = next;
+    }
+    if (Object.keys(finalPatch).length === 0) return null;
+    return this.controller.executeCommand(
+      createUpdateLayerCommand({
+        layerId,
+        initialPatch,
+        finalPatch,
+        timestamp: this.#now(),
+        ...(description === undefined ? {} : { description }),
+      }),
+    );
+  }
+
+  executeRemoveLayer(
+    layerId: string,
+  ): Readonly<{ removedObjectCount: number; state: IHistoryState }> {
+    const page = this.#documentSession.page;
+    const layer = page.requireLayer(layerId);
+    if (page.layerCount === 1) {
+      throw new Error("The final remaining Layer cannot be removed.");
+    }
+    const layerIndex = page.layerIndex(layerId);
+    const objects = layer.objectIds.map((objectId) => {
+      const object = page.lookup(objectId);
+      if (object === undefined) {
+        throw new Error(`Layer '${layerId}' references unknown object '${objectId}'.`);
+      }
+      return object;
+    });
+    const command = createRemoveLayerCommand({
+      layer,
+      layerIndex,
+      objects,
+      timestamp: this.#now(),
+    });
+    const state = this.controller.executeCommand(command);
+    return Object.freeze({ removedObjectCount: command.removedObjectCount, state });
+  }
+
+  executeReorderLayer(layerId: string, targetIndex: number): IHistoryState | null {
+    const page = this.#documentSession.page;
+    const fromIndex = page.layerIndex(layerId);
+    const toIndex = Math.min(Math.max(targetIndex, 0), page.layerCount - 1);
+    if (fromIndex === toIndex) return null;
+    return this.controller.executeCommand(
+      createReorderLayersCommand({ layerId, fromIndex, toIndex, timestamp: this.#now() }),
+    );
+  }
+
+  executeMoveObjectToLayer(
+    objectId: string,
+    targetLayerId: string,
+    targetLocalIndex?: number,
+  ): IHistoryState | null {
+    const page = this.#documentSession.page;
+    const fromLayerId = page.layerIdForObject(objectId);
+    if (fromLayerId === undefined || page.layer(targetLayerId) === undefined) return null;
+    const fromLocalIndex = page.requireLayer(fromLayerId).indexOf(objectId);
+    const target = page.requireLayer(targetLayerId);
+    const toLocalIndex =
+      targetLocalIndex ?? (fromLayerId === targetLayerId ? target.size - 1 : target.size);
+    if (fromLayerId === targetLayerId && fromLocalIndex === toLocalIndex) return null;
+    return this.controller.executeCommand(
+      createMoveObjectToLayerCommand({
+        objectId,
+        fromLayerId,
+        fromLocalIndex,
+        toLayerId: targetLayerId,
+        toLocalIndex,
+        timestamp: this.#now(),
+      }),
+    );
+  }
+
+  #nextLayerOrdinal(): number {
+    const page = this.#documentSession.page;
+    let ordinal = page.layerCount + 1;
+    const taken = new Set(page.layers.map((layer) => layer.id));
+    while (taken.has(`layer-${ordinal}`)) ordinal += 1;
+    return ordinal;
   }
 
   undo(): IHistoryState {
