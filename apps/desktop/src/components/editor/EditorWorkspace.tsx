@@ -1,4 +1,5 @@
 import type {
+  ArtworkColorSampleResult,
   CanvasDrawingStyle,
   ColorTargetAdapter,
   EditorColorSystemSnapshot,
@@ -9,7 +10,7 @@ import type {
   EditorViewportSnapshot,
   ViewportActions,
 } from "@folio/editor";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
@@ -92,6 +93,24 @@ export function EditorWorkspace({
     null,
   );
   const colorPicker = useColorPickerSession();
+  const {
+    cancel: cancelPickerSession,
+    commit: commitPickerSession,
+    open: openPickerSession,
+  } = colorPicker;
+  const colorPickerFloatingScope = useId();
+  const [eyedropperState, setEyedropperState] = useState<{
+    readonly targetId: string | null;
+    readonly active: boolean;
+    readonly message: string | null;
+    readonly sampledColor: string | null;
+  }>(() => ({ targetId: null, active: false, message: null, sampledColor: null }));
+  const activePickerTargetId = colorPicker.snapshot?.target.id ?? null;
+  const eyedropperActive =
+    eyedropperState.active && eyedropperState.targetId === activePickerTargetId;
+  const clearEyedropperState = useCallback((): void => {
+    setEyedropperState({ targetId: null, active: false, message: null, sampledColor: null });
+  }, []);
   const handleObjectLifecycleActionsReady = useCallback(
     (actions: ObjectLifecycleActions | null) => {
       objectLifecycleActionsRef.current = actions;
@@ -130,14 +149,57 @@ export function EditorWorkspace({
     const validTargetIds = new Set(
       [colorTarget?.id, selectedVectorTargetId].filter((id): id is string => id !== undefined),
     );
-    if (!validTargetIds.has(activeSession.target.id)) colorPicker.cancel();
-  }, [colorPicker, colorPicker.snapshot, colorTarget?.id, selectedVectorTargetId]);
+    if (!validTargetIds.has(activeSession.target.id)) cancelPickerSession();
+  }, [cancelPickerSession, colorPicker.snapshot, colorTarget?.id, selectedVectorTargetId]);
+  const setEyedropperActive = useCallback(
+    (active: boolean): void => {
+      setEyedropperState({
+        targetId: active ? activePickerTargetId : null,
+        active: active && activePickerTargetId !== null,
+        message: null,
+        sampledColor: null,
+      });
+    },
+    [activePickerTargetId],
+  );
+  const handleArtworkSample = useCallback(
+    (result: ArtworkColorSampleResult): void => {
+      if (!eyedropperActive || activePickerTargetId !== eyedropperState.targetId) return;
+      if (result.status === "success") {
+        setEyedropperState({
+          targetId: eyedropperState.targetId,
+          active: false,
+          message: null,
+          sampledColor: result.color,
+        });
+        return;
+      }
+      if (result.status === "miss" && result.reason === "outside-page") return;
+      setEyedropperState((current) => ({
+        ...current,
+        message:
+          result.status === "miss"
+            ? "Color sampling isn't available."
+            : "This color can't be sampled.",
+      }));
+    },
+    [activePickerTargetId, eyedropperActive, eyedropperState.targetId],
+  );
+  const commitColorPicker = useCallback((): void => {
+    clearEyedropperState();
+    commitPickerSession();
+  }, [clearEyedropperState, commitPickerSession]);
+  const cancelColorPicker = useCallback((): void => {
+    clearEyedropperState();
+    cancelPickerSession();
+  }, [cancelPickerSession, clearEyedropperState]);
   const openCreationPicker = useCallback(
     (anchor: HTMLElement, source: "quick-rail" | "tool-settings", ownerScope?: string): void => {
       if (colorTarget === null) return;
-      colorPicker.open({ target: colorTarget, source, anchor, ownerScope });
+      clearEyedropperState();
+      openPickerSession({ target: colorTarget, source, anchor, ownerScope });
     },
-    [colorPicker, colorTarget],
+    [clearEyedropperState, colorTarget, openPickerSession],
   );
   const openSelectedVectorPicker = useCallback(
     (anchor: HTMLElement): void => {
@@ -152,7 +214,8 @@ export function EditorWorkspace({
         commitContinuousEdit: commitContinuousShapeStyleEdit,
         cancelContinuousEdit: cancelContinuousShapeStyleEdit,
       });
-      colorPicker.open({
+      clearEyedropperState();
+      openPickerSession({
         target: selectedVectorColorTarget,
         source: "selected-vector",
         anchor,
@@ -162,8 +225,9 @@ export function EditorWorkspace({
     [
       beginContinuousShapeStyleEdit,
       cancelContinuousShapeStyleEdit,
-      colorPicker,
+      clearEyedropperState,
       commitContinuousShapeStyleEdit,
+      openPickerSession,
       previewContinuousShapeStyle,
       shapeEditingSnapshot,
     ],
@@ -179,7 +243,10 @@ export function EditorWorkspace({
       <CanvasHost
         activeTool={activeTool}
         armedShape={armedShape}
+        artworkSamplingActive={eyedropperActive}
+        artworkSamplingOwnerScope={colorPickerFloatingScope}
         drawingStyle={drawingStyle}
+        onArtworkSample={handleArtworkSample}
         viewportSnapshot={viewportSnapshot}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
         onShapeEditingActionsReady={handleShapeEditingActionsReady}
@@ -235,12 +302,19 @@ export function EditorWorkspace({
           key={colorPicker.snapshot.target.id}
           session={colorPicker.snapshot}
           colors={colors}
+          eyedropperActive={eyedropperActive}
+          eyedropperMessage={eyedropperState.message}
+          eyedropperSampledColor={
+            eyedropperState.targetId === activePickerTargetId ? eyedropperState.sampledColor : null
+          }
+          floatingScope={colorPickerFloatingScope}
           onPreviewHex={colorPicker.previewHex}
           onPreviewHsv={colorPicker.previewHsv}
           onSelectPalette={onSelectColorPalette}
           onToggleFavorite={onToggleFavoriteColor}
-          onCommit={colorPicker.commit}
-          onCancel={colorPicker.cancel}
+          onEyedropperActiveChange={setEyedropperActive}
+          onCommit={commitColorPicker}
+          onCancel={cancelColorPicker}
         />
       )}
     </section>

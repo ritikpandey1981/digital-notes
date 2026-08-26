@@ -77,6 +77,12 @@ export {
   type ShapeEditingSnapshot,
   type ShapeStylePatch,
 } from "./CanvasSurface";
+export type {
+  ArtworkBackingPoint,
+  ArtworkColorSampleResult,
+  ArtworkColorSampler,
+  ArtworkSamplePoint,
+} from "./ArtworkColorSampler";
 export {
   DEFAULT_EDITOR_VIEWPORT_SNAPSHOT,
   EDITOR_VIEWPORT_ZOOM_PRESETS,

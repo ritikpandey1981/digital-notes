@@ -50,9 +50,14 @@ import {
   type SelectionState,
 } from "@folio/selection";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  createCanvasArtworkColorSampler,
+  type ArtworkColorSampleResult,
+} from "./ArtworkColorSampler";
 import { ContinuousVectorStyleEdit } from "./ContinuousVectorStyleEdit";
 import { SELECTION_HIGHLIGHT_COLOR, SELECTION_OUTLINE_COLOR } from "./selection-presentation";
 import { committedArtworkColor, committedVectorRecolor } from "./artwork-color-usage";
+import { hexToRgb } from "./foundation/color-conversion";
 import { EditorClipboard } from "./EditorClipboard";
 import {
   editorViewportWheelZoom,
@@ -213,6 +218,10 @@ export interface CanvasSurfaceProps {
   readonly onHistoryChange?: (notification: HistoryNotification) => void;
   /** Receives canonical colors read from successfully committed artwork, excluding Undo/Redo. */
   readonly onArtworkColorUsed?: (color: string) => void;
+  /** Temporarily claims page input for one picker-owned artwork sampling interaction. */
+  readonly artworkSamplingActive?: boolean;
+  /** Receives deterministic results from picker-owned artwork sampling attempts. */
+  readonly onArtworkSample?: (result: ArtworkColorSampleResult) => void;
   /** Receives immutable rendering diagnostics at lifecycle checkpoints. */
   readonly onDiagnostics?: (snapshot: CanvasControllerSnapshot) => void;
   /** Receives session-bound viewport actions and null during cleanup. */
@@ -240,6 +249,15 @@ function readTheme(): RenderTheme {
         : "rgba(0, 0, 0, 0.16)",
     pageLineColor: value("--folio-page-rule", "rgba(102, 118, 151, 0.16)"),
   });
+}
+
+function readOpaqueWorkspaceColor() {
+  const fallback = document.documentElement.dataset.theme === "dark" ? "#24211f" : "#f1f1ef";
+  try {
+    return hexToRgb(readTheme().workspaceColor);
+  } catch {
+    return hexToRgb(fallback);
+  }
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -349,6 +367,8 @@ export function CanvasSurface({
   onManipulationChange,
   onHistoryChange,
   onArtworkColorUsed,
+  artworkSamplingActive = false,
+  onArtworkSample,
   onDiagnostics,
   onViewportActionsReady,
   onViewportChange,
@@ -385,6 +405,8 @@ export function CanvasSurface({
   const manipulationChangeRef = useRef(onManipulationChange);
   const historyChangeRef = useRef(onHistoryChange);
   const artworkColorUsedRef = useRef(onArtworkColorUsed);
+  const artworkSamplingActiveRef = useRef(artworkSamplingActive);
+  const artworkSampleRef = useRef(onArtworkSample);
   const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
   const shapeEditingActionsReadyRef = useRef(onShapeEditingActionsReady);
   const shapeEditingChangeRef = useRef(onShapeEditingChange);
@@ -410,6 +432,16 @@ export function CanvasSurface({
     toolRegistryRef.current?.activate(interactionMode);
     updateToolDiagnosticsRef.current?.();
   }, [interactionMode]);
+
+  useLayoutEffect(() => {
+    artworkSamplingActiveRef.current = artworkSamplingActive;
+    artworkSampleRef.current = onArtworkSample;
+    if (!artworkSamplingActive) return;
+    manipulationControllerRef.current?.cancelManipulation();
+    releaseManipulationPointerCaptureRef.current?.();
+    resetManipulationCursorRef.current?.();
+    resetVectorHoverRef.current?.();
+  }, [artworkSamplingActive, onArtworkSample]);
 
   useLayoutEffect(() => {
     controllerReadyRef.current = onControllerReady;
@@ -543,6 +575,7 @@ export function CanvasSurface({
     let overlapPointerOrigin: ScreenPoint | null = null;
     let overlapPointerMoved = false;
     let activeLineEndpointInteraction: ActiveLineEndpointInteraction | null = null;
+    let artworkSamplingPointerId: number | null = null;
     const editorPointerListeners: Array<readonly [keyof HTMLElementEventMap, EventListener]> = [];
     const releaseManipulationPointerCapture = (): void => {
       const capture = manipulationPointerCapture;
@@ -572,9 +605,19 @@ export function CanvasSurface({
       controller.mount(host);
       const viewport = controller.viewport;
       const coordinateConverter = controller.coordinateConverter;
-      if (viewport === null || coordinateConverter === null) {
+      const pageCanvas = controller.canvas;
+      if (viewport === null || coordinateConverter === null || pageCanvas === null) {
         throw new Error("Canvas viewport initialization failed.");
       }
+      const artworkColorSampler = createCanvasArtworkColorSampler({
+        canvas: pageCanvas,
+        getLogicalSize: () => viewport.size,
+        getPageViewportRect: () => viewport.pageViewportRect,
+        getOpaqueBackingColor: readOpaqueWorkspaceColor,
+        flushPendingRender: () => {
+          controller.flushRender();
+        },
+      });
       inkLayer = controller.createOverlayLayer({
         name: "ink",
         interactive: true,
@@ -1979,6 +2022,46 @@ export function CanvasSurface({
           updateManipulationCursor(position);
         }
       };
+      const reportArtworkSample = (result: ArtworkColorSampleResult): void => {
+        host.dataset.artworkSampleStatus = result.status;
+        if (result.status === "success") {
+          host.dataset.artworkSampleReason = "";
+          host.dataset.artworkSampleColor = result.color;
+          host.dataset.artworkSampleDurationMs = String(result.durationMs);
+        } else {
+          host.dataset.artworkSampleReason = result.reason;
+          host.dataset.artworkSampleColor = "";
+          if (result.status === "error") {
+            host.dataset.artworkSampleDurationMs = String(result.durationMs);
+          }
+        }
+        artworkSampleRef.current?.(result);
+      };
+      const handleArtworkSamplingPointer = (
+        phase: SelectionPointerInput["phase"],
+        event: PointerEvent,
+      ): boolean => {
+        const ownsPointer = artworkSamplingPointerId === event.pointerId;
+        if (!artworkSamplingActiveRef.current && !ownsPointer) return false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (phase === "down") {
+          setContextMenu(null);
+          artworkSamplingPointerId = event.pointerId;
+          if (event.isPrimary && event.button === 0) {
+            reportArtworkSample(
+              artworkColorSampler.sampleClientPoint({
+                clientX: event.clientX,
+                clientY: event.clientY,
+              }),
+            );
+          }
+        }
+        if ((phase === "up" || phase === "cancel") && ownsPointer) {
+          artworkSamplingPointerId = null;
+        }
+        return true;
+      };
       const addEditorPointerListener = (
         type: keyof HTMLElementEventMap,
         phase: SelectionPointerInput["phase"],
@@ -1986,6 +2069,7 @@ export function CanvasSurface({
         const listener: EventListener = (nativeEvent) => {
           const event = nativeEvent as PointerEvent;
           pointerOverCanvas = true;
+          if (handleArtworkSamplingPointer(phase, event)) return;
           if (handleViewportPointer(phase, event)) return;
           if (phase === "down") editorPointerIds.add(event.pointerId);
           toolRegistry?.handlePointer(phase, event);
@@ -2006,6 +2090,11 @@ export function CanvasSurface({
       addEditorPointerListener("lostpointercapture", "cancel");
       const wheelListener: EventListener = (nativeEvent) => {
         const event = nativeEvent as WheelEvent;
+        if (artworkSamplingActiveRef.current) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
         const bounds = getInkCanvasBounds();
         if (bounds === null || bounds.width <= 0 || bounds.height <= 0) return;
         event.preventDefault();
@@ -2055,6 +2144,10 @@ export function CanvasSurface({
       editorPointerListeners.push(["pointerleave", cursorLeaveListener]);
       contextMenuListener = (event): void => {
         event.preventDefault();
+        if (artworkSamplingActiveRef.current) {
+          event.stopImmediatePropagation();
+          return;
+        }
         const hit = activeSelectionController.hitTest(
           Object.freeze({
             x: event.clientX,
@@ -2783,6 +2876,7 @@ export function CanvasSurface({
         data-history-capability="initializing"
         data-clipboard-capability="initializing"
         data-context-menu-capability="initializing"
+        data-artwork-sampling-state={artworkSamplingActive ? "active" : "inactive"}
       />
       {contextMenu === null ? null : (
         <EditorContextMenu

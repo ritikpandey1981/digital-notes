@@ -353,6 +353,15 @@ export class CanvasController {
     this.requireScheduler().forceRender(this.now());
   }
 
+  /** Flushes already-scheduled render work without creating a new invalidation. */
+  flushRender(): boolean {
+    this.assertMounted();
+    const scheduler = this.requireScheduler();
+    if (!scheduler.pending) return false;
+    scheduler.forceRender(this.now());
+    return true;
+  }
+
   snapshot(): CanvasControllerSnapshot {
     return Object.freeze({
       status: this.statusValue,

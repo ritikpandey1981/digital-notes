@@ -1,5 +1,6 @@
 import {
   CanvasSurface,
+  type ArtworkColorSampleResult,
   type CanvasDrawingStyle,
   type CanvasSurfaceProps,
   type ObjectLifecycleActions,
@@ -22,7 +23,10 @@ import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./wo
 interface CanvasHostProps {
   readonly activeTool: EditorTool;
   readonly armedShape: ShapeToolKind | null;
+  readonly artworkSamplingActive: boolean;
+  readonly artworkSamplingOwnerScope: string | undefined;
   readonly drawingStyle: CanvasDrawingStyle;
+  readonly onArtworkSample: (result: ArtworkColorSampleResult) => void;
   readonly viewportSnapshot: EditorViewportSnapshot;
   readonly onObjectLifecycleActionsReady: (actions: ObjectLifecycleActions | null) => void;
   readonly onShapeEditingActionsReady: (actions: ShapeEditingActions | null) => void;
@@ -38,7 +42,10 @@ interface CanvasHostProps {
 export const CanvasHost = memo(function CanvasHost({
   activeTool,
   armedShape,
+  artworkSamplingActive,
+  artworkSamplingOwnerScope,
   drawingStyle,
+  onArtworkSample,
   viewportSnapshot,
   onObjectLifecycleActionsReady,
   onShapeEditingActionsReady,
@@ -113,6 +120,13 @@ export const CanvasHost = memo(function CanvasHost({
       'canvas[data-folio-layer="ink"]',
     );
     if (inkCanvas === undefined || inkCanvas === null) return;
+    if (artworkSamplingActive) {
+      inkCanvas.dataset.desktopToolCursor = "eyedropper";
+      inkCanvas.dataset.desktopCursorCss = "default";
+      inkCanvas.dataset.desktopCursorPhase = "steady";
+      inkCanvas.style.cursor = "default";
+      return;
+    }
     const presentation = cursorPresentationForTool(activeTool);
     const cursorCss = presentation.css ?? inkCanvas.dataset.editorCursor ?? "default";
     inkCanvas.dataset.desktopToolCursor = presentation.id;
@@ -137,7 +151,7 @@ export const CanvasHost = memo(function CanvasHost({
     };
     inkCanvas.addEventListener("pointermove", activateAdaptiveCursor, { once: true });
     return () => inkCanvas.removeEventListener("pointermove", activateAdaptiveCursor);
-  }, [activeTool, armedShape]);
+  }, [activeTool, armedShape, artworkSamplingActive]);
   useEffect(() => {
     const outerHost = hostRef.current;
     const brushCursor = brushCursorRef.current;
@@ -166,7 +180,7 @@ export const CanvasHost = memo(function CanvasHost({
     if (Number.isFinite(previousX) && Number.isFinite(previousY)) {
       positionCursor(previousX, previousY);
     }
-    const brushActive = usesImperativeBrushCursor(activeTool);
+    const brushActive = !artworkSamplingActive && usesImperativeBrushCursor(activeTool);
     let cursorFrame: number | null = null;
     let pendingPosition: Readonly<{ clientX: number; clientY: number }> | null = null;
     const setVisible = (visible: boolean): void => {
@@ -254,7 +268,53 @@ export const CanvasHost = memo(function CanvasHost({
       if (cursorFrame !== null) cancelAnimationFrame(cursorFrame);
       if (brushActive && inkCanvas.style.cursor === "none") inkCanvas.style.cursor = "default";
     };
-  }, [activeTool, drawingStyle.width, viewportSnapshot.zoom]);
+  }, [activeTool, artworkSamplingActive, drawingStyle.width, viewportSnapshot.zoom]);
+  useEffect(() => {
+    if (!artworkSamplingActive) return;
+    const outerHost = hostRef.current;
+    const brushCursor = brushCursorRef.current;
+    const inkCanvas = outerHost?.querySelector<HTMLCanvasElement>('canvas[data-folio-layer="ink"]');
+    if (
+      outerHost === null ||
+      brushCursor === null ||
+      inkCanvas === undefined ||
+      inkCanvas === null
+    ) {
+      return;
+    }
+    brushCursor.dataset.visible = "false";
+    brushCursor.style.opacity = "0";
+    const setCursor = (cursor: "crosshair" | "default"): void => {
+      inkCanvas.style.cursor = cursor;
+      inkCanvas.dataset.eyedropperCursor = cursor;
+    };
+    const handlePointerMove = (event: PointerEvent): void => {
+      const surface = inkCanvas.closest<HTMLElement>("[data-viewport-page-x]");
+      if (surface === null) {
+        setCursor("default");
+        return;
+      }
+      const bounds = outerHost.getBoundingClientRect();
+      const overPage = pointIsWithinBrushPage(
+        { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+        {
+          x: Number(surface.dataset.viewportPageX),
+          y: Number(surface.dataset.viewportPageY),
+          width: Number(surface.dataset.viewportPageWidth),
+          height: Number(surface.dataset.viewportPageHeight),
+        },
+      );
+      setCursor(overPage ? "crosshair" : "default");
+    };
+    const handlePointerLeave = (): void => setCursor("default");
+    outerHost.addEventListener("pointermove", handlePointerMove, true);
+    outerHost.addEventListener("pointerleave", handlePointerLeave, true);
+    return () => {
+      outerHost.removeEventListener("pointermove", handlePointerMove, true);
+      outerHost.removeEventListener("pointerleave", handlePointerLeave, true);
+      delete inkCanvas.dataset.eyedropperCursor;
+    };
+  }, [artworkSamplingActive]);
   return (
     <div
       ref={hostRef}
@@ -265,11 +325,15 @@ export const CanvasHost = memo(function CanvasHost({
       data-ink-state="ready"
       data-selection-capability="ready"
       data-manipulation-capability="ready"
+      data-floating-widget-owner={artworkSamplingActive ? artworkSamplingOwnerScope : undefined}
+      data-eyedropper-input={artworkSamplingActive ? "owned" : "inactive"}
     >
       <CanvasSurface
         className="relative size-full"
         interactionMode={interactionMode}
+        artworkSamplingActive={artworkSamplingActive}
         drawingStyle={drawingStyle}
+        onArtworkSample={onArtworkSample}
         onHistoryControllerReady={handleHistoryControllerReady}
         onDiagnostics={() => {
           if (hostRef.current !== null) {

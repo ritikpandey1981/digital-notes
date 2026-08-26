@@ -8,9 +8,11 @@ export function useFloatingWidgetDismissal(
   options: Readonly<{
     onEscape?: () => void;
     canvasPageDismissal?: "microtask" | "synchronous";
+    scopeId?: string;
   }> = {},
 ): string {
-  const scopeId = useId();
+  const generatedScopeId = useId();
+  const scopeId = options.scopeId ?? generatedScopeId;
 
   useEffect(() => {
     if (!open) return;

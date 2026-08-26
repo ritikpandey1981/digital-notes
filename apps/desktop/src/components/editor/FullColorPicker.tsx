@@ -6,7 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { Check, ChevronDown, Star } from "lucide-react";
+import { Check, ChevronDown, Pipette, Star } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -35,6 +35,10 @@ import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
 interface FullColorPickerProps {
   readonly session: ColorPickerSessionSnapshot;
   readonly colors: EditorColorSystemSnapshot;
+  readonly eyedropperActive: boolean;
+  readonly eyedropperMessage: string | null;
+  readonly eyedropperSampledColor: string | null;
+  readonly floatingScope: string;
   readonly onPreviewHex: (
     color: string,
     schedule?: ColorPreviewSchedule,
@@ -45,6 +49,7 @@ interface FullColorPickerProps {
   ) => ColorPickerSessionSnapshot | null;
   readonly onSelectPalette: (paletteId: string) => void;
   readonly onToggleFavorite: (color: string) => void;
+  readonly onEyedropperActiveChange: (active: boolean) => void;
   readonly onCommit: () => void;
   readonly onCancel: () => void;
 }
@@ -54,14 +59,20 @@ const FALLBACK_PICKER_SIZE = Object.freeze({ width: 332, height: 594 });
 export function FullColorPicker({
   session,
   colors,
+  eyedropperActive,
+  eyedropperMessage,
+  eyedropperSampledColor,
+  floatingScope,
   onPreviewHex,
   onPreviewHsv,
   onSelectPalette,
   onToggleFavorite,
+  onEyedropperActiveChange,
   onCommit,
   onCancel,
 }: FullColorPickerProps) {
   const pickerRef = useRef<HTMLElement | null>(null);
+  const eyedropperButtonRef = useRef<HTMLButtonElement | null>(null);
   const [presentation, setPresentation] = useState(() => ({
     currentColor: session.currentColor,
     hsv: session.hsv,
@@ -78,9 +89,18 @@ export function FullColorPicker({
       if (anchor.isConnected) anchor.focus({ preventScroll: true });
     });
   }, [onCancel, session.anchor]);
-  const floatingScope = useFloatingWidgetDismissal(true, onCommit, pickerRef, {
-    onEscape: cancelAndRestoreFocus,
+  const handleEscape = useCallback((): void => {
+    if (!eyedropperActive) {
+      cancelAndRestoreFocus();
+      return;
+    }
+    onEyedropperActiveChange(false);
+    queueMicrotask(() => eyedropperButtonRef.current?.focus({ preventScroll: true }));
+  }, [cancelAndRestoreFocus, eyedropperActive, onEyedropperActiveChange]);
+  const resolvedFloatingScope = useFloatingWidgetDismissal(true, onCommit, pickerRef, {
+    onEscape: handleEscape,
     canvasPageDismissal: "synchronous",
+    scopeId: floatingScope,
   });
   const positioningAnchor =
     session.source === "selected-vector"
@@ -95,19 +115,22 @@ export function FullColorPicker({
     session.source,
   );
   const style: CSSProperties = { left: placement.left, top: placement.top };
-  const ownerScopes = [floatingScope, session.ownerScope].filter(Boolean).join(" ");
+  const ownerScopes = [resolvedFloatingScope, session.ownerScope].filter(Boolean).join(" ");
   const currentIsFavorite = isFavoriteColor(colors.favoriteColors, presentation.currentColor);
-  const previewHex = (color: string, schedule?: ColorPreviewSchedule): boolean => {
-    const next = onPreviewHex(color, schedule);
-    if (next === null) return false;
-    const hsv =
-      next.hsv.saturation > 0
-        ? next.hsv
-        : Object.freeze({ ...next.hsv, hue: lastMeaningfulHueRef.current });
-    if (next.hsv.saturation > 0) lastMeaningfulHueRef.current = next.hsv.hue;
-    setPresentation({ currentColor: next.currentColor, hsv });
-    return true;
-  };
+  const previewHex = useCallback(
+    (color: string, schedule?: ColorPreviewSchedule): boolean => {
+      const next = onPreviewHex(color, schedule);
+      if (next === null) return false;
+      const hsv =
+        next.hsv.saturation > 0
+          ? next.hsv
+          : Object.freeze({ ...next.hsv, hue: lastMeaningfulHueRef.current });
+      if (next.hsv.saturation > 0) lastMeaningfulHueRef.current = next.hsv.hue;
+      setPresentation({ currentColor: next.currentColor, hsv });
+      return true;
+    },
+    [onPreviewHex],
+  );
   const previewHsv = (hsv: HsvColor, schedule?: ColorPreviewSchedule): boolean => {
     const next = onPreviewHsv(hsv, schedule);
     if (next === null) return false;
@@ -152,6 +175,39 @@ export function FullColorPicker({
     return () => window.removeEventListener("blur", cancelForWindowBlur);
   }, [onCancel]);
 
+  useEffect(() => {
+    if (eyedropperSampledColor !== null) previewHex(eyedropperSampledColor);
+  }, [eyedropperSampledColor, previewHex]);
+
+  useEffect(() => {
+    const handleShortcut = (event: globalThis.KeyboardEvent): void => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.key.toLowerCase() !== "i" ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        textEntryOwnsKeyboard(event.target)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      onEyedropperActiveChange(!eyedropperActive);
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [eyedropperActive, onEyedropperActiveChange]);
+
+  const previouslyActiveRef = useRef(eyedropperActive);
+  useEffect(() => {
+    if (previouslyActiveRef.current && !eyedropperActive) {
+      queueMicrotask(() => eyedropperButtonRef.current?.focus({ preventScroll: true }));
+    }
+    previouslyActiveRef.current = eyedropperActive;
+  }, [eyedropperActive]);
+
   return (
     <section
       ref={pickerRef}
@@ -164,19 +220,53 @@ export function FullColorPicker({
       data-color-target-label={session.target.label}
       data-picker-source={session.source}
       data-picker-side={placement.side}
-      data-floating-widget-scope={floatingScope}
+      data-floating-widget-scope={resolvedFloatingScope}
       data-floating-widget-owner={session.ownerScope}
       data-floating-surface="folio"
+      data-eyedropper-state={eyedropperActive ? "active" : "inactive"}
     >
       <div className="mb-2 flex items-start justify-between gap-3 px-0.5">
         <div>
           <h2 className="text-xs font-semibold text-folio-ink">{session.target.label}</h2>
           <p className="text-[10px] text-folio-muted">Full color picker</p>
         </div>
-        <span className="rounded-full bg-folio-accent-soft px-2 py-1 font-mono text-[9px] uppercase text-folio-accent">
-          {presentation.currentColor}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            ref={eyedropperButtonRef}
+            type="button"
+            className={cn(
+              "grid size-7 place-items-center rounded-lg border border-folio-border text-folio-muted hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+              eyedropperActive && "border-folio-accent bg-folio-accent-soft text-folio-accent",
+            )}
+            aria-label="Pick color from canvas"
+            aria-pressed={eyedropperActive}
+            title="Pick color from canvas (I)"
+            data-testid="eyedropper-toggle"
+            onClick={() => onEyedropperActiveChange(!eyedropperActive)}
+          >
+            <Pipette className="size-3.5" aria-hidden="true" />
+          </button>
+          <span className="rounded-full bg-folio-accent-soft px-2 py-1 font-mono text-[9px] uppercase text-folio-accent">
+            {presentation.currentColor}
+          </span>
+        </div>
       </div>
+
+      {eyedropperActive || eyedropperMessage !== null ? (
+        <p
+          className={cn(
+            "mb-2 rounded-lg px-2 py-1.5 text-[9px]",
+            eyedropperMessage === null
+              ? "bg-folio-accent-soft text-folio-accent"
+              : "bg-folio-surface-muted text-folio-muted",
+          )}
+          role="status"
+          aria-live="polite"
+          data-testid="eyedropper-status"
+        >
+          {eyedropperMessage ?? "Click the page to sample a color. Press Escape to exit."}
+        </p>
+      ) : null}
 
       <SaturationValueField hsv={presentation.hsv} onPreview={previewHsv} />
       <label className="mt-2 block">
@@ -636,6 +726,14 @@ function ColorCollection({
 function rgbDraftFromHex(color: string): RgbDraft {
   const rgb = hexToRgb(color);
   return { red: String(rgb.red), green: String(rgb.green), blue: String(rgb.blue) };
+}
+
+function textEntryOwnsKeyboard(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLSelectElement) return true;
+  if (!(target instanceof HTMLInputElement)) return false;
+  return ["email", "number", "password", "search", "tel", "text", "url"].includes(target.type);
 }
 
 function addFloatingOwner(element: HTMLElement, scope: string): void {

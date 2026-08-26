@@ -233,6 +233,18 @@ describe("CanvasController", () => {
     expect(harness.controller.snapshot().diagnostics.renderCount).toBe(1);
   });
 
+  it("flushes only already-pending rendering without adding invalidation", () => {
+    const harness = createHarness();
+    harness.controller.mount(harness.container);
+    const invalidations = harness.controller.snapshot().diagnostics.invalidationCount;
+    expect(harness.controller.flushRender()).toBe(true);
+    expect(harness.frameCallbacks.size).toBe(0);
+    expect(harness.controller.snapshot().diagnostics.renderCount).toBe(1);
+    expect(harness.controller.snapshot().diagnostics.invalidationCount).toBe(invalidations);
+    expect(harness.controller.flushRender()).toBe(false);
+    expect(harness.controller.snapshot().diagnostics.renderCount).toBe(1);
+  });
+
   it("resizes logical and HiDPI backing stores while recomputing Fit Page", () => {
     const harness = createHarness({ dpr: 2 });
     harness.controller.mount(harness.container);

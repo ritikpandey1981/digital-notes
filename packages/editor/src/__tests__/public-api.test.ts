@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as editor from "../index";
 import type {
+  ArtworkColorSampleResult,
   CanvasDrawingStyle,
   CanvasSurfaceProps,
   EditorViewportSnapshot,
@@ -70,6 +71,16 @@ describe("@folio/editor public API", () => {
       onHistoryChange: (notification) => notification.state,
       onArtworkColorUsed: (color) => color,
     };
+    const sampleResult: ArtworkColorSampleResult = {
+      status: "success",
+      color: "#4f46e5",
+      backingPoint: { x: 10, y: 20 },
+      durationMs: 0.2,
+    };
+    const artworkSamplingProps: CanvasSurfaceProps = {
+      artworkSamplingActive: true,
+      onArtworkSample: (result) => result.status,
+    };
     const lifecycleActions: ObjectLifecycleActions = {
       deleteSelection: () => true,
       duplicateSelection: () => true,
@@ -132,6 +143,8 @@ describe("@folio/editor public API", () => {
     expect(historyProps.onHistoryControllerReady).toBeTypeOf("function");
     expect(historyProps.onHistoryChange).toBeTypeOf("function");
     expect(historyProps.onArtworkColorUsed).toBeTypeOf("function");
+    expect(sampleResult.status).toBe("success");
+    expect(artworkSamplingProps.onArtworkSample).toBeTypeOf("function");
     expect(lifecycleActions.duplicateSelection()).toBe(true);
     expect(lifecycleProps.onObjectLifecycleActionsReady).toBeTypeOf("function");
     expect(toolRegistryProps.onToolRegistryReady).toBeTypeOf("function");
