@@ -21,6 +21,7 @@ import type {
   TranslationManipulationResult,
 } from "@folio/manipulation";
 import type { InkDocumentSession } from "../InkDocumentSession";
+import type { SelectionStyleCommit } from "../ContinuousSelectionStyleEdit";
 import { createAddStrokeCommand } from "./add-stroke-command";
 import { createInsertObjectCommand } from "./insert-object-command";
 import {
@@ -31,6 +32,7 @@ import {
   createUpdateLayerCommand,
 } from "./layer-commands";
 import { createCommandForManipulation } from "./manipulation-command-adapter";
+import { createUpdateInkStyleCommand } from "./update-ink-style-command";
 import { createUpdateVectorStyleCommand } from "./update-vector-style-command";
 
 interface EditorHistoryCoordinatorOptions {
@@ -74,6 +76,11 @@ export interface EditorHistoryCoordinator {
     layerId: string,
     patch: Readonly<{ name?: string; visible?: boolean; locked?: boolean; opacity?: number }>,
     description?: string,
+  ) => IHistoryState | null;
+  readonly executeSelectionStyleUpdate: (edits: SelectionStyleCommit) => IHistoryState | null;
+  readonly executeMoveObjectsToLayer: (
+    objectIds: readonly string[],
+    targetLayerId: string,
   ) => IHistoryState | null;
   readonly executeRemoveLayer: (
     layerId: string,
@@ -339,6 +346,72 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     if (fromIndex === toIndex) return null;
     return this.controller.executeCommand(
       createReorderLayersCommand({ layerId, fromIndex, toIndex, timestamp: this.#now() }),
+    );
+  }
+
+  /** Commits one appearance gesture over a mixed selection as a single History action. */
+  executeSelectionStyleUpdate(edits: SelectionStyleCommit): IHistoryState | null {
+    const total = edits.inkEdits.length + edits.vectorEdits.length;
+    if (total === 0) return null;
+    const run = (): void => {
+      for (const edit of edits.inkEdits) {
+        this.controller.executeCommand(
+          createUpdateInkStyleCommand({ ...edit, timestamp: this.#now() }),
+        );
+      }
+      for (const edit of edits.vectorEdits) {
+        this.controller.executeCommand(
+          createUpdateVectorStyleCommand({
+            objectId: edit.original.id,
+            expectedObjectModifiedAt: edit.original.modifiedAt,
+            initialStyle: edit.original.style,
+            finalStyle: edit.finalStyle,
+            timestamp: this.#now(),
+            description: `Update ${edit.original.type} appearance`,
+          }),
+        );
+      }
+    };
+    if (total === 1) {
+      let state: IHistoryState | null = null;
+      const single = (): void => {
+        run();
+        state = this.controller.getHistoryState();
+      };
+      single();
+      return state;
+    }
+    return this.#runTransaction(
+      `selection-style-${this.#now()}`,
+      `Update ${total} selected object${total === 1 ? "" : "s"}`,
+      run,
+    );
+  }
+
+  /** Moves the given objects into one Layer as a single History action. */
+  executeMoveObjectsToLayer(
+    objectIds: readonly string[],
+    targetLayerId: string,
+  ): IHistoryState | null {
+    const page = this.#documentSession.page;
+    const movable = objectIds.filter(
+      (objectId) =>
+        page.has(objectId) &&
+        page.layerIdForObject(objectId) !== targetLayerId &&
+        page.layer(targetLayerId) !== undefined,
+    );
+    if (movable.length === 0) return null;
+    if (movable.length === 1) {
+      return this.executeMoveObjectToLayer(movable[0]!, targetLayerId);
+    }
+    return this.#runTransaction(
+      `move-objects-layer-${targetLayerId}-${this.#now()}`,
+      `Move ${movable.length} objects to layer`,
+      () => {
+        // Canonical order is preserved by moving bottom-most first: each append
+        // lands above the previously moved object.
+        for (const objectId of movable) this.executeMoveObjectToLayer(objectId, targetLayerId);
+      },
     );
   }
 

@@ -1,4 +1,11 @@
 import type { ShapeEditingSnapshot, ShapeStylePatch } from "@folio/editor";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@folio/ui";
 import { CopyPlus, MoreHorizontal, Trash2 } from "lucide-react";
 import {
   useEffect,
@@ -27,6 +34,8 @@ interface ShapeEditingToolbarProps {
   readonly onOpenColorPicker: (anchor: HTMLElement) => void;
   readonly onDuplicate: () => void;
   readonly onDelete: () => void;
+  readonly layers: readonly Readonly<{ id: string; name: string }>[];
+  readonly onMoveToLayer: (layerId: string) => void;
   readonly rightOccupiedWidth?: number;
 }
 
@@ -41,6 +50,8 @@ export function ShapeEditingToolbar({
   onOpenColorPicker,
   onDuplicate,
   onDelete,
+  layers,
+  onMoveToLayer,
   rightOccupiedWidth = 0,
 }: ShapeEditingToolbarProps) {
   const toolbarRef = useRef<HTMLElement | null>(null);
@@ -242,10 +253,11 @@ export function ShapeEditingToolbar({
         danger
         icon={<Trash2 className="size-4" aria-hidden="true" />}
       />
-      <ToolbarButton
-        label="More shape options"
-        disabled
-        icon={<MoreHorizontal className="size-[17px]" aria-hidden="true" />}
+      <MoveToLayerMenu
+        visible={visible}
+        layers={layers}
+        currentLayerId={snapshot?.layerId ?? null}
+        onMoveToLayer={onMoveToLayer}
       />
     </section>
   );
@@ -326,4 +338,57 @@ function shapeOpacityDescriptor(value: number): ToolOptionPropertyDescriptor {
 
 function formatWidth(value: number): string {
   return value.toFixed(1).replace(/\.0$/u, "");
+}
+
+/** Compact Layer destination menu for the current selection. */
+function MoveToLayerMenu({
+  visible,
+  layers,
+  currentLayerId,
+  onMoveToLayer,
+}: {
+  readonly visible: boolean;
+  readonly layers: readonly Readonly<{ id: string; name: string }>[];
+  readonly currentLayerId: string | null;
+  readonly onMoveToLayer: (layerId: string) => void;
+}) {
+  const destinations = layers.filter((layer) => layer.id !== currentLayerId);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="group relative flex size-8 shrink-0 items-center justify-center rounded-lg text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent disabled:pointer-events-none disabled:opacity-35"
+          aria-label="More selection options"
+          data-testid="selection-more-options"
+          tabIndex={visible ? 0 : -1}
+          disabled={!visible}
+        >
+          <MoreHorizontal className="size-[17px]" aria-hidden="true" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        data-floating-widget-owned-portal="true"
+        data-testid="selection-more-menu"
+      >
+        <DropdownMenuLabel>Move to layer</DropdownMenuLabel>
+        {destinations.length === 0 ? (
+          <DropdownMenuItem disabled data-testid="move-to-layer-empty">
+            No other layers
+          </DropdownMenuItem>
+        ) : (
+          destinations.map((layer) => (
+            <DropdownMenuItem
+              key={layer.id}
+              data-testid={`move-to-layer-${layer.id}`}
+              onSelect={() => onMoveToLayer(layer.id)}
+            >
+              {layer.name}
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }

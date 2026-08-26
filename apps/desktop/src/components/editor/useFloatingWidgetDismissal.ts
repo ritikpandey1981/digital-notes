@@ -58,7 +58,15 @@ export function useFloatingWidgetDismissal(
       document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [boundaryRef, onDismiss, open, options.canvasPageDismissal, options.onEscape, scopeId]);
+  }, [
+    boundaryRef,
+    onDismiss,
+    open,
+    options.canvasPageDismissal,
+    options.outsidePointerDismissal,
+    options.onEscape,
+    scopeId,
+  ]);
 
   return scopeId;
 }

@@ -25,7 +25,9 @@ describe("@folio/editor public API", () => {
       "EDITOR_STROKE_WIDTHS",
       "EDITOR_VIEWPORT_ZOOM_PRESETS",
       "FAVORITE_COLOR_CAPACITY",
+      "MARQUEE_ACTIVATION_DISTANCE",
       "RECENT_COLOR_CAPACITY",
+      "applyInkStyle",
       "createBrushToolStateStore",
       "createColorPalette",
       "createDefaultPropertyDescriptorRegistry",
@@ -41,10 +43,17 @@ describe("@folio/editor public API", () => {
       "hexToRgb",
       "hsvToHex",
       "hsvToRgb",
+      "inkStyleChanges",
+      "inkStyleValues",
+      "marqueeActivated",
+      "marqueeRectFromPoints",
+      "marqueeSelectedObjects",
       "nextEditorViewportZoom",
       "normalizeArtworkHex",
+      "resolveSelectionEditingStyle",
       "rgbToHex",
       "rgbToHsv",
+      "selectionUnionBounds",
     ]);
   });
 
@@ -93,6 +102,7 @@ describe("@folio/editor public API", () => {
     };
     const shapeActions: ShapeEditingActions = {
       updateStyle: () => true,
+      moveSelectionToLayer: () => true,
       beginContinuousStyleEdit: () => true,
       updateContinuousStylePreview: () => true,
       commitContinuousStyleEdit: () => true,
@@ -101,6 +111,9 @@ describe("@folio/editor public API", () => {
     const shapeSnapshot: ShapeEditingSnapshot = {
       objectId: "shape-1",
       objectType: "rectangle",
+      selectedObjectIds: ["shape"],
+      readOnly: false,
+      layerId: "layer-1",
       strokeColor: "#111111",
       strokeWidth: 2,
       opacity: 1,

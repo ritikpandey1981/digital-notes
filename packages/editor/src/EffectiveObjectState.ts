@@ -13,6 +13,14 @@ export interface EffectiveObjectState {
   readonly renderable: (object: PageObject) => boolean;
   /** Reachable by hit testing and selection, possibly read-only. */
   readonly selectable: (object: PageObject) => boolean;
+  /**
+   * Reachable by pointer selection: click, Shift+Click, marquee, and Alt cycling.
+   *
+   * Objects in a locked Layer stay reachable read-only. Individually locked
+   * PageObjects remain unreachable, matching the editor hit-test engine so every
+   * pointer route agrees on what can be picked.
+   */
+  readonly pointerSelectable: (object: PageObject) => boolean;
   /** Mutable: transform, style, and lifecycle edits are permitted. */
   readonly editable: (object: PageObject) => boolean;
   /** Removable by the Eraser. */
@@ -59,6 +67,7 @@ export function createEffectiveObjectState(getPage: () => PageDocument): Effecti
   return Object.freeze({
     renderable,
     selectable,
+    pointerSelectable: (object: PageObject): boolean => selectable(object) && !object.locked,
     editable,
     erasable: editable,
     lockedByLayer: (object: PageObject): boolean =>

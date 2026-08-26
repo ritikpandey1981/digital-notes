@@ -13,18 +13,33 @@ export interface EditorSelectionGeometrySnapshot {
   readonly manipulationTarget: PageObject;
 }
 
-/** Caches editor-owned combined geometry until selection or document identity changes. */
+/**
+ * Caches editor-owned combined geometry until selection, document, or
+ * eligibility identity changes.
+ *
+ * `eligibilityKey` exists because Layer presentation can change editability
+ * without replacing any object, so document identity alone is not a safe key.
+ */
 export class EditorSelectionGeometry {
   #document: ObjectCollection | null = null;
   #objectIds: readonly string[] | null = null;
+  #eligibilityKey: unknown = null;
   #snapshot: EditorSelectionGeometrySnapshot | null = null;
 
   resolve(
     document: ObjectCollection,
     objectIds: readonly string[],
     isEditable: (object: PageObject) => boolean = defaultEditable,
+    eligibilityKey: unknown = null,
   ): EditorSelectionGeometrySnapshot | null {
-    if (this.#document === document && this.#objectIds === objectIds) return this.#snapshot;
+    if (
+      this.#document === document &&
+      this.#objectIds === objectIds &&
+      this.#eligibilityKey === eligibilityKey
+    ) {
+      return this.#snapshot;
+    }
+    this.#eligibilityKey = eligibilityKey;
     const selectedIds = new Set(objectIds);
     const objects = Object.freeze(
       document.objects.filter((object) => selectedIds.has(object.id) && isEditable(object)),

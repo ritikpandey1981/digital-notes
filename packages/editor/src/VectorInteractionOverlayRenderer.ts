@@ -9,7 +9,11 @@ import { RenderScheduler, type AnimationFrameAdapter, type Viewport } from "@fol
 import type { LineEndpoint, LineHandle } from "./LineEndpointInteraction";
 import { resolveOrientedSelectionFrame } from "./SelectionManipulationTarget";
 import { appendVectorGeometryPath } from "./VectorShapeRendering";
-import { SELECTION_HOVER_COLOR, SELECTION_OUTLINE_COLOR } from "./selection-presentation";
+import {
+  SELECTION_HIGHLIGHT_COLOR,
+  SELECTION_HOVER_COLOR,
+  SELECTION_OUTLINE_COLOR,
+} from "./selection-presentation";
 
 export interface VectorInteractionOverlayRendererOptions {
   readonly context: CanvasRenderingContext2D;
@@ -29,6 +33,7 @@ export class VectorInteractionOverlayRenderer {
   #hover: PageObject | null = null;
   #hoverPresentation: "hover" | "candidate" = "hover";
   #lineHandleHover: LineHandle | null = null;
+  #marquee: Readonly<{ x: number; y: number; width: number; height: number }> | null = null;
   #lineEndpointPreview: Readonly<{
     object: Extract<VectorPageObject, { readonly type: "line" }>;
     transform: Transform;
@@ -49,6 +54,24 @@ export class VectorInteractionOverlayRenderer {
     if (this.#selection === object) return;
     this.#selection = object;
     this.#selectionPreviewTransform = null;
+    this.#scheduler.requestRender();
+    this.#updateDiagnostics();
+  }
+
+  /** Shows or clears the transient page-space marquee band. */
+  setMarquee(rect: Readonly<{ x: number; y: number; width: number; height: number }> | null): void {
+    this.#assertActive();
+    const current = this.#marquee;
+    const unchanged =
+      current === null
+        ? rect === null
+        : rect !== null &&
+          current.x === rect.x &&
+          current.y === rect.y &&
+          current.width === rect.width &&
+          current.height === rect.height;
+    if (unchanged) return;
+    this.#marquee = rect === null ? null : Object.freeze({ ...rect });
     this.#scheduler.requestRender();
     this.#updateDiagnostics();
   }
@@ -144,6 +167,22 @@ export class VectorInteractionOverlayRenderer {
           : this.#lineHandleHover,
       );
     }
+    if (this.#marquee !== null) this.#drawMarquee(this.#marquee, snapshot.camera.zoom);
+    context.restore();
+  }
+
+  #drawMarquee(
+    rect: Readonly<{ x: number; y: number; width: number; height: number }>,
+    zoom: number,
+  ): void {
+    const context = this.#context;
+    context.save();
+    context.fillStyle = SELECTION_HIGHLIGHT_COLOR;
+    context.fillRect(rect.x, rect.y, rect.width, rect.height);
+    context.strokeStyle = SELECTION_OUTLINE_COLOR;
+    context.lineWidth = 1 / zoom;
+    context.setLineDash([4 / zoom, 3 / zoom]);
+    context.strokeRect(rect.x, rect.y, rect.width, rect.height);
     context.restore();
   }
 

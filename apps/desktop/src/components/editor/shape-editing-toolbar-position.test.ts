@@ -132,7 +132,10 @@ function shapeSnapshot(
 ): ShapeEditingSnapshot {
   return Object.freeze({
     objectId: "shape-1",
-    objectType: "ellipse",
+    objectType: "ellipse" as const,
+    selectedObjectIds: Object.freeze(["shape-1"]),
+    readOnly: false,
+    layerId: "layer-1",
     strokeColor: "#111111",
     strokeWidth: 12,
     opacity: 1,

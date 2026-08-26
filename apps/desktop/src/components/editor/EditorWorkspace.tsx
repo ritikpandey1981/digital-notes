@@ -104,6 +104,9 @@ export function EditorWorkspace({
   const handleLayerActionsReady = useCallback((actions: LayerActions | null) => {
     setLayerActions(actions);
   }, []);
+  const handleMoveSelectionToLayer = useCallback((layerId: string): void => {
+    shapeEditingActionsRef.current?.moveSelectionToLayer(layerId);
+  }, []);
   const handleLayersChange = useCallback((snapshot: LayersSnapshot) => {
     setLayersSnapshot(snapshot);
   }, []);
@@ -306,6 +309,8 @@ export function EditorWorkspace({
         onOpenColorPicker={openSelectedVectorPicker}
         onDuplicate={duplicateSelection}
         onDelete={deleteSelection}
+        layers={layersSnapshot.layers}
+        onMoveToLayer={handleMoveSelectionToLayer}
         rightOccupiedWidth={quickColorRailVisible ? 76 : 0}
       />
       <ToolOptionsWidget

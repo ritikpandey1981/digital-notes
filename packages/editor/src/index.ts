@@ -95,3 +95,23 @@ export {
   type EditorViewportSnapshot,
   type ViewportActions,
 } from "./EditorViewport";
+export {
+  MARQUEE_ACTIVATION_DISTANCE,
+  marqueeActivated,
+  marqueeRectFromPoints,
+  marqueeSelectedObjects,
+  type MarqueeRect,
+} from "./MarqueeSelection";
+export {
+  resolveSelectionEditingStyle,
+  selectionUnionBounds,
+  type SelectionEditingKind,
+  type SelectionEditingStyle,
+} from "./SelectionEditingSnapshot";
+export {
+  applyInkStyle,
+  inkStyleChanges,
+  inkStyleValues,
+  type InkStylePatch,
+  type InkStyleValues,
+} from "./InkStyleEdit";

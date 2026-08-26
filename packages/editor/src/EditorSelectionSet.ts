@@ -27,6 +27,24 @@ export class EditorSelectionSet {
     return this.replace(objectId === null ? [] : [objectId]);
   }
 
+  /**
+   * Adds or removes one object while preserving selection order.
+   *
+   * Re-adding an existing member moves it to the end so it becomes the primary
+   * object, which keeps Shift+Click predictable for transforms.
+   */
+  toggle(objectId: string): readonly string[] {
+    if (objectId.trim().length === 0) return this.#ids;
+    return this.has(objectId)
+      ? this.replace(this.#ids.filter((id) => id !== objectId))
+      : this.replace([...this.#ids, objectId]);
+  }
+
+  /** Adds objects that are not already selected, preserving existing order. */
+  add(objectIds: readonly string[]): readonly string[] {
+    return this.replace([...this.#ids, ...objectIds]);
+  }
+
   selectAllEditable(
     document: ObjectCollection,
     isEditable: (object: PageObject) => boolean = defaultEditable,

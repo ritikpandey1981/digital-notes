@@ -4,7 +4,6 @@ import {
   isVectorObject,
   type EllipseGeometry,
   type LineGeometry,
-  type ObjectBounds,
   PageDocument,
   type PageObject,
   type RectangleGeometry,
@@ -74,7 +73,14 @@ import { createEditorGroupManipulationPlan, transformGroupBounds } from "./Edito
 import { EditorSelectionGeometry } from "./EditorSelectionGeometry";
 import { EditorSelectionSet } from "./EditorSelectionSet";
 import { ContinuousLayerOpacityEdit } from "./ContinuousLayerOpacityEdit";
-import { createEffectiveObjectState } from "./EffectiveObjectState";
+import { ContinuousSelectionStyleEdit } from "./ContinuousSelectionStyleEdit";
+import {
+  marqueeActivated,
+  marqueeRectFromPoints,
+  marqueeSelectedObjects,
+} from "./MarqueeSelection";
+import { createEffectiveObjectState, type EffectiveObjectState } from "./EffectiveObjectState";
+import { resolveSelectionEditingStyle, selectionUnionBounds } from "./SelectionEditingSnapshot";
 import { firstErasableInkCandidate } from "./EraserEligibility";
 import {
   createEditorSelectionHitTestEngine,
@@ -190,6 +196,8 @@ export interface LayerActions {
 
 export interface ShapeEditingActions {
   readonly updateStyle: (patch: ShapeStylePatch) => boolean;
+  /** Moves the whole current selection into one Layer as a single History action. */
+  readonly moveSelectionToLayer: (layerId: string) => boolean;
   readonly beginContinuousStyleEdit: () => boolean;
   readonly updateContinuousStylePreview: (patch: ShapeStylePatch) => boolean;
   readonly commitContinuousStyleEdit: () => boolean;
@@ -198,7 +206,13 @@ export interface ShapeEditingActions {
 
 export interface ShapeEditingSnapshot {
   readonly objectId: string;
-  readonly objectType: "line" | "rectangle" | "ellipse";
+  /** "mixed" is used whenever the selection spans more than one object kind. */
+  readonly objectType: "line" | "rectangle" | "ellipse" | "ink" | "mixed";
+  /** Every selected object id in canonical order; the last entry is primary. */
+  readonly selectedObjectIds: readonly string[];
+  /** True when the whole selection is read-only because of an object or Layer lock. */
+  readonly readOnly: boolean;
+  readonly layerId: string | null;
   readonly strokeColor: string;
   readonly strokeWidth: number;
   readonly opacity: number;
@@ -333,7 +347,8 @@ function isLineObject(
   return object !== undefined && isVectorObject(object) && object.type === "line";
 }
 
-type SelectPointerRoute = "selection" | ManipulationKind | "overlap-selection" | "line-endpoint";
+type SelectPointerRoute =
+  "selection" | ManipulationKind | "overlap-selection" | "line-endpoint" | "marquee" | "consumed";
 
 interface ActiveLineEndpointInteraction {
   readonly pointerId: number;
@@ -346,48 +361,6 @@ interface ActiveLineEndpointInteraction {
   finalTransform: Transform;
   moved: boolean;
 }
-
-function createShapeEditingSnapshot(
-  object: VectorPageObject,
-  bounds: ObjectBounds,
-  viewport: Viewport,
-): ShapeEditingSnapshot {
-  const topLeft = viewport.worldToViewport({
-    x: viewport.pageRect.x + bounds.x,
-    y: viewport.pageRect.y + bounds.y,
-  });
-  const localCenter = Object.freeze({
-    x: object.localBounds.x + object.localBounds.width / 2,
-    y: object.localBounds.y + object.localBounds.height / 2,
-  });
-  const pageCenter = object.transform.applyToPoint(localCenter, localCenter);
-  const viewportCenter = viewport.worldToViewport({
-    x: viewport.pageRect.x + pageCenter.x,
-    y: viewport.pageRect.y + pageCenter.y,
-  });
-  return Object.freeze({
-    objectId: object.id,
-    objectType: object.type,
-    strokeColor: object.style.strokeColor.hex,
-    strokeWidth: object.style.strokeWidth,
-    opacity: object.style.strokeColor.opacity,
-    viewportBounds: Object.freeze({
-      x: topLeft.x,
-      y: topLeft.y,
-      width: bounds.width * viewport.camera.zoom,
-      height: bounds.height * viewport.camera.zoom,
-    }),
-    viewportSize: Object.freeze({ ...viewport.size }),
-    selectionFrame: Object.freeze({
-      centerX: viewportCenter.x,
-      centerY: viewportCenter.y,
-      width: object.localBounds.width * object.transform.scale * viewport.camera.zoom,
-      height: object.localBounds.height * object.transform.scale * viewport.camera.zoom,
-      rotation: object.transform.rotation,
-    }),
-  });
-}
-
 /** Mounts and owns one editor canvas stack for the lifetime of the React host. */
 export function CanvasSurface({
   className,
@@ -604,6 +577,7 @@ export function CanvasSurface({
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
     let continuousVectorStyleEdit: ContinuousVectorStyleEdit | null = null;
+    let continuousSelectionStyleEdit: ContinuousSelectionStyleEdit | null = null;
     let toolRegistry: EditorToolRegistry | null = null;
     let uninstallHistoryShortcuts: (() => void) | null = null;
     let uninstallEditingShortcuts: (() => void) | null = null;
@@ -627,6 +601,9 @@ export function CanvasSurface({
     let lastPointerPosition: ScreenPoint | null = null;
     let overlapPointerOrigin: ScreenPoint | null = null;
     let overlapPointerMoved = false;
+    let marqueeOrigin: ScreenPoint | null = null;
+    let marqueeAdditive = false;
+    let marqueeBaseIds: readonly string[] = Object.freeze([]);
     let activeLineEndpointInteraction: ActiveLineEndpointInteraction | null = null;
     let artworkSamplingPointerId: number | null = null;
     const editorPointerListeners: Array<readonly [keyof HTMLElementEventMap, EventListener]> = [];
@@ -863,6 +840,7 @@ export function CanvasSurface({
           documentSession.collection,
           editorSelection.ids,
           effective.editable,
+          documentSession.page.layers,
         );
         const selectionBounds = selectedGeometry?.bounds;
         const selectedVector =
@@ -910,9 +888,13 @@ export function CanvasSurface({
         );
         updateEditorSelectionDiagnostics();
         shapeEditingChangeRef.current?.(
-          selectedVector === null || selectionBounds === undefined
-            ? null
-            : createShapeEditingSnapshot(selectedVector, selectionBounds, viewport),
+          createSelectionEditingSnapshot({
+            objects: editorSelection.selectedObjects(documentSession.collection),
+            page: documentSession.page,
+            viewport,
+            effective,
+            ...(selectedVector === null ? {} : { primaryVector: selectedVector }),
+          }),
         );
         if (selectionState === "empty") resetManipulationCursor();
         if (notify) selectionChangeRef.current?.(state);
@@ -935,9 +917,12 @@ export function CanvasSurface({
       });
       const selectEditorObjects = (objectIds: readonly string[]): void => {
         continuousVectorStyleEdit?.cancel();
+        continuousSelectionStyleEdit?.cancel();
         const requestedIds = new Set(objectIds);
+        // Canonical document order keeps the primary object top-most, and layer
+        // rules are resolved by the one effective-state resolver.
         const validIds = documentSession.collection.objects
-          .filter((object) => requestedIds.has(object.id) && object.visible && !object.locked)
+          .filter((object) => requestedIds.has(object.id) && effective.pointerSelectable(object))
           .map(({ id }) => id);
         synchronizePrimaryIntoEditorSelection = false;
         try {
@@ -960,6 +945,7 @@ export function CanvasSurface({
             documentSession.collection,
             editorSelection.ids,
             effective.editable,
+            documentSession.page.layers,
           );
           if (geometry?.primaryObject.id === objectId) return geometry.manipulationTarget;
           const object = documentSession.collection.lookup(objectId);
@@ -1190,6 +1176,7 @@ export function CanvasSurface({
               documentSession.collection,
               editorSelection.ids,
               effective.editable,
+              documentSession.page.layers,
             );
             if (
               selection !== null &&
@@ -1264,7 +1251,27 @@ export function CanvasSurface({
         isEditable: effective.editable,
       });
       const activeContinuousVectorStyleEdit = continuousVectorStyleEdit;
-      const cancelContinuousStyleEdit = (): boolean => activeContinuousVectorStyleEdit.cancel();
+      continuousSelectionStyleEdit = new ContinuousSelectionStyleEdit({
+        documentSession,
+        commit: (edits) => {
+          const state = activeHistoryCoordinator.executeSelectionStyleUpdate(edits);
+          // Recent Colors follow the Phase 18 committed-artwork rule.
+          for (const edit of edits.vectorEdits) reportCommittedVectorRecolor(edit.original);
+          for (const edit of edits.inkEdits) {
+            if (edit.initialStyle.color !== edit.finalStyle.color) {
+              const committed = documentSession.collection.lookup(edit.objectId);
+              if (committed !== undefined)
+                artworkColorUsedRef.current?.(committedArtworkColor(committed));
+            }
+          }
+          return state;
+        },
+        onPreviewDocumentChange: () => synchronizeDocumentFromHistory(),
+        isEditable: effective.editable,
+      });
+      const activeContinuousSelectionStyleEdit = continuousSelectionStyleEdit;
+      const cancelContinuousStyleEdit = (): boolean =>
+        activeContinuousVectorStyleEdit.cancel() || activeContinuousSelectionStyleEdit.cancel();
       cancelContinuousStyleEditRef.current = cancelContinuousStyleEdit;
       const shapeEditingActions: ShapeEditingActions = Object.freeze({
         updateStyle: (patch: ShapeStylePatch): boolean => {
@@ -1288,33 +1295,55 @@ export function CanvasSurface({
             return reportEditingFailure(cause, "Shape appearance update failed.");
           }
         },
-        beginContinuousStyleEdit: (): boolean => {
-          const object = selectedVectorObject();
-          return object !== null && activeContinuousVectorStyleEdit.begin(object);
+        moveSelectionToLayer: (layerId: string): boolean => {
+          cancelContinuousStyleEdit();
+          const objects = selectedEditableObjects();
+          if (objects.length === 0) return false;
+          try {
+            const state = activeHistoryCoordinator.executeMoveObjectsToLayer(
+              objects.map(({ id }) => id),
+              layerId,
+            );
+            if (state === null) return false;
+            updateHistoryDiagnostics(state);
+            synchronizeDocumentFromHistory();
+            publishLayersRef?.();
+            return true;
+          } catch (cause) {
+            return reportEditingFailure(cause, "Moving the selection to a layer failed.");
+          }
         },
+        // The continuous path covers Ink, vector, and mixed selections through
+        // one engine so a gesture is one History action regardless of contents.
+        beginContinuousStyleEdit: (): boolean =>
+          activeContinuousSelectionStyleEdit.begin(editorSelection.ids),
         updateContinuousStylePreview: (patch: ShapeStylePatch): boolean => {
-          let object = selectedVectorObject();
-          if (object === null) return false;
-          if (!activeContinuousVectorStyleEdit.active) {
-            if (!activeContinuousVectorStyleEdit.begin(object)) return false;
-            object = selectedVectorObject();
-            if (object === null) return false;
+          if (
+            !activeContinuousSelectionStyleEdit.active &&
+            !activeContinuousSelectionStyleEdit.begin(editorSelection.ids)
+          ) {
+            return false;
           }
           try {
-            return activeContinuousVectorStyleEdit.update(patchedVectorStyle(object, patch));
+            return activeContinuousSelectionStyleEdit.update({
+              ...(patch.strokeColor === undefined ? {} : { color: patch.strokeColor }),
+              ...(patch.strokeWidth === undefined ? {} : { width: patch.strokeWidth }),
+              ...(patch.opacity === undefined ? {} : { opacity: patch.opacity }),
+            });
           } catch (cause) {
             cancelContinuousStyleEdit();
-            return reportEditingFailure(cause, "Shape appearance preview failed.");
+            return reportEditingFailure(cause, "Selection appearance preview failed.");
           }
         },
         commitContinuousStyleEdit: (): boolean => {
           try {
-            const state = activeContinuousVectorStyleEdit.commit();
+            const state = activeContinuousSelectionStyleEdit.commit();
             if (state === null) return false;
             updateHistoryDiagnostics(state);
+            synchronizeDocumentFromHistory();
             return true;
           } catch (cause) {
-            return reportEditingFailure(cause, "Shape appearance commit failed.");
+            return reportEditingFailure(cause, "Selection appearance commit failed.");
           }
         },
         cancelContinuousStyleEdit,
@@ -1597,6 +1626,7 @@ export function CanvasSurface({
           documentSession.collection,
           editorSelection.ids,
           effective.editable,
+          documentSession.page.layers,
         );
         const isGroupManipulation =
           selectedGeometry !== null &&
@@ -1926,6 +1956,7 @@ export function CanvasSurface({
           documentSession.collection,
           editorSelection.ids,
           effective.editable,
+          documentSession.page.layers,
         );
         const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
         if (selection === null || pagePosition === null) {
@@ -2069,11 +2100,26 @@ export function CanvasSurface({
               overlapPointerOrigin = position;
               overlapPointerMoved = false;
               selectPointerRoutes.set(event.pointerId, route);
+            } else if (event.shiftKey && event.isPrimary && event.button === 0) {
+              // Shift owns the press outright: it must toggle membership even
+              // when the point lies inside the current group's transform bounds.
+              const candidate = selectionCandidatesAt(position)[0] ?? null;
+              if (candidate !== null) {
+                selectEditorObjects(editorSelection.toggle(candidate.id));
+                selectPointerRoutes.set(event.pointerId, "consumed");
+                return;
+              }
+              marqueeAdditive = true;
+              marqueeBaseIds = editorSelection.ids;
+              marqueeOrigin = position;
+              selectPointerRoutes.set(event.pointerId, "marquee");
+              return;
             }
             const selectedGeometry = selectionGeometry.resolve(
               documentSession.collection,
               editorSelection.ids,
               effective.editable,
+              documentSession.page.layers,
             );
             const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
             const selectedLine =
@@ -2126,6 +2172,15 @@ export function CanvasSurface({
               route = isLineObject(selectedLine) ? "selection" : (hit?.kind ?? "selection");
               if (hit !== null && !isLineObject(selectedLine)) setManipulationCursor(hit.cursor);
             }
+            if (route === "selection" && event.isPrimary && event.button === 0 && !event.shiftKey) {
+              // An empty-space press with no modifier begins a marquee.
+              if ((selectionCandidatesAt(position)[0] ?? null) === null) {
+                marqueeAdditive = false;
+                marqueeBaseIds = Object.freeze([]);
+                route = "marquee";
+                marqueeOrigin = position;
+              }
+            }
             selectPointerRoutes.set(event.pointerId, route);
           }
           if (route === undefined) return;
@@ -2137,6 +2192,33 @@ export function CanvasSurface({
               isPrimary: event.isPrimary,
               position,
             });
+          } else if (route === "marquee") {
+            const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
+            if (phase === "move" && marqueeOrigin !== null && pagePosition !== null) {
+              if (!marqueeActivated(marqueeOrigin, position)) return;
+              const originPage = manipulationCoordinateMapper.screenToPage(marqueeOrigin, false);
+              if (originPage === null) return;
+              const rect = marqueeRectFromPoints(originPage, pagePosition);
+              activeVectorInteractionRenderer.setMarquee(rect);
+              const covered = marqueeSelectedObjects(
+                documentSession.collection.objects,
+                rect,
+                effective.pointerSelectable,
+              ).map(({ id }) => id);
+              selectEditorObjects(marqueeAdditive ? [...marqueeBaseIds, ...covered] : covered);
+              host.dataset.marqueeState = "active";
+              host.dataset.marqueeSelectedCount = String(covered.length);
+            } else if (phase === "up" || phase === "cancel") {
+              if (marqueeOrigin !== null && !marqueeActivated(marqueeOrigin, position)) {
+                // A click that never became a marquee clears the selection.
+                if (!marqueeAdditive) selectEditorObjects([]);
+              }
+              activeVectorInteractionRenderer.setMarquee(null);
+              marqueeOrigin = null;
+              marqueeAdditive = false;
+              marqueeBaseIds = Object.freeze([]);
+              host.dataset.marqueeState = "idle";
+            }
           } else if (route === "overlap-selection") {
             if (phase === "move" && overlapPointerOrigin !== null) {
               overlapPointerMoved ||=
@@ -2157,6 +2239,8 @@ export function CanvasSurface({
               overlapPointerOrigin = null;
               overlapPointerMoved = false;
             }
+          } else if (route === "consumed") {
+            if (phase === "up" || phase === "cancel") selectPointerRoutes.delete(event.pointerId);
           } else if (route === "line-endpoint") {
             const interaction = activeLineEndpointInteraction;
             if (interaction?.pointerId === event.pointerId) {
@@ -3126,4 +3210,77 @@ export function CanvasSurface({
       )}
     </>
   );
+}
+
+interface SelectionEditingSnapshotInput {
+  readonly objects: readonly PageObject[];
+  readonly page: PageDocument;
+  readonly viewport: Viewport;
+  readonly effective: EffectiveObjectState;
+  readonly primaryVector?: VectorPageObject;
+}
+
+/**
+ * Builds the contextual-toolbar snapshot for the whole selection.
+ *
+ * A single vector keeps its oriented selection frame so Phase 17 rotation and
+ * resize presentation is unchanged; Ink and multi-object selections report the
+ * axis-aligned union instead.
+ */
+function createSelectionEditingSnapshot(
+  input: SelectionEditingSnapshotInput,
+): ShapeEditingSnapshot | null {
+  const { objects, page, viewport, effective, primaryVector } = input;
+  const style = resolveSelectionEditingStyle(objects);
+  const bounds = selectionUnionBounds(objects);
+  const primary = objects.at(-1);
+  if (style === null || bounds === null || primary === undefined) return null;
+  const singleVector =
+    objects.length === 1 && primaryVector !== undefined && primaryVector.id === primary.id
+      ? primaryVector
+      : null;
+  const topLeft = viewport.worldToViewport({
+    x: viewport.pageRect.x + bounds.x,
+    y: viewport.pageRect.y + bounds.y,
+  });
+  const layerIds = new Set(
+    objects.map((object) => page.layerIdForObject(object.id)).filter((id) => id !== undefined),
+  );
+  let selectionFrame: ShapeEditingSnapshot["selectionFrame"];
+  if (singleVector !== null) {
+    const localCenter = Object.freeze({
+      x: singleVector.localBounds.x + singleVector.localBounds.width / 2,
+      y: singleVector.localBounds.y + singleVector.localBounds.height / 2,
+    });
+    const pageCenter = singleVector.transform.applyToPoint(localCenter, localCenter);
+    const viewportCenter = viewport.worldToViewport({
+      x: viewport.pageRect.x + pageCenter.x,
+      y: viewport.pageRect.y + pageCenter.y,
+    });
+    selectionFrame = Object.freeze({
+      centerX: viewportCenter.x,
+      centerY: viewportCenter.y,
+      width: singleVector.localBounds.width * singleVector.transform.scale * viewport.camera.zoom,
+      height: singleVector.localBounds.height * singleVector.transform.scale * viewport.camera.zoom,
+      rotation: singleVector.transform.rotation,
+    });
+  }
+  return Object.freeze({
+    objectId: primary.id,
+    objectType: style.kind,
+    selectedObjectIds: Object.freeze(objects.map(({ id }) => id)),
+    readOnly: !objects.every(effective.editable),
+    layerId: layerIds.size === 1 ? (([...layerIds][0] as string) ?? null) : null,
+    strokeColor: style.strokeColor,
+    strokeWidth: style.strokeWidth,
+    opacity: style.opacity,
+    viewportBounds: Object.freeze({
+      x: topLeft.x,
+      y: topLeft.y,
+      width: bounds.width * viewport.camera.zoom,
+      height: bounds.height * viewport.camera.zoom,
+    }),
+    viewportSize: Object.freeze({ ...viewport.size }),
+    ...(selectionFrame === undefined ? {} : { selectionFrame }),
+  });
 }

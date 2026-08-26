@@ -583,7 +583,7 @@ async function toolbarMetrics(toolbar: Locator): Promise<ToolbarMetrics> {
   return toolbar.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const firstControl = element.querySelector('button[aria-label="Shape stroke color"]');
-    const lastButton = element.querySelector('button[aria-label="More shape options"]');
+    const lastButton = element.querySelector('button[aria-label="More selection options"]');
     if (!(firstControl instanceof HTMLElement) || !(lastButton instanceof HTMLElement)) {
       throw new Error("Toolbar edge controls are missing.");
     }
