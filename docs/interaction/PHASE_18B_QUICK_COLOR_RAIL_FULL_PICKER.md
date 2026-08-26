@@ -46,6 +46,8 @@ Hex accepts an optional leading `#` only when six digits are complete. Incomplet
 
 The session remembers its last meaningful hue. Moving through gray or black therefore preserves the hue used when saturation returns instead of resetting the hue control.
 
+Before Phase 19, the picker placement policy was tightened without changing color semantics. The surface is collision-clamped to the usable editor workspace, reserves the bottom-right viewport controls, and uses an internally scrollable body when the Electron minimum window cannot show its natural height. Selected-vector sessions additionally use the authoritative `ShapeEditingSnapshot.viewportBounds` as an avoid rectangle: legal zero-overlap candidates are preferred, otherwise the deterministic least-overlap candidate is used. The top bar, Quick Color Rail, viewport controls, page camera, and selected artwork are not moved to create space.
+
 Recent Colors are not picker-trigger history. They continue to be reported only by actual committed artwork creation or committed selected-vector recolor through the existing `CanvasSurface.onArtworkColorUsed` boundary.
 
 ## Floating ownership and accessibility

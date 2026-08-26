@@ -308,6 +308,11 @@ export function EditorWorkspace({
             eyedropperState.targetId === activePickerTargetId ? eyedropperState.sampledColor : null
           }
           floatingScope={colorPickerFloatingScope}
+          workspaceAvoidRect={
+            colorPicker.snapshot.source === "selected-vector"
+              ? shapeEditingSnapshot?.viewportBounds
+              : undefined
+          }
           onPreviewHex={colorPicker.previewHex}
           onPreviewHsv={colorPicker.previewHsv}
           onSelectPalette={onSelectColorPalette}

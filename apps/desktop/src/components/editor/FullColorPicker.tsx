@@ -26,7 +26,10 @@ import {
   hsvFromSvPointer,
   isFavoriteColor,
   resolveColorPickerPlacement,
+  resolveColorPickerMaximumHeight,
+  resolveColorPickerUsableBounds,
   rgbDraftToHex,
+  type PickerRect,
   type RgbDraft,
 } from "./color-picker-model";
 import type { ColorPickerSessionSnapshot, ColorPreviewSchedule } from "./useColorPickerSession";
@@ -39,6 +42,14 @@ interface FullColorPickerProps {
   readonly eyedropperMessage: string | null;
   readonly eyedropperSampledColor: string | null;
   readonly floatingScope: string;
+  readonly workspaceAvoidRect?:
+    | Readonly<{
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }>
+    | undefined;
   readonly onPreviewHex: (
     color: string,
     schedule?: ColorPreviewSchedule,
@@ -63,6 +74,7 @@ export function FullColorPicker({
   eyedropperMessage,
   eyedropperSampledColor,
   floatingScope,
+  workspaceAvoidRect,
   onPreviewHex,
   onPreviewHsv,
   onSelectPalette,
@@ -108,13 +120,61 @@ export function FullColorPicker({
         session.anchor)
       : session.anchor;
   const anchorBounds = positioningAnchor.getBoundingClientRect();
+  const workspace = positioningAnchor.closest<HTMLElement>('[data-testid="editor-workspace"]');
+  const workspaceBounds = rectFromDom(
+    workspace?.getBoundingClientRect() ?? {
+      left: 0,
+      top: 0,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    },
+  );
+  const viewportControls = document.querySelector<HTMLElement>('[data-testid="viewport-controls"]');
+  const viewportControlBounds = rectFromElement(viewportControls);
+  const quickColorRail = document.querySelector<HTMLElement>('[data-testid="quick-color-rail"]');
+  const quickColorRailBounds = rectFromElement(quickColorRail);
+  const toolDock = document.querySelector<HTMLElement>("[data-tool-dock-layout]");
+  const toolDockBounds = rectFromElement(toolDock);
+  const avoidRect =
+    workspaceAvoidRect === undefined
+      ? undefined
+      : {
+          left: workspaceBounds.left + workspaceAvoidRect.x,
+          top: workspaceBounds.top + workspaceAvoidRect.y,
+          width: workspaceAvoidRect.width,
+          height: workspaceAvoidRect.height,
+        };
+  const maximumPickerHeight = resolveColorPickerMaximumHeight(
+    workspaceBounds,
+    viewportControlBounds,
+  );
+  const placementBounds = resolveColorPickerUsableBounds(
+    workspaceBounds,
+    viewportControlBounds,
+    toolDockBounds,
+  );
+  const placementPickerSize = {
+    width: Math.min(pickerSize.width, Math.max(0, workspaceBounds.width - 24)),
+    height: Math.min(pickerSize.height, maximumPickerHeight),
+  };
   const placement = resolveColorPickerPlacement(
     anchorBounds,
-    pickerSize,
+    placementPickerSize,
     { width: window.innerWidth, height: window.innerHeight },
     session.source,
+    {
+      bounds: placementBounds,
+      avoidRect,
+      occupiedRects: [viewportControlBounds, quickColorRailBounds, toolDockBounds].filter(
+        (rect): rect is PickerRect => rect !== undefined,
+      ),
+    },
   );
-  const style: CSSProperties = { left: placement.left, top: placement.top };
+  const style: CSSProperties = {
+    left: placement.left,
+    top: placement.top,
+    maxHeight: maximumPickerHeight,
+  };
   const ownerScopes = [resolvedFloatingScope, session.ownerScope].filter(Boolean).join(" ");
   const currentIsFavorite = isFavoriteColor(colors.favoriteColors, presentation.currentColor);
   const previewHex = useCallback(
@@ -156,13 +216,17 @@ export function FullColorPicker({
     observer.observe(picker);
     const anchorObserver = new ResizeObserver(measure);
     anchorObserver.observe(positioningAnchor);
+    if (workspace !== null) anchorObserver.observe(workspace);
+    if (viewportControls !== null) anchorObserver.observe(viewportControls);
+    if (quickColorRail !== null) anchorObserver.observe(quickColorRail);
+    if (toolDock !== null) anchorObserver.observe(toolDock);
     window.addEventListener("resize", measure);
     return () => {
       observer.disconnect();
       anchorObserver.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [positioningAnchor, session.anchor]);
+  }, [positioningAnchor, quickColorRail, session.anchor, toolDock, viewportControls, workspace]);
 
   useEffect(() => {
     addFloatingOwner(session.anchor, floatingScope);
@@ -211,8 +275,8 @@ export function FullColorPicker({
   return (
     <section
       ref={pickerRef}
-      className="folio-floating-surface fixed z-40 w-[332px] max-w-[calc(100vw-24px)] overflow-y-auto p-3"
-      style={{ ...style, maxHeight: "calc(100vh - 24px)" }}
+      className="folio-floating-surface fixed z-40 flex w-[332px] max-w-[calc(100vw-24px)] flex-col overflow-hidden"
+      style={style}
       role="dialog"
       aria-label={`${session.target.label} picker`}
       data-testid="full-color-picker"
@@ -220,12 +284,17 @@ export function FullColorPicker({
       data-color-target-label={session.target.label}
       data-picker-source={session.source}
       data-picker-side={placement.side}
+      data-picker-maximum-height={maximumPickerHeight}
+      data-picker-avoid-left={avoidRect?.left}
+      data-picker-avoid-top={avoidRect?.top}
+      data-picker-avoid-width={avoidRect?.width}
+      data-picker-avoid-height={avoidRect?.height}
       data-floating-widget-scope={resolvedFloatingScope}
       data-floating-widget-owner={session.ownerScope}
       data-floating-surface="folio"
       data-eyedropper-state={eyedropperActive ? "active" : "inactive"}
     >
-      <div className="mb-2 flex items-start justify-between gap-3 px-0.5">
+      <div className="flex shrink-0 items-start justify-between gap-3 px-3 pb-2 pt-3">
         <div>
           <h2 className="text-xs font-semibold text-folio-ink">{session.target.label}</h2>
           <p className="text-[10px] text-folio-muted">Full color picker</p>
@@ -252,138 +321,144 @@ export function FullColorPicker({
         </div>
       </div>
 
-      {eyedropperActive || eyedropperMessage !== null ? (
-        <p
-          className={cn(
-            "mb-2 rounded-lg px-2 py-1.5 text-[9px]",
-            eyedropperMessage === null
-              ? "bg-folio-accent-soft text-folio-accent"
-              : "bg-folio-surface-muted text-folio-muted",
-          )}
-          role="status"
-          aria-live="polite"
-          data-testid="eyedropper-status"
-        >
-          {eyedropperMessage ?? "Click the page to sample a color. Press Escape to exit."}
-        </p>
-      ) : null}
-
-      <SaturationValueField hsv={presentation.hsv} onPreview={previewHsv} />
-      <label className="mt-2 block">
-        <span className="sr-only">Hue</span>
-        <input
-          type="range"
-          min={0}
-          max={359}
-          step={1}
-          value={Math.round(presentation.hsv.hue)}
-          className="folio-hue-slider h-3 w-full cursor-pointer appearance-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent focus-visible:ring-offset-2"
-          aria-label={`Hue ${Math.round(presentation.hsv.hue)} degrees`}
-          onChange={(event) =>
-            previewHsv(
-              { ...presentation.hsv, hue: Number(event.currentTarget.value) },
-              "animation-frame",
-            )
-          }
-        />
-      </label>
-
-      <div className="mt-3 grid grid-cols-2 gap-2" aria-label="Current and previous colors">
-        <CurrentColorReadout
-          color={presentation.currentColor}
-          favorite={currentIsFavorite}
-          onToggleFavorite={() => onToggleFavorite(presentation.currentColor)}
-        />
-        <ColorReadout
-          label="Previous"
-          color={session.previousColor}
-          onSelect={() => previewHex(session.previousColor)}
-        />
-      </div>
-
-      <HexEditor color={presentation.currentColor} onPreview={previewHex} />
-      <RgbEditors color={presentation.currentColor} onPreview={previewHex} />
-
-      <ColorCollection
-        label="Recent"
-        kind="recent"
-        emptyLabel="Colors appear after artwork is committed"
-        colors={colors.recentColors}
-        currentColor={presentation.currentColor}
-        onSelect={(color) => previewHex(color)}
-      />
-
-      <ColorCollection
-        label="Favorites"
-        kind="favorite"
-        emptyLabel="No favorites yet"
-        colors={colors.favoriteColors}
-        currentColor={presentation.currentColor}
-        displayPolicy={favoriteCollectionDisplayPolicy(colors.favoriteColors.length)}
-        compactEmpty
-        testId="favorite-colors"
-        onSelect={(color) => previewHex(color)}
-      />
-
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted">
-          Palette
-        </span>
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex h-7 min-w-32 items-center justify-between gap-2 rounded-lg border border-folio-border bg-folio-surface px-2 text-[11px] font-medium text-folio-ink hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-              aria-label={`Active color palette, ${colors.activePalette.name}`}
-              data-testid="color-palette-trigger"
-            >
-              {colors.activePalette.name}
-              <ChevronDown className="size-3.5 text-folio-muted" aria-hidden="true" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            sideOffset={8}
-            collisionPadding={12}
-            className="z-[55] min-w-44"
-            data-floating-widget-owner={ownerScopes}
-            data-testid="color-palette-menu"
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-3 pb-3"
+        aria-label="Color picker controls"
+        data-testid="full-color-picker-scroll-region"
+      >
+        {eyedropperActive || eyedropperMessage !== null ? (
+          <p
+            className={cn(
+              "mb-2 rounded-lg px-2 py-1.5 text-[9px]",
+              eyedropperMessage === null
+                ? "bg-folio-accent-soft text-folio-accent"
+                : "bg-folio-surface-muted text-folio-muted",
+            )}
+            role="status"
+            aria-live="polite"
+            data-testid="eyedropper-status"
           >
-            {colors.palettes
-              .filter(({ source }) => source === "built-in")
-              .map((palette) => (
-                <DropdownMenuItem
-                  key={palette.id}
-                  role="menuitemradio"
-                  aria-checked={palette.id === colors.activePaletteId}
-                  className="justify-between"
-                  onSelect={() => onSelectPalette(palette.id)}
-                >
-                  <span className="flex-1">{palette.name}</span>
-                  <span className="flex items-center gap-0.5" aria-hidden="true">
-                    {palette.colors.slice(0, 5).map((color) => (
-                      <span
-                        key={color}
-                        className="size-2 rounded-full border border-black/15"
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
-                  </span>
-                  {palette.id === colors.activePaletteId ? (
-                    <Check className="size-4 text-folio-accent" aria-hidden="true" />
-                  ) : null}
-                </DropdownMenuItem>
-              ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+            {eyedropperMessage ?? "Click the page to sample a color. Press Escape to exit."}
+          </p>
+        ) : null}
+
+        <SaturationValueField hsv={presentation.hsv} onPreview={previewHsv} />
+        <label className="mt-2 block">
+          <span className="sr-only">Hue</span>
+          <input
+            type="range"
+            min={0}
+            max={359}
+            step={1}
+            value={Math.round(presentation.hsv.hue)}
+            className="folio-hue-slider h-3 w-full cursor-pointer appearance-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent focus-visible:ring-offset-2"
+            aria-label={`Hue ${Math.round(presentation.hsv.hue)} degrees`}
+            onChange={(event) =>
+              previewHsv(
+                { ...presentation.hsv, hue: Number(event.currentTarget.value) },
+                "animation-frame",
+              )
+            }
+          />
+        </label>
+
+        <div className="mt-3 grid grid-cols-2 gap-2" aria-label="Current and previous colors">
+          <CurrentColorReadout
+            color={presentation.currentColor}
+            favorite={currentIsFavorite}
+            onToggleFavorite={() => onToggleFavorite(presentation.currentColor)}
+          />
+          <ColorReadout
+            label="Previous"
+            color={session.previousColor}
+            onSelect={() => previewHex(session.previousColor)}
+          />
+        </div>
+
+        <HexEditor color={presentation.currentColor} onPreview={previewHex} />
+        <RgbEditors color={presentation.currentColor} onPreview={previewHex} />
+
+        <ColorCollection
+          label="Recent"
+          kind="recent"
+          emptyLabel="Colors appear after artwork is committed"
+          colors={colors.recentColors}
+          currentColor={presentation.currentColor}
+          onSelect={(color) => previewHex(color)}
+        />
+
+        <ColorCollection
+          label="Favorites"
+          kind="favorite"
+          emptyLabel="No favorites yet"
+          colors={colors.favoriteColors}
+          currentColor={presentation.currentColor}
+          displayPolicy={favoriteCollectionDisplayPolicy(colors.favoriteColors.length)}
+          compactEmpty
+          testId="favorite-colors"
+          onSelect={(color) => previewHex(color)}
+        />
+
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted">
+            Palette
+          </span>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex h-7 min-w-32 items-center justify-between gap-2 rounded-lg border border-folio-border bg-folio-surface px-2 text-[11px] font-medium text-folio-ink hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                aria-label={`Active color palette, ${colors.activePalette.name}`}
+                data-testid="color-palette-trigger"
+              >
+                {colors.activePalette.name}
+                <ChevronDown className="size-3.5 text-folio-muted" aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              sideOffset={8}
+              collisionPadding={12}
+              className="z-[55] min-w-44"
+              data-floating-widget-owner={ownerScopes}
+              data-testid="color-palette-menu"
+            >
+              {colors.palettes
+                .filter(({ source }) => source === "built-in")
+                .map((palette) => (
+                  <DropdownMenuItem
+                    key={palette.id}
+                    role="menuitemradio"
+                    aria-checked={palette.id === colors.activePaletteId}
+                    className="justify-between"
+                    onSelect={() => onSelectPalette(palette.id)}
+                  >
+                    <span className="flex-1">{palette.name}</span>
+                    <span className="flex items-center gap-0.5" aria-hidden="true">
+                      {palette.colors.slice(0, 5).map((color) => (
+                        <span
+                          key={color}
+                          className="size-2 rounded-full border border-black/15"
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </span>
+                    {palette.id === colors.activePaletteId ? (
+                      <Check className="size-4 text-folio-accent" aria-hidden="true" />
+                    ) : null}
+                  </DropdownMenuItem>
+                ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <ColorCollection
+          label={`${colors.activePalette.name} colors`}
+          kind="palette"
+          colors={colors.activePalette.colors}
+          currentColor={presentation.currentColor}
+          onSelect={(color) => previewHex(color)}
+        />
       </div>
-      <ColorCollection
-        label={`${colors.activePalette.name} colors`}
-        kind="palette"
-        colors={colors.activePalette.colors}
-        currentColor={presentation.currentColor}
-        onSelect={(color) => previewHex(color)}
-      />
     </section>
   );
 }
@@ -726,6 +801,21 @@ function ColorCollection({
 function rgbDraftFromHex(color: string): RgbDraft {
   const rgb = hexToRgb(color);
   return { red: String(rgb.red), green: String(rgb.green), blue: String(rgb.blue) };
+}
+
+function rectFromElement(element: HTMLElement | null): PickerRect | undefined {
+  return element === null ? undefined : rectFromDom(element.getBoundingClientRect());
+}
+
+function rectFromDom(
+  rect: Readonly<{ left: number; top: number; width: number; height: number }>,
+): PickerRect {
+  return {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
 }
 
 function textEntryOwnsKeyboard(target: EventTarget | null): boolean {
