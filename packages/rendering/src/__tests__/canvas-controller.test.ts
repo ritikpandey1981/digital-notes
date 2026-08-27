@@ -388,6 +388,28 @@ describe("CanvasController", () => {
     });
   });
 
+  it("updates immutable page presentation without moving the active camera", () => {
+    const harness = createHarness();
+    harness.controller.mount(harness.container);
+    harness.controller.setZoom(1.75);
+    harness.controller.panBy({ x: 45, y: -30 });
+    const before = harness.controller.snapshot();
+
+    harness.controller.updatePage({
+      rect: { x: 0, y: 0, width: 900, height: 600 },
+      background: { kind: "grid", spacing: 24 },
+      paperColor: "#fbf3e0",
+    });
+    const after = harness.controller.snapshot();
+
+    expect(after.viewport?.pageRect).toEqual({ x: 0, y: 0, width: 900, height: 600 });
+    expect(after.viewport?.camera).toEqual(before.viewport?.camera);
+    expect(after.viewportMode).toBe(before.viewportMode);
+    expect(after.diagnostics.invalidationCount).toBeGreaterThan(
+      before.diagnostics.invalidationCount,
+    );
+  });
+
   it("handles context loss and restoration with structured diagnostics", () => {
     const harness = createHarness();
     harness.controller.mount(harness.container);

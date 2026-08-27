@@ -56,8 +56,7 @@ export function PageNavigator({
   const [focusIndex, setFocusIndex] = useState(0);
   const rows = pageRows(snapshot);
   const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef, {
-    // A page drawer must stay open while the user keeps drawing.
-    outsidePointerDismissal: "ignore",
+    outsidePointerDismissal: "canvas",
   });
 
   const activeIndex = rows.findIndex((row) => row.active);

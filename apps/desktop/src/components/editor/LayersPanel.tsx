@@ -71,7 +71,7 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
   const cancelDragRef = useRef<(() => void) | null>(null);
   const rows = layerRows(snapshot);
   const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef, {
-    outsidePointerDismissal: "ignore",
+    outsidePointerDismissal: "canvas",
     onEscape: () => {
       // A live drag is the innermost transient state, so it unwinds first and
       // leaves the order exactly as it was.

@@ -1402,10 +1402,28 @@ export function CanvasSurface({
         string,
         Readonly<{ object: VectorPageObject; scale: number; visual: VectorShapeVisual }>
       >();
+      const renderPageFor = (page: Page): RenderPage =>
+        Object.freeze({
+          rect: Object.freeze({
+            x: 0,
+            y: 0,
+            width: page.geometry.width,
+            height: page.geometry.height,
+          }),
+          background:
+            page.paper.type === "blank"
+              ? Object.freeze({ kind: "plain" as const })
+              : Object.freeze({
+                  kind: page.paper.type,
+                  ...(page.paper.spacing === undefined ? {} : { spacing: page.paper.spacing }),
+                }),
+          paperColor: page.paper.color,
+        });
       let renderedDocumentObjects: readonly PageObject[] = documentSession.collection.objects;
       // Layer presentation changes preserve object identity by design, so the
       // compositor also tracks the immutable layer array.
       let renderedLayers = documentSession.page.layers;
+      let renderedPagePresentation = renderPageFor(documentSession.activePage);
       const updateHistoryDiagnostics = (state: IHistoryState): void => {
         host.dataset.historyCanUndo = String(state.canUndo);
         host.dataset.historyCanRedo = String(state.canRedo);
@@ -1418,6 +1436,15 @@ export function CanvasSurface({
       let publishLayersRef: (() => void) | null = null;
       let publishPagesRef: (() => void) | null = null;
       const synchronizeDocumentFromHistory = (): void => {
+        const nextActivePage = documentSession.activePage;
+        const nextPagePresentation = renderPageFor(nextActivePage);
+        if (!sameRenderPagePresentation(nextPagePresentation, renderedPagePresentation)) {
+          renderedPagePresentation = nextPagePresentation;
+          // Page paper and geometry are compositor inputs even when artwork and
+          // Layer identities are unchanged. Preserve the current camera while
+          // installing the immutable Page restored by History.
+          controller.updatePage(nextPagePresentation);
+        }
         const inkObjects = documentSession.collection.objects.filter(
           (object): object is InkObject => object instanceof InkObject,
         );
@@ -1836,23 +1863,6 @@ export function CanvasSurface({
           }
         },
       });
-      const renderPageFor = (page: Page): RenderPage =>
-        Object.freeze({
-          rect: Object.freeze({
-            x: 0,
-            y: 0,
-            width: page.geometry.width,
-            height: page.geometry.height,
-          }),
-          background:
-            page.paper.type === "blank"
-              ? Object.freeze({ kind: "plain" as const })
-              : Object.freeze({
-                  kind: page.paper.type,
-                  ...(page.paper.spacing === undefined ? {} : { spacing: page.paper.spacing }),
-                }),
-          paperColor: page.paper.color,
-        });
       const publishPages = (): void => {
         const sketchbook = documentSession.sketchbook;
         const activePageId = documentSession.activePageId;
@@ -1893,7 +1903,8 @@ export function CanvasSurface({
       const applyActivePageToViewport = (restoreMemory: boolean): void => {
         const page = documentSession.activePage;
         const memory = restoreMemory ? documentSession.viewportMemory(page.id) : null;
-        controller.setPage(renderPageFor(page), memory === null);
+        renderedPagePresentation = renderPageFor(page);
+        controller.setPage(renderedPagePresentation, memory === null);
         if (memory !== null) {
           viewport.camera.setZoom(memory.zoom);
           viewport.camera.setPosition(memory.position);
@@ -2659,9 +2670,18 @@ export function CanvasSurface({
           bounds: selection.bounds,
           position: pagePosition,
           zoom: viewport.camera.zoom,
-          ...(isVectorObject(selectedObject) && selectedObject.type !== "line"
-            ? { localBounds: selectedObject.localBounds, transform: selectedObject.transform }
-            : {}),
+          ...(selectedObject instanceof InkObject
+            ? {
+                localBounds: getStrokeVisualLocalBounds(
+                  selectedObject.stroke,
+                  selectedObject.transform.scale,
+                ),
+                transform: selectedObject.transform,
+                pivot: getStrokeTransformPivot(selectedObject.stroke),
+              }
+            : isVectorObject(selectedObject) && selectedObject.type !== "line"
+              ? { localBounds: selectedObject.localBounds, transform: selectedObject.transform }
+              : {}),
         });
         setManipulationCursor(hit?.cursor ?? "default");
       };
@@ -2682,7 +2702,12 @@ export function CanvasSurface({
           updateOverlapPreview(position);
           return;
         }
-        activeVectorInteractionRenderer.setHover(selectionCandidatesAt(position)[0] ?? null);
+        const candidate = selectionCandidatesAt(position)[0] ?? null;
+        // Selected Ink already owns one authoritative oriented frame. Its
+        // generic bounds hover would otherwise draw a competing dashed AABB.
+        activeVectorInteractionRenderer.setHover(
+          candidate instanceof InkObject && editorSelection.has(candidate.id) ? null : candidate,
+        );
       };
       resetVectorHoverRef.current = () => activeVectorInteractionRenderer.setHover(null);
 
@@ -2845,33 +2870,33 @@ export function CanvasSurface({
               documentSession.page.layers,
             );
             const pagePosition = selectionInteractionPoint(position);
-            const selectedLine =
+            const selectedObject =
               editorSelection.size === 1
                 ? documentSession.collection.lookup(editorSelection.ids[0] ?? "")
                 : undefined;
             const lineHit =
-              route === undefined && isLineObject(selectedLine) && pagePosition !== null
-                ? resolveLineHandleHit(selectedLine, pagePosition, viewport.camera.zoom)
+              route === undefined && isLineObject(selectedObject) && pagePosition !== null
+                ? resolveLineHandleHit(selectedObject, pagePosition, viewport.camera.zoom)
                 : null;
             if (
-              isLineObject(selectedLine) &&
+              isLineObject(selectedObject) &&
               (lineHit?.handle === "start" || lineHit?.handle === "end")
             ) {
               route = "line-endpoint";
               activeLineEndpointInteraction = {
                 pointerId: event.pointerId,
-                object: selectedLine,
+                object: selectedObject,
                 endpoint: lineHit.handle,
-                sessionId: `line-endpoint-${selectedLine.id}-${Date.now().toString(36)}`,
+                sessionId: `line-endpoint-${selectedObject.id}-${Date.now().toString(36)}`,
                 sessionTimestamp: Date.now(),
                 origin: position,
-                initialTransform: selectedLine.transform,
-                finalTransform: selectedLine.transform,
+                initialTransform: selectedObject.transform,
+                finalTransform: selectedObject.transform,
                 moved: false,
               };
               activeVectorInteractionRenderer.setLineEndpointPreview({
-                object: selectedLine,
-                transform: selectedLine.transform,
+                object: selectedObject,
+                transform: selectedObject.transform,
                 activeEndpoint: lineHit.handle,
               });
               setManipulationCursor("crosshair");
@@ -2887,13 +2912,25 @@ export function CanvasSurface({
                     bounds: selectedGeometry.bounds,
                     position: pagePosition,
                     zoom: viewport.camera.zoom,
-                    ...(isVectorObject(selectedLine) && selectedLine.type !== "line"
-                      ? { localBounds: selectedLine.localBounds, transform: selectedLine.transform }
-                      : {}),
+                    ...(selectedObject instanceof InkObject
+                      ? {
+                          localBounds: getStrokeVisualLocalBounds(
+                            selectedObject.stroke,
+                            selectedObject.transform.scale,
+                          ),
+                          transform: selectedObject.transform,
+                          pivot: getStrokeTransformPivot(selectedObject.stroke),
+                        }
+                      : isVectorObject(selectedObject) && selectedObject.type !== "line"
+                        ? {
+                            localBounds: selectedObject.localBounds,
+                            transform: selectedObject.transform,
+                          }
+                        : {}),
                   });
             if (route === undefined) {
-              route = isLineObject(selectedLine) ? "selection" : (hit?.kind ?? "selection");
-              if (hit !== null && !isLineObject(selectedLine)) setManipulationCursor(hit.cursor);
+              route = isLineObject(selectedObject) ? "selection" : (hit?.kind ?? "selection");
+              if (hit !== null && !isLineObject(selectedObject)) setManipulationCursor(hit.cursor);
             }
             if (route === "selection" && event.isPrimary && event.button === 0 && !event.shiftKey) {
               // An empty-space press with no modifier begins a marquee.
@@ -4021,6 +4058,24 @@ interface SelectionEditingSnapshotInput {
   readonly viewport: Viewport;
   readonly effective: EffectiveObjectState;
   readonly primaryVector?: VectorPageObject;
+}
+
+function sameRenderPagePresentation(first: RenderPage, second: RenderPage): boolean {
+  if (
+    first.rect.x !== second.rect.x ||
+    first.rect.y !== second.rect.y ||
+    first.rect.width !== second.rect.width ||
+    first.rect.height !== second.rect.height ||
+    first.paperColor !== second.paperColor ||
+    first.background.kind !== second.background.kind
+  ) {
+    return false;
+  }
+  if (first.background.kind === "plain" || second.background.kind === "plain") return true;
+  return (
+    first.background.spacing === second.background.spacing &&
+    first.background.lineColor === second.background.lineColor
+  );
 }
 
 /**

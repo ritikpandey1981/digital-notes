@@ -214,6 +214,61 @@ describe("Select tool manipulation targeting", () => {
       })?.kind,
     ).toBe("translation");
   });
+
+  it.each([0, 30, 45, 60, 90, 180, 270])(
+    "keeps every oriented corner hittable at %s degrees with matching resize cursors",
+    (degrees) => {
+      const localBounds = Object.freeze({ x: 20, y: 40, width: 180, height: 24 });
+      const pivot = Object.freeze({ x: 80, y: 52 });
+      const transform = new Transform({
+        translation: { x: 35, y: -10 },
+        rotation: (degrees * Math.PI) / 180,
+        scale: 1.25,
+      });
+      const frame = resolveOrientedSelectionFrame(localBounds, transform, 1.5, pivot);
+
+      for (const corner of frame.corners) {
+        const hit = resolveSelectionManipulationHit({
+          bounds: transform.transformBounds(localBounds),
+          localBounds,
+          transform,
+          pivot,
+          position: pagePoint(corner.x, corner.y),
+          zoom: 1.5,
+        });
+        expect(hit?.kind).toBe("scale");
+        expect(hit?.cursor).toMatch(/^(?:ew|ns|nwse|nesw)-resize$/u);
+      }
+    },
+  );
+
+  it("uses the explicit Ink pivot for oriented body and handle hit testing", () => {
+    const localBounds = Object.freeze({ x: 10, y: 90, width: 220, height: 18 });
+    const pivot = Object.freeze({ x: 60, y: 40 });
+    const transform = new Transform({ rotation: Math.PI / 3, scale: 1.4 });
+    const frame = resolveOrientedSelectionFrame(localBounds, transform, 2, pivot);
+
+    expect(
+      resolveSelectionManipulationHit({
+        bounds: transform.transformBounds(localBounds),
+        localBounds,
+        transform,
+        pivot,
+        position: pagePoint(frame.corners[2]!.x, frame.corners[2]!.y),
+        zoom: 2,
+      })?.kind,
+    ).toBe("scale");
+    expect(
+      resolveSelectionManipulationHit({
+        bounds: transform.transformBounds(localBounds),
+        localBounds,
+        transform,
+        pivot,
+        position: pagePoint(frame.center.x, frame.center.y),
+        zoom: 2,
+      })?.kind,
+    ).toBe("translation");
+  });
 });
 
 function createObject(id: string, zIndex: number, visible = true) {

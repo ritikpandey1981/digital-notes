@@ -278,6 +278,14 @@ export class CanvasController {
     this.commitViewportChange();
   }
 
+  /** Replaces current page presentation without changing the user's camera or viewport mode. */
+  updatePage(page: RenderPage): void {
+    this.assertMounted();
+    this.page = freezeRenderPage(page);
+    this.requireRenderer().setPage(page);
+    this.commitViewportChange();
+  }
+
   setZoom(zoom: number): number {
     const viewport = this.requireViewport();
     return this.zoomAt(zoom, {

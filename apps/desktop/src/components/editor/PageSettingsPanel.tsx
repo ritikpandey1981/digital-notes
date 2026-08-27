@@ -31,7 +31,7 @@ export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSe
   const boundaryRef = useRef<HTMLElement | null>(null);
   const page = snapshot.pages.find((candidate) => candidate.id === snapshot.activePageId) ?? null;
   const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef, {
-    outsidePointerDismissal: "ignore",
+    outsidePointerDismissal: "canvas",
     onEscape: () => {
       actions?.cancelPaperColorEdit();
       onDismiss();

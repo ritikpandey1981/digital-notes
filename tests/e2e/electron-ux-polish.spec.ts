@@ -284,15 +284,10 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       x: hostBounds.x + hostBounds.width - 24,
       y: hostBounds.y + 24,
     };
-    // Tool settings are a persistent workspace panel: workspace pointer
-    // activity leaves them in place, and Escape or the dock's options
-    // affordance closes them. The press itself starts off the page, so it
-    // creates nothing.
+    // Outside-page workspace dismisses settings and creates nothing.
     await window.mouse.click(emptyWorkspacePoint.x, emptyWorkspacePoint.y);
-    await expect(palette).toBeVisible();
-    await expect(surface).toHaveAttribute("data-document-object-count", "0");
-    await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
+    await expect(surface).toHaveAttribute("data-document-object-count", "0");
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(palette).toHaveCount(0);
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
@@ -336,14 +331,13 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     for (const futureTool of ["Layers", "Reference", "AI"] as const) {
       await expect(toolDock.getByRole("button", { name: futureTool, exact: true })).toHaveCount(0);
     }
-    // Tool settings are a persistent workspace panel: workspace pointer
-    // activity leaves them in place, and Escape or the dock's options
-    // affordance closes them. The press itself starts off the page, so it
-    // creates nothing.
+    // Outside-page workspace dismisses settings and creates nothing.
     await window.mouse.click(emptyWorkspacePoint.x, emptyWorkspacePoint.y);
-    await expect(palette).toBeVisible();
+    await expect(palette).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
 
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await expect(palette).toBeVisible();
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
     await drawPath(window, pageToScreen, [
       { x: 120, y: 180 },
@@ -351,7 +345,9 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       { x: 240, y: 180 },
     ]);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
-    // Drawing commits the stroke and leaves the persistent settings panel open.
+    // The first Page gesture dismisses settings and still commits the stroke.
+    await expect(palette).toHaveCount(0);
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
     await expect(window.getByRole("spinbutton", { name: "Size value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
@@ -435,8 +431,8 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       width: 40,
       pressureEnabled: false,
     });
-    // Drawing leaves the persistent settings panel open.
-    await expect(palette).toBeVisible();
+    // The Page gesture dismisses settings without swallowing the stroke.
+    await expect(palette).toHaveCount(0);
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(palette).toBeVisible();
 

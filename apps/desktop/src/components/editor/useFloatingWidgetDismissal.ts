@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type RefObject } from "react";
-import { pushDismissal } from "./floating-dismissal-stack";
+import { isTopDismissalScope, pushDismissal } from "./floating-dismissal-stack";
 
 /** Owns dismissal for one floating widget and any portaled descendants carrying its scope. */
 export function useFloatingWidgetDismissal(
@@ -9,11 +9,8 @@ export function useFloatingWidgetDismissal(
   options: Readonly<{
     onEscape?: () => void;
     canvasPageDismissal?: "microtask" | "synchronous";
-    /**
-     * Workspace panels such as Layers stay open until they are explicitly
-     * closed. Tool widgets keep the default outside-pointer dismissal.
-     */
-    outsidePointerDismissal?: "dismiss" | "ignore";
+    /** Selects generic outside, canvas-only, or explicit-only pointer dismissal. */
+    outsidePointerDismissal?: "dismiss" | "canvas" | "ignore";
     scopeId?: string;
   }> = {},
 ): string {
@@ -43,6 +40,10 @@ export function useFloatingWidgetDismissal(
     if (!open) return;
     const handleOutsidePointerDown = (event: PointerEvent): void => {
       if (pointerPolicyRef.current === "ignore") return;
+      // Outside pointers obey the same LIFO ownership as Escape. Keeping the
+      // entry registered until React finishes dismissal prevents lower surfaces
+      // from reacting to this same pointer event.
+      if (!isTopDismissalScope(scopeId)) return;
       if (!(event.target instanceof Node)) return;
       if (boundaryRef.current?.contains(event.target) === true) return;
       if (event.target instanceof Element && isOwnedFloatingSurface(event.target, scopeId)) return;
@@ -54,6 +55,8 @@ export function useFloatingWidgetDismissal(
       }
       const canvasRegion = resolveCanvasPointerRegion(event);
       if (canvasRegion === "workspace") {
+        // Outside-page workspace is dismissal-only. Blocking it preserves the
+        // current canvas selection; actual Page input below is never blocked.
         event.preventDefault();
         event.stopPropagation();
         dismissRef.current();
@@ -64,6 +67,7 @@ export function useFloatingWidgetDismissal(
         else queueMicrotask(() => dismissRef.current());
         return;
       }
+      if (pointerPolicyRef.current === "canvas") return;
       dismissRef.current();
     };
     document.addEventListener("pointerdown", handleOutsidePointerDown, true);

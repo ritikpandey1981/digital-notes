@@ -460,6 +460,7 @@ export function EditorWorkspace({
           onSelectPalette={onSelectColorPalette}
           onToggleFavorite={onToggleFavoriteColor}
           onEyedropperActiveChange={setEyedropperActive}
+          onRequestPageNavigatorYield={onDismissPageNavigator}
           onCommit={commitColorPicker}
           onCancel={cancelColorPicker}
         />

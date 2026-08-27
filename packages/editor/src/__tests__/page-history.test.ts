@@ -1,4 +1,4 @@
-import { InkObject, SketchbookDocument } from "@folio/document";
+import { DEFAULT_PAPER_COLOR, InkObject, SketchbookDocument } from "@folio/document";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createEditorHistoryCoordinator } from "../history/editor-history-coordinator";
 import { InkDocumentSession } from "../InkDocumentSession";
@@ -74,6 +74,51 @@ describe("Phase 21 page History", () => {
     coordinator.executeRemovePage(added.pageId);
     expect(depth()).toBe(before + 7);
   });
+
+  it("restores immutable paper presentation through exact Undo and Redo", () => {
+    const pageId = session.activePageId;
+    const original = session.activePage;
+    coordinator.executePagePaper(pageId, { type: "grid", color: "#fbf3e0" });
+    const changed = session.activePage;
+
+    expect(changed).not.toBe(original);
+    expect(changed.paper).toMatchObject({ type: "grid", color: "#fbf3e0" });
+    coordinator.undo();
+    expect(session.activePage).not.toBe(changed);
+    expect(session.paper).toEqual({ type: "blank", color: DEFAULT_PAPER_COLOR });
+    const restored = session.activePage;
+    coordinator.redo();
+    expect(session.activePage).not.toBe(restored);
+    expect(session.paper).toMatchObject({ type: "grid", color: "#fbf3e0" });
+  });
+
+  it.each(["grid", "ruled"] as const)(
+    "adds a blank default-color page from %s while preserving geometry and duplicate semantics",
+    (paperType) => {
+      const sourceId = session.activePageId;
+      coordinator.executePageGeometry(sourceId, { width: 900, height: 700 });
+      coordinator.executePagePaper(sourceId, { type: paperType, color: "#fbf3e0" });
+      rectangleOn(session, coordinator);
+      const beforeAdd = depth();
+
+      const { pageId: addedId } = coordinator.executeAddPage();
+      const added = session.sketchbook.requirePage(addedId);
+      expect(depth()).toBe(beforeAdd + 1);
+      expect(added.geometry).toEqual({ width: 900, height: 700 });
+      expect(added.paper).toEqual({ type: "blank", color: DEFAULT_PAPER_COLOR });
+      expect(added.content.layerCount).toBe(1);
+      expect(added.content.bottomLayer.name).toBe("Layer 1");
+      expect(added.objectCount).toBe(0);
+
+      const { pageId: copyId } = coordinator.executeDuplicatePage(sourceId);
+      const source = session.sketchbook.requirePage(sourceId);
+      const copy = session.sketchbook.requirePage(copyId);
+      expect(copy.geometry).toEqual(source.geometry);
+      expect(copy.paper).toEqual(source.paper);
+      expect(copy.content.layerCount).toBe(source.content.layerCount);
+      expect(copy.objectCount).toBe(source.objectCount);
+    },
+  );
 
   it("records zero History for active page and per-page active layer switching", () => {
     const { pageId } = coordinator.executeAddPage();

@@ -168,7 +168,7 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     this.replaceDocument(this.documentValue.replacePage(this.activePage.withContent(content)));
   }
 
-  /** Creates an empty page inheriting the active page's geometry and paper. */
+  /** Creates an empty blank page inheriting only the active page's physical geometry. */
   createInheritedPage(): Page {
     return createPageLike(this.activePage, {
       createPageId: this.createPageIdValue,

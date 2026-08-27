@@ -26,6 +26,7 @@ import {
   favoriteCollectionDisplayPolicy,
   hsvFromSvPointer,
   isFavoriteColor,
+  pickerPlacementOverlapsZone,
   resolveColorPickerPlacement,
   resolveColorPickerMaximumHeight,
   resolveColorPickerUsableBounds,
@@ -71,6 +72,7 @@ interface FullColorPickerProps {
   readonly onSelectPalette: (paletteId: string) => void;
   readonly onToggleFavorite: (color: string) => void;
   readonly onEyedropperActiveChange: (active: boolean) => void;
+  readonly onRequestPageNavigatorYield: () => void;
   readonly onCommit: () => void;
   readonly onCancel: () => void;
 }
@@ -90,6 +92,7 @@ export function FullColorPicker({
   onSelectPalette,
   onToggleFavorite,
   onEyedropperActiveChange,
+  onRequestPageNavigatorYield,
   onCommit,
   onCancel,
 }: FullColorPickerProps) {
@@ -179,6 +182,12 @@ export function FullColorPicker({
     session.source,
     { bounds: placementBounds, zones },
   );
+  const pageNavigatorMustYield = pickerPlacementOverlapsZone(
+    placement,
+    placementPickerSize,
+    zones,
+    "page-navigator",
+  );
   const style = {
     left: placement.left,
     top: placement.top,
@@ -237,6 +246,10 @@ export function FullColorPicker({
       window.removeEventListener("resize", measure);
     };
   }, [positioningAnchor, session.anchor, workspace]);
+
+  useLayoutEffect(() => {
+    if (pageNavigatorMustYield) onRequestPageNavigatorYield();
+  }, [onRequestPageNavigatorYield, pageNavigatorMustYield]);
 
   useEffect(() => {
     addFloatingOwner(session.anchor, floatingScope);
@@ -305,6 +318,7 @@ export function FullColorPicker({
       data-color-target-label={session.target.label}
       data-picker-source={session.source}
       data-picker-side={placement.side}
+      data-page-navigator-fallback={pageNavigatorMustYield ? "yield" : "clear"}
       data-picker-maximum-height={maximumPickerHeight}
       data-picker-avoid-left={artworkAvoidRect?.left}
       data-picker-avoid-top={artworkAvoidRect?.top}

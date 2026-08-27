@@ -13,6 +13,7 @@ export interface SelectionManipulationTargetInput {
   readonly zoom: number;
   readonly localBounds?: ObjectBounds;
   readonly transform?: Transform;
+  readonly pivot?: Readonly<{ x: number; y: number }>;
 }
 
 export interface OrientedSelectionFrame {
@@ -24,7 +25,15 @@ export interface OrientedSelectionFrame {
 }
 
 export type SelectionManipulationCursor =
-  "default" | "crosshair" | "grab" | "grabbing" | "nwse-resize" | "nesw-resize" | "rotation";
+  | "default"
+  | "crosshair"
+  | "grab"
+  | "grabbing"
+  | "ew-resize"
+  | "ns-resize"
+  | "nwse-resize"
+  | "nesw-resize"
+  | "rotation";
 
 export interface SelectionManipulationHit {
   readonly kind: ManipulationKind;
@@ -47,7 +56,7 @@ export function resolveSelectionManipulationTarget(
 export function resolveSelectionManipulationHit(
   input: SelectionManipulationTargetInput,
 ): SelectionManipulationHit | null {
-  const { bounds, position, zoom, localBounds, transform } = input;
+  const { bounds, position, zoom, localBounds, transform, pivot } = input;
   if (
     position.coordinateSpace !== "page" ||
     !Number.isFinite(position.x) ||
@@ -59,23 +68,25 @@ export function resolveSelectionManipulationHit(
   }
 
   if (localBounds !== undefined && transform !== undefined) {
-    const frame = resolveOrientedSelectionFrame(localBounds, transform, zoom);
+    const frame = resolveOrientedSelectionFrame(localBounds, transform, zoom, pivot);
     const hitRadius = HANDLE_HIT_RADIUS_PIXELS / zoom;
     if (distance(position, frame.rotationHandle) <= hitRadius) {
       return Object.freeze({ kind: "rotation", cursor: "rotation" });
     }
-    const cursors = ["nwse-resize", "nesw-resize", "nwse-resize", "nesw-resize"] as const;
     const cornerIndex = frame.corners.findIndex(
       (handle) => distance(position, handle) <= hitRadius,
     );
     if (cornerIndex >= 0) {
-      return Object.freeze({ kind: "scale", cursor: cursors[cornerIndex] ?? "nwse-resize" });
+      return Object.freeze({
+        kind: "scale",
+        cursor: scaleCursor(frame.center, frame.corners[cornerIndex] ?? frame.center),
+      });
     }
-    const pivot = {
+    const resolvedPivot = pivot ?? {
       x: localBounds.x + localBounds.width / 2,
       y: localBounds.y + localBounds.height / 2,
     };
-    const localPosition = transform.invertPoint(position, pivot);
+    const localPosition = transform.invertPoint(position, resolvedPivot);
     return localPosition.x >= localBounds.x &&
       localPosition.x <= localBounds.x + localBounds.width &&
       localPosition.y >= localBounds.y &&
@@ -166,6 +177,21 @@ export function resolveOrientedSelectionFrame(
 
 function distance(position: PagePoint, target: Readonly<{ x: number; y: number }>): number {
   return Math.hypot(position.x - target.x, position.y - target.y);
+}
+
+function scaleCursor(
+  center: Readonly<{ x: number; y: number }>,
+  corner: Readonly<{ x: number; y: number }>,
+): Extract<SelectionManipulationCursor, `${string}-resize`> {
+  const halfTurn = Math.PI;
+  const eighthTurn = Math.PI / 8;
+  const angle =
+    ((Math.atan2(corner.y - center.y, corner.x - center.x) % halfTurn) + halfTurn) % halfTurn;
+  const sector = Math.round(angle / eighthTurn) % 8;
+  if (sector === 0 || sector === 7) return "ew-resize";
+  if (sector === 1 || sector === 2) return "nwse-resize";
+  if (sector === 3 || sector === 4) return "ns-resize";
+  return "nesw-resize";
 }
 
 function createRotationCursorCss(): string {

@@ -257,20 +257,23 @@ describe("page duplication", () => {
     );
   });
 
-  it("creates an inherited empty page with fresh identity", () => {
-    const source = new Page({
-      id: "source",
-      geometry: { width: 900, height: 900 },
-      paper: createPagePaper({ type: "dotted" }),
-      content: contentOf([[rectangle("a")]]),
-    });
-    const created = createPageLike(source, identityFactory("new"));
+  it.each(["grid", "ruled"] as const)(
+    "creates an empty blank page from %s paper while inheriting geometry only",
+    (paperType) => {
+      const source = new Page({
+        id: "source",
+        geometry: { width: 900, height: 900 },
+        paper: createPagePaper({ type: paperType, color: "#fbf3e0" }),
+        content: contentOf([[rectangle("a")]]),
+      });
+      const created = createPageLike(source, identityFactory("new"));
 
-    expect(created.id).not.toBe(source.id);
-    expect(created.geometry).toEqual(source.geometry);
-    expect(created.paper).toEqual(source.paper);
-    expect(created.objectCount).toBe(0);
-    expect(created.content.layerCount).toBe(1);
-    expect(created.content.bottomLayer.name).toBe(createDefaultLayer().name);
-  });
+      expect(created.id).not.toBe(source.id);
+      expect(created.geometry).toEqual(source.geometry);
+      expect(created.paper).toEqual({ type: "blank", color: DEFAULT_PAPER_COLOR });
+      expect(created.objectCount).toBe(0);
+      expect(created.content.layerCount).toBe(1);
+      expect(created.content.bottomLayer.name).toBe(createDefaultLayer().name);
+    },
+  );
 });

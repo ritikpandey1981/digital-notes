@@ -425,6 +425,8 @@ test("Pass B gives one selected stroke a tight oriented frame with live angle fe
   });
   const surface = window.getByTestId("canvas-surface");
   const chip = window.getByTestId("rotation-angle-indicator");
+  const selectionCanvas = window.locator('canvas[data-folio-layer="selection"]');
+  const vectorCanvas = window.locator('canvas[data-folio-layer="vector-interaction"]');
   try {
     // 22. Select a long diagonal stroke.
     await drawDiagonalInk(window);
@@ -511,6 +513,94 @@ test("Pass B gives one selected stroke a tight oriented frame with live angle fe
     expect(Number(await surface.getAttribute("data-selected-object-rotation"))).toBeCloseTo(
       rotated,
       4,
+    );
+
+    // 29. The rotated stroke exposes only the oriented frame; its generic Ink
+    // hover must not paint the former dashed AABB on the vector overlay.
+    await expect(selectionCanvas).toHaveAttribute("data-selection-frame-kind", "oriented");
+    await window.mouse.move(middle.x, middle.y);
+    await expect(vectorCanvas).toHaveAttribute("data-hovered-object-id", "");
+
+    const readFrame = async () => {
+      const corners = JSON.parse(
+        (await selectionCanvas.getAttribute("data-selection-frame-corners")) ?? "[]",
+      ) as { x: number; y: number }[];
+      if (corners.length !== 4) throw new Error("Selected Ink has no oriented frame corners.");
+      return corners;
+    };
+    const frameCorners = await readFrame();
+    const frameCenter = frameCorners.reduce(
+      (total, point) => ({ x: total.x + point.x / 4, y: total.y + point.y / 4 }),
+      { x: 0, y: 0 },
+    );
+
+    // Every displayed corner is the corresponding live scale target.
+    for (const corner of frameCorners) {
+      const client = await pageSpaceToClient(window, corner);
+      await window.mouse.move(client.x, client.y);
+      await expect(surface).toHaveAttribute(
+        "data-manipulation-cursor",
+        /^(?:ew|ns|nwse|nesw)-resize$/u,
+      );
+    }
+
+    // 30. A scale gesture starts at the displayed rotated corner, previews on
+    // that frame, and commits exactly one History action.
+    const scaleHistoryBefore = Number(await surface.getAttribute("data-history-undo-depth"));
+    const scaleCorner = frameCorners[2]!;
+    const scaleStart = await pageSpaceToClient(window, scaleCorner);
+    const scaleTarget = await pageSpaceToClient(window, {
+      x: frameCenter.x + (scaleCorner.x - frameCenter.x) * 1.35,
+      y: frameCenter.y + (scaleCorner.y - frameCenter.y) * 1.35,
+    });
+    await window.mouse.move(scaleStart.x, scaleStart.y);
+    await window.mouse.down();
+    await window.mouse.move(scaleTarget.x, scaleTarget.y, { steps: 8 });
+    await expect(surface).toHaveAttribute("data-manipulation-kind", "scale");
+    await expect
+      .poll(async () => Number(await surface.getAttribute("data-manipulation-scale")))
+      .toBeGreaterThan(1);
+    await window.mouse.up();
+    await expect(surface).toHaveAttribute("data-manipulation-phase", "idle");
+    const committedScale = Number(await surface.getAttribute("data-selected-object-scale"));
+    expect(committedScale).toBeGreaterThan(1);
+    expect(Number(await surface.getAttribute("data-history-undo-depth"))).toBe(
+      scaleHistoryBefore + 1,
+    );
+    await expect(selectionCanvas).toHaveAttribute("data-selection-frame-kind", "oriented");
+
+    // Cancel restores exactly and creates no History; Undo/Redo restore the
+    // committed scale exactly.
+    const cancelCorners = await readFrame();
+    const cancelCorner = cancelCorners[0]!;
+    const cancelCenter = cancelCorners.reduce(
+      (total, point) => ({ x: total.x + point.x / 4, y: total.y + point.y / 4 }),
+      { x: 0, y: 0 },
+    );
+    const cancelStart = await pageSpaceToClient(window, cancelCorner);
+    const cancelTarget = await pageSpaceToClient(window, {
+      x: cancelCenter.x + (cancelCorner.x - cancelCenter.x) * 0.8,
+      y: cancelCenter.y + (cancelCorner.y - cancelCenter.y) * 0.8,
+    });
+    await window.mouse.move(cancelStart.x, cancelStart.y);
+    await window.mouse.down();
+    await window.mouse.move(cancelTarget.x, cancelTarget.y, { steps: 6 });
+    await window.keyboard.press("Escape");
+    await window.mouse.up();
+    await expect(surface).toHaveAttribute("data-manipulation-phase", "idle");
+    expect(Number(await surface.getAttribute("data-selected-object-scale"))).toBeCloseTo(
+      committedScale,
+      5,
+    );
+    expect(Number(await surface.getAttribute("data-history-undo-depth"))).toBe(
+      scaleHistoryBefore + 1,
+    );
+    await window.keyboard.press("Control+z");
+    expect(Number(await surface.getAttribute("data-selected-object-scale"))).toBeCloseTo(1, 5);
+    await window.keyboard.press("Control+y");
+    expect(Number(await surface.getAttribute("data-selected-object-scale"))).toBeCloseTo(
+      committedScale,
+      5,
     );
 
     expect(consoleErrors).toEqual([]);

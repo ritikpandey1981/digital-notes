@@ -113,6 +113,26 @@ describe("SelectionOverlayRenderer", () => {
     expect(callbacks.size).toBe(0);
   });
 
+  it("reports the same oriented Ink frame geometry that it presents", () => {
+    const { renderer, canvas } = createHarness();
+    renderer.setSelection({
+      ...target,
+      orientation: {
+        localBounds: { x: 10, y: 30, width: 100, height: 12 },
+        pivot: { x: 40, y: 36 },
+        translation: { x: 15, y: -5 },
+        rotation: Math.PI / 4,
+        scale: 1.5,
+      },
+    });
+
+    expect(canvas.dataset.selectionFrameKind).toBe("oriented");
+    expect(JSON.parse(canvas.dataset.selectionFrameCorners ?? "[]")).toHaveLength(4);
+    expect(JSON.parse(canvas.dataset.selectionRotationHandle ?? "null")).toEqual(
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+    );
+  });
+
   it("clears only the affected overlay region when selection is removed", () => {
     const { renderer, flush, calls, canvas } = createHarness();
     renderer.setSelection(target);

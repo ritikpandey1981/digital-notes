@@ -41,6 +41,26 @@ const pageOrder = async (surface: Locator): Promise<readonly string[]> =>
 const activePage = async (surface: Locator): Promise<string> =>
   (await surface.getAttribute("data-active-page-id")) ?? "";
 
+async function renderedPaperColor(window: Page): Promise<string> {
+  return window.locator('canvas[data-folio-renderer="true"]').evaluate((canvas) => {
+    const target = canvas as HTMLCanvasElement;
+    const context = target.getContext("2d");
+    if (context === null) throw new Error("Canvas context is unavailable.");
+    const logicalWidth = Number(target.dataset.logicalWidth);
+    const logicalHeight = Number(target.dataset.logicalHeight);
+    const pageX = Number(target.dataset.pageX);
+    const pageY = Number(target.dataset.pageY);
+    const pageWidth = Number(target.dataset.pageWidth);
+    const pageHeight = Number(target.dataset.pageHeight);
+    const x = Math.round((pageX + pageWidth * 0.43) * (target.width / logicalWidth));
+    const y = Math.round((pageY + pageHeight * 0.41) * (target.height / logicalHeight));
+    const [red = 0, green = 0, blue = 0] = context.getImageData(x, y, 1, 1).data;
+    return `#${[red, green, blue]
+      .map((channel) => channel.toString(16).padStart(2, "0"))
+      .join("")}`;
+  });
+}
+
 function overlaps(
   first: { left: number; top: number; right: number; bottom: number },
   second: { left: number; top: number; right: number; bottom: number },
@@ -140,17 +160,54 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
       await expect(surface).toHaveAttribute("data-page-paper-type", paper);
       expect(await depth(surface)).toBe(before + 1);
     }
-    await settings.getByTestId("paper-type-grid").click();
-
+    const baseCanvas = window.locator('canvas[data-folio-renderer="true"]');
     const historyBeforePaperColor = await depth(surface);
+    const renderBeforePaperColor = Number(await baseCanvas.getAttribute("data-render-count"));
     await settings.getByTestId("paper-color-fbf3e0").click();
     await expect(surface).toHaveAttribute("data-page-paper-color", "#fbf3e0");
+    await expect.poll(() => renderedPaperColor(window)).toBe("#fbf3e0");
     expect(await depth(surface)).toBe(historyBeforePaperColor + 1);
     // Paper color must not touch the artwork color system.
     const brushColor = await surface.getAttribute("data-drawing-color");
     await window.keyboard.press("Control+z");
     await expect(surface).toHaveAttribute("data-page-paper-color", "#fffdf8");
     await expect(surface).toHaveAttribute("data-drawing-color", brushColor ?? "");
+    await expect.poll(() => renderedPaperColor(window)).toBe("#fffdf8");
+    expect(Number(await baseCanvas.getAttribute("data-render-count"))).toBeGreaterThan(
+      renderBeforePaperColor,
+    );
+    await window.keyboard.press("Control+y");
+    await expect(surface).toHaveAttribute("data-page-paper-color", "#fbf3e0");
+    await expect.poll(() => renderedPaperColor(window)).toBe("#fbf3e0");
+
+    // Paper type Undo/Redo follows the same compositor synchronization path.
+    await settings.getByTestId("paper-type-grid").click();
+    await expect(surface).toHaveAttribute("data-page-paper-type", "grid");
+    const renderBeforePaperTypeUndo = Number(await baseCanvas.getAttribute("data-render-count"));
+    await window.keyboard.press("Control+z");
+    await expect(surface).toHaveAttribute("data-page-paper-type", "blank");
+    expect(Number(await baseCanvas.getAttribute("data-render-count"))).toBeGreaterThan(
+      renderBeforePaperTypeUndo,
+    );
+    await window.keyboard.press("Control+y");
+    await expect(surface).toHaveAttribute("data-page-paper-type", "grid");
+
+    // Geometry restored by History also reaches the compositor without a Page switch.
+    const pageViewportWidth = async (): Promise<number> =>
+      Number(await surface.getAttribute("data-viewport-page-width"));
+    const viewportWidthBeforeGeometryUndo = await pageViewportWidth();
+    await settings.getByTestId("page-width").fill("900");
+    await settings.getByTestId("page-width").press("Enter");
+    await expect(surface).toHaveAttribute("data-page-width", "900");
+    await expect.poll(pageViewportWidth).not.toBe(viewportWidthBeforeGeometryUndo);
+    await settings.getByTestId("page-settings-close").focus();
+    await window.keyboard.press("Control+z");
+    await expect(surface).toHaveAttribute("data-page-width", "794");
+    await expect.poll(pageViewportWidth).toBeCloseTo(viewportWidthBeforeGeometryUndo, 4);
+    await window.keyboard.press("Control+y");
+    await expect(surface).toHaveAttribute("data-page-width", "900");
+    await window.keyboard.press("Control+z");
+    await expect(surface).toHaveAttribute("data-page-width", "794");
 
     // 12-13. Draw on page 1 across two layers.
     await window.getByRole("button", { name: "Pencil", exact: true }).click();
@@ -163,7 +220,7 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
     await window.getByTestId("layers-toggle").click();
     expect(await objects(surface)).toBe(2);
 
-    // 14-15. Add Page inherits geometry and paper but starts empty.
+    // 14-15. Add Page inherits geometry but starts with default blank paper.
     const historyBeforeAdd = await depth(surface);
     await navigator.getByTestId("page-add").click();
     expect(await pageCount(surface)).toBe(2);
@@ -171,7 +228,8 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
     const secondPageId = await activePage(surface);
     expect(secondPageId).not.toBe(firstPageId);
     expect(await objects(surface)).toBe(0);
-    await expect(surface).toHaveAttribute("data-page-paper-type", "grid");
+    await expect(surface).toHaveAttribute("data-page-paper-type", "blank");
+    await expect(surface).toHaveAttribute("data-page-paper-color", "#fffdf8");
     await expect(surface).toHaveAttribute("data-page-width", "794");
     await expect(surface).toHaveAttribute("data-layer-count", "1");
     // Switching pages must not leave stale selection or toolbar state.
@@ -195,6 +253,9 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
     expect(await activePage(surface)).toBe(firstPageId);
     expect(await objects(surface)).toBe(2);
     await expect(surface).toHaveAttribute("data-layer-count", "2");
+    await expect(surface).toHaveAttribute("data-page-paper-type", "grid");
+    await expect(surface).toHaveAttribute("data-page-paper-color", "#fbf3e0");
+    await expect(surface).toHaveAttribute("data-page-width", "794");
     // Each page remembers its own active layer.
     await expect(surface).toHaveAttribute("data-active-layer-id", firstPageLayer);
 
@@ -218,6 +279,9 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
     await window.getByRole("button", { name: "Pencil", exact: true }).click();
     await stroke(window, 460);
     expect(await objects(surface)).toBe(3);
+    await expect(navigator).toHaveCount(0);
+    await window.getByTestId("pages-toggle").click();
+    await expect(navigator).toBeVisible();
     await navigator.getByTestId(`page-select-${firstPageId}`).click();
     // Editing the duplicate must never reach the source page.
     expect(await objects(surface)).toBe(2);
@@ -284,9 +348,11 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
     const navigator = window.getByTestId("page-navigator");
     await expect(navigator).toBeVisible();
 
-    // The page drawer must survive drawing and tool changes.
+    // A canvas gesture dismisses the drawer without swallowing the stroke.
     await window.getByRole("button", { name: "Pencil", exact: true }).click();
     await stroke(window, 320);
+    await expect(navigator).toHaveCount(0);
+    await window.getByTestId("pages-toggle").click();
     await expect(navigator).toBeVisible();
 
     // Many pages stay usable and the active page scrolls into view.
@@ -318,12 +384,26 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
       animations: "disabled",
     });
 
-    // Page Settings, Layers, Quick Rail, and the picker must coexist.
+    // Page Settings and the Picker remain collision-free in their supported
+    // pairing. Layers intentionally owns the same slot and is checked next.
     await navigator.getByTestId(`page-actions-${lastPageId}`).click();
     await window.getByTestId(`page-settings-${lastPageId}`).click();
     await expect(window.getByTestId("page-settings")).toBeVisible();
     await window.getByTestId("quick-color-current").click();
-    await expect(window.getByTestId("full-color-picker")).toBeVisible();
+    const picker = window.getByTestId("full-color-picker");
+    await expect(picker).toBeVisible();
+    expect(
+      overlaps(
+        (await picker.boundingBox())!,
+        (await window.getByTestId("page-settings").boundingBox())!,
+      ),
+    ).toBe(false);
+    await window.keyboard.press("Escape");
+    await window.getByTestId("page-settings-close").click();
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("layers-panel")).toBeVisible();
+    await window.getByTestId("quick-color-current").click();
+    await expect(picker).toBeVisible();
 
     for (const [width, height] of [
       [1440, 900],
@@ -347,26 +427,33 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
         };
         return {
           navigator: rect('[data-testid="page-navigator"]'),
-          settings: rect('[data-testid="page-settings"]'),
+          layers: rect('[data-testid="layers-panel"]'),
           picker: rect('[data-testid="full-color-picker"]'),
+          utilityRail: rect('[data-testid="workspace-utility-rail"]'),
+          quickRail: rect('[data-testid="quick-color-rail"]'),
           viewportControls: rect('[data-testid="viewport-controls"]'),
           hint: rect('[data-testid="context-hint"]'),
           workspace: rect('[data-testid="editor-workspace"]'),
           canvas: rect('canvas[data-folio-renderer="true"]'),
         };
       });
-      expect(layout.navigator).not.toBeNull();
-      expect(layout.settings).not.toBeNull();
+      expect(layout.layers).not.toBeNull();
       expect(layout.picker).not.toBeNull();
-      expect(overlaps(layout.navigator!, layout.viewportControls!)).toBe(false);
-      expect(overlaps(layout.navigator!, layout.hint!)).toBe(false);
-      expect(overlaps(layout.navigator!, layout.settings!)).toBe(false);
-      // The picker is transient and may sit over the page filmstrip when every
-      // surface is open at once; it must never cover the persistent panels.
-      expect(overlaps(layout.settings!, layout.picker!)).toBe(false);
+      if (width === 960) {
+        // At the impossible minimum arrangement the lower-priority filmstrip
+        // yields, rather than leaving a narrow actionable overlap.
+        expect(layout.navigator).toBeNull();
+      } else {
+        expect(layout.navigator).not.toBeNull();
+        expect(overlaps(layout.navigator!, layout.viewportControls!)).toBe(false);
+        expect(overlaps(layout.navigator!, layout.hint!)).toBe(false);
+        expect(overlaps(layout.navigator!, layout.picker!)).toBe(false);
+      }
+      expect(overlaps(layout.layers!, layout.picker!)).toBe(false);
+      expect(overlaps(layout.utilityRail!, layout.picker!)).toBe(false);
+      expect(overlaps(layout.quickRail!, layout.picker!)).toBe(false);
       expect(overlaps(layout.picker!, layout.viewportControls!)).toBe(false);
-      expect(layout.navigator!.bottom).toBeLessThanOrEqual(height);
-      expect(layout.settings!.bottom).toBeLessThanOrEqual(height);
+      if (layout.navigator !== null) expect(layout.navigator.bottom).toBeLessThanOrEqual(height);
       // Opening panels must never resize the canvas.
       expect(Math.round(layout.canvas!.width)).toBe(Math.round(layout.workspace!.width));
       expect(Math.round(layout.canvas!.height)).toBe(Math.round(layout.workspace!.height));
@@ -375,6 +462,47 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
         animations: "disabled",
       });
     }
+
+    // Repeat at the BrowserWindow's declared minimum with Tool Options in the
+    // occupied-zone set. The Picker stays usable; Pages yields deterministically.
+    await window.keyboard.press("Escape");
+    await expect(window.getByTestId("full-color-picker")).toHaveCount(0);
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("layers-panel")).toHaveCount(0);
+    const minimum = await app.evaluate(async ({ BrowserWindow }) => {
+      const target = BrowserWindow.getAllWindows()[0];
+      const [width, height] = target?.getMinimumSize() ?? [960, 640];
+      target?.setContentSize(width, height);
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      return { width, height };
+    });
+    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.getByTestId("tool-options-affordance").click();
+    await expect(window.getByTestId("context-tool-palette")).toBeVisible();
+    await window.getByTestId("pages-toggle").click();
+    await expect(window.getByTestId("page-navigator")).toBeVisible();
+    await window.getByTestId("quick-color-current").click();
+    await expect(window.getByTestId("full-color-picker")).toBeVisible();
+    await expect(window.getByTestId("page-navigator")).toHaveCount(0);
+    const minimumLayout = await window.evaluate(() => {
+      const rect = (testId: string) => {
+        const element = document.querySelector(`[data-testid="${testId}"]`);
+        if (element === null) return null;
+        const bounds = element.getBoundingClientRect();
+        return { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
+      };
+      return {
+        picker: rect("full-color-picker"),
+        toolOptions: rect("context-tool-palette"),
+        utilityRail: rect("workspace-utility-rail"),
+      };
+    });
+    expect(minimum.width).toBeGreaterThan(0);
+    expect(minimum.height).toBeGreaterThan(0);
+    expect(minimumLayout.picker).not.toBeNull();
+    expect(minimumLayout.toolOptions).not.toBeNull();
+    expect(overlaps(minimumLayout.picker!, minimumLayout.toolOptions!)).toBe(false);
+    expect(overlaps(minimumLayout.picker!, minimumLayout.utilityRail!)).toBe(false);
   } finally {
     await app.close();
   }

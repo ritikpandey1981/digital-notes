@@ -235,7 +235,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     expect(distance(frameAfter.corners[0]!, frameAfter.corners[1]!)).toBeCloseTo(initialTopEdge, 5);
     const rotatedCorner = mapping.pageToScreen(frameAfter.corners[0]!.x, frameAfter.corners[0]!.y);
     await window.mouse.move(rotatedCorner.x, rotatedCorner.y);
-    await expect(inkCanvas).toHaveAttribute("data-manipulation-cursor", "nwse-resize");
+    await expect(inkCanvas).toHaveAttribute("data-manipulation-cursor", "ns-resize");
     await window.mouse.down();
     const scaleTarget = mapping.pageToScreen(
       center.x + (frameAfter.corners[0]!.x - center.x) * 1.2,

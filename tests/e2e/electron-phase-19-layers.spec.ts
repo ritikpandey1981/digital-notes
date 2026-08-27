@@ -48,8 +48,9 @@ async function membership(surface: Locator): Promise<readonly number[]> {
 }
 
 async function openLayers(window: Page): Promise<Locator> {
-  await window.getByTestId("layers-toggle").click();
   const panel = window.getByTestId("layers-panel");
+  const toggle = window.getByTestId("layers-toggle");
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
   await expect(panel).toBeVisible();
   return panel;
 }
@@ -78,6 +79,8 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     await drawStroke(window, 260);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     expect(await membership(surface)).toEqual([1]);
+    await expect(panel).toHaveCount(0);
+    await openLayers(window);
 
     // 3-4. Add Layer 2; it becomes active and sits above Layer 1.
     await panel.getByTestId("layers-add").click();
@@ -99,8 +102,9 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     await expect(surface).toHaveAttribute("data-document-object-count", "3");
     expect(await membership(surface)).toEqual([1, 2]);
 
-    // The panel survives tool switches and drawing.
-    await expect(panel).toBeVisible();
+    // Canvas gestures dismiss the panel without swallowing either creation.
+    await expect(panel).toHaveCount(0);
+    await openLayers(window);
 
     const orderWithLayerTwo = await renderedOrder(surface);
     expect(orderWithLayerTwo).toHaveLength(3);
@@ -128,6 +132,7 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     expect(await objectCount(surface)).toBe(3);
 
     // 8. Undo restores visibility.
+    await openLayers(window);
     await window.keyboard.press("Control+z");
     await expect(panel.getByTestId("layer-visibility-layer-2")).toHaveAttribute(
       "aria-pressed",
@@ -159,6 +164,7 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     expect(await historyDepth(surface)).toBe(historyBeforeBlockedEdits);
     expect(await objectCount(surface)).toBe(objectsBeforeBlockedEdits);
 
+    await openLayers(window);
     await panel.getByTestId("layer-lock-layer-2").click();
     await expect(panel.getByTestId("layer-lock-layer-2")).toHaveAttribute("aria-pressed", "false");
 
@@ -190,9 +196,9 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     await expect(surface).not.toHaveAttribute("data-selected-object-id", "");
     expect(await renderedOrder(surface)).toHaveLength(3);
 
-    await window.keyboard.press("Control+z");
+    await openLayers(window);
+    await window.getByRole("button", { name: "Undo", exact: true }).click();
     await expect(panel.getByTestId("layer-opacity-value-layer-2")).toHaveText("100%");
-    await panel.getByTestId("layer-options-layer-2").click();
     await expect(panel.getByTestId("layer-options-panel-layer-2")).toHaveCount(0);
 
     // 14-15. Reordering layers changes overlapping visual order and undoes exactly.
@@ -235,6 +241,7 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     expect((await membership(surface))[0]).toBe((membershipBeforePaste[0] ?? 0) + 2);
 
     // 20. Active-layer switching records zero History.
+    await openLayers(window);
     const historyBeforeActiveSwitch = await historyDepth(surface);
     await panel.getByTestId("layer-row-button-layer-2").click();
     await panel.getByTestId("layer-row-button-layer-1").click();
@@ -247,6 +254,7 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     const countBeforeDelete = await objectCount(surface);
     const membershipBeforeDelete = await membership(surface);
     const historyBeforeDelete = await historyDepth(surface);
+    await panel.getByTestId("layer-options-layer-2").click();
     await expect(panel.getByTestId("layer-options-panel-layer-2")).toBeVisible();
     await panel.getByTestId("layer-delete-layer-2").click();
     await expect(surface).toHaveAttribute("data-layer-count", "1");

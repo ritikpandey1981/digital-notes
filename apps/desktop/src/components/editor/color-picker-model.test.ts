@@ -5,6 +5,7 @@ import {
   favoriteCollectionDisplayPolicy,
   hsvFromSvPointer,
   isFavoriteColor,
+  pickerPlacementOverlapsZone,
   quickColorRailSupportsTool,
   quickColorRailSwatchCount,
   resolveColorPickerMaximumHeight,
@@ -76,6 +77,30 @@ describe("Phase 18B color picker model", () => {
     expectInside(picker, { left: 12, top: 60, width: 936, height: 568 });
     expect(overlapArea(picker, viewportControls)).toBe(0);
     expect(overlapArea(picker, rail)).toBe(0);
+  });
+
+  it("identifies the minimum-window Page Navigator as the deterministic yield surface", () => {
+    const zones = collectZones([
+      hardZone("page-navigator", { left: 403.5, top: 68, width: 155, height: 104 }),
+      hardZone("layers-panel", { left: 676, top: 68, width: 270, height: 520 }),
+    ]);
+
+    expect(
+      pickerPlacementOverlapsZone(
+        { left: 83.5, top: 60 },
+        { width: 332, height: 520 },
+        zones,
+        "page-navigator",
+      ),
+    ).toBe(true);
+    expect(
+      pickerPlacementOverlapsZone(
+        { left: 330, top: 180 },
+        { width: 332, height: 400 },
+        zones,
+        "page-navigator",
+      ),
+    ).toBe(false);
   });
 
   it.each([

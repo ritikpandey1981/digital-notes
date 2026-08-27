@@ -346,7 +346,7 @@ export function duplicatePage(page: Page, identity: PageIdentityFactory): Page {
   });
 }
 
-/** Creates an empty page that inherits presentation from an existing page. */
+/** Creates an empty blank page that inherits only physical geometry from an existing page. */
 export function createPageLike(
   source: Page,
   identity: Pick<PageIdentityFactory, "createPageId" | "createLayerId">,
@@ -354,7 +354,7 @@ export function createPageLike(
   return new Page({
     id: identity.createPageId(),
     geometry: source.geometry,
-    paper: source.paper,
+    paper: DEFAULT_PAGE_PAPER,
     content: new PageDocument({
       layers: [createDefaultLayer(identity.createLayerId())],
       objects: ObjectCollection.empty(),

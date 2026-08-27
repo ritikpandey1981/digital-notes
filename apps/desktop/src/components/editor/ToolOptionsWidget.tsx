@@ -76,10 +76,8 @@ export function ToolOptionsWidget({
   const motionPreset = useFloatingSurfaceMotion();
   const paletteVisible = descriptor !== null;
   const paletteRef = useRef<HTMLElement | null>(null);
-  // Tool settings belong to the tool, not to the pointer: drawing, opening
-  // Layers, or opening Pages must never take them away mid-sketch.
   const floatingWidgetScope = useFloatingWidgetDismissal(paletteVisible, onDismiss, paletteRef, {
-    outsidePointerDismissal: "ignore",
+    outsidePointerDismissal: "canvas",
   });
   useLayoutEffect(() => {
     renderCountRef.current += 1;

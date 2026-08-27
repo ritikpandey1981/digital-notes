@@ -65,6 +65,7 @@ test("Phase 20 delivers multi-selection, marquee, group transform, and selection
     for (let index = 0; index < 3; index += 1) await stroke(window, 260 + index * 70);
     await window.getByRole("button", { name: "Shapes", exact: true }).click();
     await window.getByRole("button", { name: "Rectangle", exact: true }).click();
+    await expect(surface).toHaveAttribute("data-active-editor-tool", "rectangle");
     await window.mouse.move(600, 500);
     await window.mouse.down();
     await window.mouse.move(780, 580, { steps: 6 });

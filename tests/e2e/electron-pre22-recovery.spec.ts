@@ -162,12 +162,16 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     }
     expect(await surface.getAttribute("data-history-undo-depth")).toBe(historyBeforeToolSwitching);
 
-    // 7. Tool settings survive drawing and unrelated panels.
+    // 7. A canvas gesture dismisses Tool Options without swallowing the stroke.
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     await openToolOptions(window, "Pen");
     await drawOnPage(window, 0.3);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
-    await expect(window.getByTestId("context-tool-palette")).toBeVisible();
+    await expect(window.getByTestId("context-tool-palette")).toHaveCount(0);
+
+    // Unrelated controls do not act as canvas dismissal, so nested surfaces
+    // still establish a deterministic Escape order.
+    await openToolOptions(window, "Pen");
     await window.getByTestId("layers-toggle").click();
     await expect(window.getByTestId("layers-panel")).toBeVisible();
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
@@ -185,11 +189,18 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     await window.keyboard.press("Escape");
     await expect(window.getByTestId("context-tool-palette")).toHaveCount(0);
 
-    // 9. Escape then reaches the canvas: selection clears without History.
+    // 9. A first selection click also passes through canvas-only dismissal.
     await window.getByRole("button", { name: "Select", exact: true }).click();
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("layers-panel")).toBeVisible();
     const strokePoint = await pagePoint(window, 0.42, 0.33);
+    const historyBeforeSelection = await surface.getAttribute("data-history-undo-depth");
     await window.mouse.click(strokePoint.x, strokePoint.y);
+    await expect(window.getByTestId("layers-panel")).toHaveCount(0);
     await expect(surface).not.toHaveAttribute("data-selected-object-id", "");
+    expect(await surface.getAttribute("data-history-undo-depth")).toBe(historyBeforeSelection);
+
+    // Escape then reaches the canvas: selection clears without History.
     const historyBeforeEscape = await surface.getAttribute("data-history-undo-depth");
     await window.keyboard.press("Escape");
     await expect(surface).toHaveAttribute("data-selected-object-id", "");
@@ -211,7 +222,30 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     );
     expect(await surface.getAttribute("data-history-undo-depth")).toBe(historyBeforeEscape);
 
-    // 11. A press that starts off the paper creates nothing.
+    // 11. A first Shape drag survives Page Settings dismissal and commits once.
+    await window.getByRole("button", { name: "Shapes", exact: true }).click();
+    await window.getByRole("button", { name: "Rectangle", exact: true }).click();
+    await expect(surface).toHaveAttribute("data-active-editor-tool", "rectangle");
+    await window.getByTestId("page-settings-toggle").click();
+    await expect(window.getByTestId("page-settings")).toBeVisible();
+    const shapeStart = await pagePoint(window, 0.18, 0.68);
+    const shapeEnd = await pagePoint(window, 0.34, 0.82);
+    const objectsBeforeShape = Number(await surface.getAttribute("data-document-object-count"));
+    const historyBeforeShape = Number(await surface.getAttribute("data-history-undo-depth"));
+    await window.mouse.move(shapeStart.x, shapeStart.y);
+    await window.mouse.down();
+    await window.mouse.move(shapeEnd.x, shapeEnd.y, { steps: 8 });
+    await window.mouse.up();
+    await expect(window.getByTestId("page-settings")).toHaveCount(0);
+    await expect(surface).toHaveAttribute(
+      "data-document-object-count",
+      String(objectsBeforeShape + 1),
+    );
+    expect(Number(await surface.getAttribute("data-history-undo-depth"))).toBe(
+      historyBeforeShape + 1,
+    );
+
+    // 12. A press that starts off the paper creates nothing.
     await window.getByRole("button", { name: "Pen", exact: true }).click();
     const objectsBeforeOffPage = await surface.getAttribute("data-document-object-count");
     const hostBounds = await window.getByTestId("canvas-host").boundingBox();
@@ -268,6 +302,8 @@ test("Pre-22 recovery refuses creation on hidden and locked active Layers", asyn
       expect(await surface.getAttribute("data-document-object-count")).toBe(objectsBefore);
       expect(await surface.getAttribute("data-history-undo-depth")).toBe(historyBefore);
 
+      await window.getByTestId("layers-toggle").click();
+      await expect(window.getByTestId("layers-panel")).toBeVisible();
       await window.getByTestId(control).click();
       await window.waitForTimeout(200);
       await window.getByTestId("layers-toggle").click();

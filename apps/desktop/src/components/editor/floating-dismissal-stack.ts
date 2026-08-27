@@ -87,6 +87,11 @@ export function pushDismissal(scopeId: string, escape: () => void): () => void {
   };
 }
 
+/** True only for the surface that currently owns the next dismissal action. */
+export function isTopDismissalScope(scopeId: string): boolean {
+  return stack.at(-1)?.scopeId === scopeId;
+}
+
 /**
  * Registers the canvas-level Escape handler beneath every floating surface.
  *

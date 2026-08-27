@@ -150,21 +150,17 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await expect(palette).toBeVisible();
     const beforePageGesture = Number(await surface.getAttribute("data-document-object-count"));
     await drawGesture(window, mapping.pageToScreen(520, 420), mapping.pageToScreen(570, 440));
-    // Tool settings are a persistent workspace panel: drawing commits the
-    // stroke and leaves the panel in place rather than dismissing it.
-    await expect(palette).toBeVisible();
+    // The first Page gesture dismisses settings and still commits the stroke.
+    await expect(palette).toHaveCount(0);
     await expect(surface).toHaveAttribute(
       "data-document-object-count",
       String(beforePageGesture + 1),
     );
 
+    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
-    // Tool settings are a persistent workspace panel. Pointer activity on the
-    // workspace leaves them in place; only Escape or the dock's options
-    // affordance closes them.
+    // Outside-page workspace is dismissal-only and does not alter artwork.
     await window.mouse.click(mapping.canvasBounds.x + 4, mapping.canvasBounds.y + 200);
-    await expect(palette).toBeVisible();
-    await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
 
     await expect(window.getByText("Folio", { exact: true })).toHaveCSS("user-select", "none");

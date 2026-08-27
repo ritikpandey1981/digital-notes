@@ -3,6 +3,7 @@ import {
   candidatesAroundRect,
   hardZone,
   insetRect,
+  intersectionArea,
   resolveOccupiedAwarePlacement,
   unionRects,
   workspaceFallbackCandidates,
@@ -26,6 +27,18 @@ export interface PickerPlacementConstraints {
   readonly bounds?: PickerRect;
   /** Measured editor chrome and artwork, classified hard or soft. */
   readonly zones?: readonly OccupiedZone[];
+}
+
+/** True when a resolved surface still covers one named occupied zone. */
+export function pickerPlacementOverlapsZone(
+  placement: Pick<PickerPlacement, "left" | "top">,
+  picker: Readonly<{ width: number; height: number }>,
+  zones: readonly OccupiedZone[],
+  zoneId: string,
+): boolean {
+  const zone = zones.find(({ id }) => id === zoneId);
+  if (zone === undefined) return false;
+  return intersectionArea({ ...placement, ...picker }, zone.rect) > 0;
 }
 
 export interface RgbDraft {

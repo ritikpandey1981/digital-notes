@@ -461,6 +461,21 @@ export class SelectionOverlayRenderer {
     this.canvas.dataset.selectionState = this.target === null ? "empty" : "selected";
     this.canvas.dataset.selectionHandles = this.target === null ? "hidden" : "visible";
     this.canvas.dataset.selectedObjectId = this.target?.objectId ?? "";
+    const orientation = this.target?.orientation;
+    if (orientation === undefined) {
+      this.canvas.dataset.selectionFrameKind = this.target === null ? "empty" : "axis-aligned";
+      this.canvas.dataset.selectionFrameCorners = "[]";
+      this.canvas.dataset.selectionRotationHandle = "";
+    } else {
+      const frame = orientedFrameGeometry(
+        orientation,
+        this.style.padding,
+        this.viewport.camera.zoom,
+      );
+      this.canvas.dataset.selectionFrameKind = "oriented";
+      this.canvas.dataset.selectionFrameCorners = JSON.stringify(frame.corners);
+      this.canvas.dataset.selectionRotationHandle = JSON.stringify(frame.rotationHandle);
+    }
     this.canvas.dataset.selectionRenderCount = String(this.renderCountValue);
     this.canvas.dataset.selectionInvalidationCount = String(this.invalidationCountValue);
   }
