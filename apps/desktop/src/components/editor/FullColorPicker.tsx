@@ -6,6 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@folio/ui";
+import { motion } from "framer-motion";
 import { Check, ChevronDown, Pipette, Star } from "lucide-react";
 import {
   useCallback,
@@ -32,6 +33,15 @@ import {
   type PickerRect,
   type RgbDraft,
 } from "./color-picker-model";
+import {
+  collectEditorOccupiedZones,
+  measureSurfaceRect,
+  OCCUPIED_SURFACE_SELECTOR,
+} from "./editor-workspace-zones";
+import {
+  floatingSurfaceMotion,
+  useFloatingSurfaceMotion,
+} from "../../motion/floating-surface-motion";
 import type { ColorPickerSessionSnapshot, ColorPreviewSchedule } from "./useColorPickerSession";
 import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
 
@@ -83,6 +93,7 @@ export function FullColorPicker({
   onCommit,
   onCancel,
 }: FullColorPickerProps) {
+  const motionPreset = useFloatingSurfaceMotion();
   const pickerRef = useRef<HTMLElement | null>(null);
   const eyedropperButtonRef = useRef<HTMLButtonElement | null>(null);
   const [presentation, setPresentation] = useState(() => ({
@@ -129,19 +140,11 @@ export function FullColorPicker({
       height: window.innerHeight,
     },
   );
-  const viewportControls = document.querySelector<HTMLElement>('[data-testid="viewport-controls"]');
-  const viewportControlBounds = rectFromElement(viewportControls);
-  const quickColorRail = document.querySelector<HTMLElement>('[data-testid="quick-color-rail"]');
-  const quickColorRailBounds = rectFromElement(quickColorRail);
-  const toolDock = document.querySelector<HTMLElement>("[data-tool-dock-layout]");
-  const toolDockBounds = rectFromElement(toolDock);
-  const layersPanel = document.querySelector<HTMLElement>('[data-testid="layers-panel"]');
-  const layersPanelBounds = rectFromElement(layersPanel);
-  const pageNavigator = document.querySelector<HTMLElement>('[data-testid="page-navigator"]');
-  const pageNavigatorBounds = rectFromElement(pageNavigator);
-  const pageSettings = document.querySelector<HTMLElement>('[data-testid="page-settings"]');
-  const pageSettingsBounds = rectFromElement(pageSettings);
-  const avoidRect =
+  const viewportControlBounds = measureSurfaceRect(
+    document.querySelector('[data-testid="viewport-controls"]'),
+  );
+  const toolDockBounds = measureSurfaceRect(document.querySelector("[data-tool-dock-layout]"));
+  const artworkAvoidRect =
     workspaceAvoidRect === undefined
       ? undefined
       : {
@@ -150,6 +153,12 @@ export function FullColorPicker({
           width: workspaceAvoidRect.width,
           height: workspaceAvoidRect.height,
         };
+  // One shared measurement of every editor surface, including the selection
+  // toolbar at its real expanded size, replaces the per-surface lists this
+  // component used to keep in sync by hand.
+  const zones = collectEditorOccupiedZones({
+    soft: [{ id: "selected-artwork", rect: artworkAvoidRect }],
+  });
   const maximumPickerHeight = resolveColorPickerMaximumHeight(
     workspaceBounds,
     viewportControlBounds,
@@ -168,24 +177,13 @@ export function FullColorPicker({
     placementPickerSize,
     { width: window.innerWidth, height: window.innerHeight },
     session.source,
-    {
-      bounds: placementBounds,
-      avoidRect,
-      occupiedRects: [
-        viewportControlBounds,
-        quickColorRailBounds,
-        toolDockBounds,
-        layersPanelBounds,
-        pageNavigatorBounds,
-        pageSettingsBounds,
-      ].filter((rect): rect is PickerRect => rect !== undefined),
-    },
+    { bounds: placementBounds, zones },
   );
-  const style: CSSProperties = {
+  const style = {
     left: placement.left,
     top: placement.top,
     maxHeight: maximumPickerHeight,
-  };
+  } satisfies CSSProperties;
   const ownerScopes = [resolvedFloatingScope, session.ownerScope].filter(Boolean).join(" ");
   const currentIsFavorite = isFavoriteColor(colors.favoriteColors, presentation.currentColor);
   const previewHex = useCallback(
@@ -228,16 +226,17 @@ export function FullColorPicker({
     const anchorObserver = new ResizeObserver(measure);
     anchorObserver.observe(positioningAnchor);
     if (workspace !== null) anchorObserver.observe(workspace);
-    if (viewportControls !== null) anchorObserver.observe(viewportControls);
-    if (quickColorRail !== null) anchorObserver.observe(quickColorRail);
-    if (toolDock !== null) anchorObserver.observe(toolDock);
+    // Reposition when any occupied surface changes shape, not only the anchor.
+    for (const surface of document.querySelectorAll(OCCUPIED_SURFACE_SELECTOR)) {
+      anchorObserver.observe(surface);
+    }
     window.addEventListener("resize", measure);
     return () => {
       observer.disconnect();
       anchorObserver.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [positioningAnchor, quickColorRail, session.anchor, toolDock, viewportControls, workspace]);
+  }, [positioningAnchor, session.anchor, workspace]);
 
   useEffect(() => {
     addFloatingOwner(session.anchor, floatingScope);
@@ -283,9 +282,20 @@ export function FullColorPicker({
     previouslyActiveRef.current = eyedropperActive;
   }, [eyedropperActive]);
 
+  const entrance = floatingSurfaceMotion(
+    motionPreset,
+    placement.side === "left" ? "right" : "left",
+  );
   return (
-    <section
+    // Entrance only: the picker is unmounted by its owner on commit, and an
+    // exit animation on a surface this large is exactly what starts swallowing
+    // the first canvas press after it closes.
+    <motion.section
       ref={pickerRef}
+      initial={entrance.initial}
+      animate={entrance.animate}
+      transition={entrance.transition}
+      data-motion-preset={entrance["data-motion-preset"]}
       className="folio-floating-surface fixed z-40 flex w-[332px] max-w-[calc(100vw-24px)] flex-col overflow-hidden"
       style={style}
       role="dialog"
@@ -296,10 +306,11 @@ export function FullColorPicker({
       data-picker-source={session.source}
       data-picker-side={placement.side}
       data-picker-maximum-height={maximumPickerHeight}
-      data-picker-avoid-left={avoidRect?.left}
-      data-picker-avoid-top={avoidRect?.top}
-      data-picker-avoid-width={avoidRect?.width}
-      data-picker-avoid-height={avoidRect?.height}
+      data-picker-avoid-left={artworkAvoidRect?.left}
+      data-picker-avoid-top={artworkAvoidRect?.top}
+      data-picker-avoid-width={artworkAvoidRect?.width}
+      data-picker-avoid-height={artworkAvoidRect?.height}
+      data-picker-occupied-zones={zones.map(({ id }) => id).join(" ")}
       data-floating-widget-scope={resolvedFloatingScope}
       data-floating-widget-owner={session.ownerScope}
       data-floating-surface="folio"
@@ -392,7 +403,7 @@ export function FullColorPicker({
         <ColorCollection
           label="Recent"
           kind="recent"
-          emptyLabel="Colors appear after artwork is committed"
+          emptyLabel="Colors you draw with appear here"
           colors={colors.recentColors}
           currentColor={presentation.currentColor}
           onSelect={(color) => previewHex(color)}
@@ -470,7 +481,7 @@ export function FullColorPicker({
           onSelect={(color) => previewHex(color)}
         />
       </div>
-    </section>
+    </motion.section>
   );
 }
 
@@ -812,10 +823,6 @@ function ColorCollection({
 function rgbDraftFromHex(color: string): RgbDraft {
   const rgb = hexToRgb(color);
   return { red: String(rgb.red), green: String(rgb.green), blue: String(rgb.blue) };
-}
-
-function rectFromElement(element: HTMLElement | null): PickerRect | undefined {
-  return element === null ? undefined : rectFromDom(element.getBoundingClientRect());
 }
 
 function rectFromDom(

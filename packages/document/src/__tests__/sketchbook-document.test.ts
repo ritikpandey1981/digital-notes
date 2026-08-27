@@ -119,10 +119,10 @@ describe("page paper", () => {
 });
 
 describe("Page", () => {
-  it("defaults to A4 portrait blank paper with one empty layer", () => {
+  it("defaults to A4 landscape blank paper with one empty layer", () => {
     const page = new Page({ id: "page-1" });
     expect(page.geometry).toEqual(DEFAULT_PAGE_GEOMETRY);
-    expect(page.orientation).toBe("portrait");
+    expect(page.orientation).toBe("landscape");
     expect(page.paper.type).toBe("blank");
     expect(page.content.layerCount).toBe(1);
     expect(page.objectCount).toBe(0);

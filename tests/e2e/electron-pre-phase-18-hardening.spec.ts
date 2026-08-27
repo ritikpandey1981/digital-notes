@@ -29,7 +29,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await expect(surface).toHaveAttribute("data-selected-object-type", "rectangle");
     const original = await selectedVectorStyle(surface);
 
-    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke width" }).click();
     const widthSlider = shapeToolbar.getByRole("slider", { name: "Width" });
     await emitRangeGesture(widthSlider, ["3", "5", "8", "12"]);
     await expect(surface).toHaveAttribute("data-history-undo-depth", "2");
@@ -39,7 +39,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await window.getByRole("button", { name: "Redo", exact: true }).click();
     await expect.poll(async () => (await selectedVectorStyle(surface)).width).toBe(12);
 
-    await shapeToolbar.getByRole("button", { name: "Shape stroke opacity" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke opacity" }).click();
     const opacitySlider = shapeToolbar.getByRole("slider", { name: "Opacity" });
     await emitRangeGesture(opacitySlider, ["0.9", "0.7", "0.5", "0.35"]);
     await expect(surface).toHaveAttribute("data-history-undo-depth", "3");
@@ -49,10 +49,10 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await window.getByRole("button", { name: "Redo", exact: true }).click();
     await expect.poll(async () => (await selectedVectorStyle(surface)).opacity).toBe(0.35);
 
-    await shapeToolbar.getByLabel("Shape stroke color").click();
+    await shapeToolbar.getByLabel("Stroke color").click();
     const colorInput = window.getByRole("textbox", { name: "Hex color" });
     await emitColorGesture(colorInput, ["#dc2626", "#16a34a", "#2563eb", "#9333ea"]);
-    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke width" }).click();
     await window.keyboard.press("Escape");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "4");
     await expect.poll(async () => (await selectedVectorStyle(surface)).color).toBe("#9333ea");
@@ -61,7 +61,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await window.getByRole("button", { name: "Redo", exact: true }).click();
     await expect.poll(async () => (await selectedVectorStyle(surface)).color).toBe("#9333ea");
 
-    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke width" }).click();
     const cancelSlider = shapeToolbar.getByRole("slider", { name: "Width" });
     const depthBeforeCancel = await historyDepth(surface);
     await cancelSlider.focus();
@@ -72,7 +72,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await expect.poll(async () => (await selectedVectorStyle(surface)).width).toBe(12);
     expect(await historyDepth(surface)).toBe(depthBeforeCancel);
 
-    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke width" }).click();
     const widthPanel = shapeToolbar.getByRole("group", { name: "Width options" });
     const numericWidth = widthPanel.getByRole("spinbutton", { name: "Width value" });
     const depthBeforeNumeric = await historyDepth(surface);
@@ -97,7 +97,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await surface.evaluate((element) => {
       element.setAttribute("data-lifecycle-token", "preserve-session");
     });
-    await shapeToolbar.getByRole("button", { name: "Duplicate shape" }).focus();
+    await shapeToolbar.getByRole("button", { name: "Duplicate" }).focus();
     await window.keyboard.press("Control+C");
     await expect(surface).toHaveAttribute("data-clipboard-object-count", "1");
     const lifecycleDepth = await historyDepth(surface);
@@ -150,21 +150,22 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await expect(palette).toBeVisible();
     const beforePageGesture = Number(await surface.getAttribute("data-document-object-count"));
     await drawGesture(window, mapping.pageToScreen(520, 420), mapping.pageToScreen(570, 440));
-    await expect(palette).toHaveCount(0);
+    // Tool settings are a persistent workspace panel: drawing commits the
+    // stroke and leaves the panel in place rather than dismissing it.
+    await expect(palette).toBeVisible();
     await expect(surface).toHaveAttribute(
       "data-document-object-count",
       String(beforePageGesture + 1),
     );
 
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
-    const countBeforeWorkspaceClick = await surface.getAttribute("data-document-object-count");
+    // Tool settings are a persistent workspace panel. Pointer activity on the
+    // workspace leaves them in place; only Escape or the dock's options
+    // affordance closes them.
     await window.mouse.click(mapping.canvasBounds.x + 4, mapping.canvasBounds.y + 200);
+    await expect(palette).toBeVisible();
+    await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
-    await expect(surface).toHaveAttribute(
-      "data-document-object-count",
-      countBeforeWorkspaceClick ?? "",
-    );
 
     await expect(window.getByText("Folio", { exact: true })).toHaveCSS("user-select", "none");
     await toolDock.getByRole("button", { name: "Pen", exact: true }).click();

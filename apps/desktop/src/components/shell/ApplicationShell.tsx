@@ -34,7 +34,7 @@ function ApplicationShellContent() {
   const [pageNavigatorOpen, setPageNavigatorOpen] = useState(false);
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false);
   // Page Settings and the Layers panel share the top-right slot, so opening one
-  // closes the other. The bottom page filmstrip coexists with both.
+  // closes the other. The page navigator coexists with both.
   const toggleLayersPanel = useCallback(() => {
     setLayersPanelOpen((open) => {
       if (!open) setPageSettingsOpen(false);
@@ -47,6 +47,12 @@ function ApplicationShellContent() {
   const openPageSettings = useCallback(() => {
     setLayersPanelOpen(false);
     setPageSettingsOpen(true);
+  }, []);
+  const togglePageSettings = useCallback(() => {
+    setPageSettingsOpen((open) => {
+      if (!open) setLayersPanelOpen(false);
+      return !open;
+    });
   }, []);
   const dismissPageSettings = useCallback(() => setPageSettingsOpen(false), []);
   const learnViewportNavigation = useCallback(() => setNavigationTeachingLearned(true), []);
@@ -67,16 +73,22 @@ function ApplicationShellContent() {
   const redo = useCallback(() => historyActionsRef.current?.redo(), []);
 
   return (
-    <div className="folio-editor-chrome-selection flex h-screen min-h-[640px] flex-col overflow-hidden bg-folio-workspace text-folio-ink">
+    // The shell always fills the real content area. It never asserts a minimum
+    // height of its own, so the workspace can never overflow into an
+    // unscrollable strip when the OS frame eats part of the window.
+    <div
+      className="folio-editor-chrome-selection flex h-screen flex-col overflow-hidden bg-folio-workspace text-folio-ink"
+      data-testid="editor-shell"
+    >
       <SketchbookTopBar
         canUndo={historyAvailability.canUndo}
         canRedo={historyAvailability.canRedo}
         onUndo={undo}
         onRedo={redo}
-        layersPanelOpen={layersPanelOpen}
-        onToggleLayersPanel={toggleLayersPanel}
         pageNavigatorOpen={pageNavigatorOpen}
         onTogglePageNavigator={togglePageNavigator}
+        pageSettingsOpen={pageSettingsOpen}
+        onTogglePageSettings={togglePageSettings}
       />
       <main
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-folio-workspace"
@@ -85,6 +97,7 @@ function ApplicationShellContent() {
       >
         <EditorWorkspace
           layersPanelOpen={layersPanelOpen}
+          onToggleLayersPanel={toggleLayersPanel}
           onDismissLayersPanel={dismissLayersPanel}
           pageNavigatorOpen={pageNavigatorOpen}
           onDismissPageNavigator={dismissPageNavigator}
@@ -95,6 +108,8 @@ function ApplicationShellContent() {
           activeShape={editorWorkspace.activeShape}
           armedShape={editorWorkspace.armedShape}
           activeFloatingWidget={editorWorkspace.activeFloatingWidget}
+          activeToolHasOptions={editorWorkspace.activeToolHasOptions}
+          onToggleToolOptions={editorWorkspace.toggleToolOptions}
           onSelectTool={editorWorkspace.selectTool}
           onSelectShape={editorWorkspace.selectShape}
           drawingStyle={editorWorkspace.drawingStyle}

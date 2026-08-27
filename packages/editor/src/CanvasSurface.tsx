@@ -4,6 +4,7 @@ import {
   isVectorObject,
   type EllipseGeometry,
   type LineGeometry,
+  type ObjectBounds,
   orientPageGeometry,
   Page,
   PageDocument,
@@ -19,6 +20,9 @@ import type { HistoryNotification, IHistoryController, IHistoryState } from "@fo
 import {
   createResolvedBrushSnapshot,
   createStrokeVisual,
+  getStrokeRenderedBounds,
+  getStrokeTransformPivot,
+  getStrokeVisualLocalBounds,
   PointerInputController,
   StrokeRenderer,
   type ResolvedBrushSnapshot,
@@ -37,11 +41,14 @@ import {
 } from "@folio/manipulation";
 import {
   CanvasController,
+  orientedFrameGeometry,
   SelectionOverlayRenderer,
   TransformPreviewRenderer,
+  type SelectionOverlayOrientation,
   type CanvasBounds,
   type CanvasControllerSnapshot,
   type Point,
+  type Rect,
   type RenderPage,
   type RenderTheme,
   type Viewport,
@@ -65,6 +72,12 @@ import { SELECTION_HIGHLIGHT_COLOR, SELECTION_OUTLINE_COLOR } from "./selection-
 import { committedArtworkColor, committedVectorRecolor } from "./artwork-color-usage";
 import { hexToRgb } from "./foundation/color-conversion";
 import { EditorClipboard } from "./EditorClipboard";
+import {
+  LOUPE_DIAMETER,
+  resolveLoupeCenterIndicator,
+  resolveLoupePlacement,
+  resolveLoupeSourceRect,
+} from "./EyedropperLoupe";
 import {
   editorViewportWheelZoom,
   nextEditorViewportZoom,
@@ -120,7 +133,11 @@ import {
   selectionManipulationCursorCss,
   type SelectionManipulationCursor,
 } from "./SelectionManipulationTarget";
-import { normalizeRotationDegrees, snapRotationPointer } from "./RotationPresentation";
+import {
+  formatRotationAngleLabel,
+  normalizeRotationDegrees,
+  snapRotationPointer,
+} from "./RotationPresentation";
 import {
   createVectorShapeDraft,
   type ShapeCreationKind,
@@ -161,6 +178,16 @@ export interface CanvasDrawingStyle {
 export interface ObjectLifecycleActions {
   readonly deleteSelection: () => boolean;
   readonly duplicateSelection: () => boolean;
+}
+
+/** Canvas-level Escape handling beneath every floating workspace surface. */
+export interface EditorEscapeActions {
+  /**
+   * Cancels the most local canvas interaction and reports whether one was
+   * consumed. Ordering is exact-cancel first, then selection clearing, so an
+   * idle canvas leaves Escape untouched. Never produces document History.
+   */
+  readonly escape: () => boolean;
 }
 
 export interface ShapeStylePatch {
@@ -304,6 +331,10 @@ export interface CanvasSurfaceProps {
   readonly onHistoryControllerReady?: (controller: IHistoryController<SketchbookDocument>) => void;
   /** Receives session-bound delete/duplicate actions and null during cleanup. */
   readonly onObjectLifecycleActionsReady?: (actions: ObjectLifecycleActions | null) => void;
+  /** Receives the session-bound canvas Escape handler and null during cleanup. */
+  readonly onEscapeActionsReady?: (actions: EditorEscapeActions | null) => void;
+  /** Reports a creation attempt refused because the active Layer is hidden or locked. */
+  readonly onActiveLayerRefusal?: (reason: "hidden" | "locked") => void;
   /** Receives session-bound vector appearance actions and null during cleanup. */
   readonly onShapeEditingActionsReady?: (actions: ShapeEditingActions | null) => void;
   /** Receives presentation data for one selected vector object, or null. */
@@ -393,7 +424,20 @@ function manipulationKindForMode(mode: CanvasInteractionMode): ManipulationKind 
   }
 }
 
+/** Screen-stable presentation padding shared by every selection frame. */
+const SELECTION_FRAME_PADDING_PIXELS = 4;
+const SELECTION_HANDLE_HIT_RADIUS_PIXELS = 12;
+const ROTATION_HANDLE_OFFSET_PIXELS = 28;
 const DUPLICATE_OFFSET = Object.freeze({ x: 10, y: 10 });
+
+/** Interaction modes that deposit new artwork onto the active Layer. */
+const CREATION_INTERACTION_MODES: ReadonlySet<CanvasInteractionMode> = new Set([
+  "ink",
+  "highlighter",
+  "line",
+  "rectangle",
+  "ellipse",
+] satisfies readonly CanvasInteractionMode[]);
 
 function isLineObject(
   object: PageObject | undefined,
@@ -426,6 +470,8 @@ export function CanvasSurface({
   onToolRegistryReady,
   onHistoryControllerReady,
   onObjectLifecycleActionsReady,
+  onEscapeActionsReady,
+  onActiveLayerRefusal,
   onShapeEditingActionsReady,
   onShapeEditingChange,
   onLayerActionsReady,
@@ -462,6 +508,7 @@ export function CanvasSurface({
   const releaseManipulationPointerCaptureRef = useRef<(() => void) | null>(null);
   const resetManipulationCursorRef = useRef<(() => void) | null>(null);
   const resetVectorHoverRef = useRef<(() => void) | null>(null);
+  const hideLoupeRef = useRef<(() => void) | null>(null);
   const cancelContinuousStyleEditRef = useRef<(() => boolean) | null>(null);
   const controllerReadyRef = useRef(onControllerReady);
   const selectionControllerReadyRef = useRef(onSelectionControllerReady);
@@ -477,6 +524,8 @@ export function CanvasSurface({
   const artworkSamplingActiveRef = useRef(artworkSamplingActive);
   const artworkSampleRef = useRef(onArtworkSample);
   const objectLifecycleActionsReadyRef = useRef(onObjectLifecycleActionsReady);
+  const escapeActionsReadyRef = useRef(onEscapeActionsReady);
+  const activeLayerRefusalRef = useRef(onActiveLayerRefusal);
   const shapeEditingActionsReadyRef = useRef(onShapeEditingActionsReady);
   const shapeEditingChangeRef = useRef(onShapeEditingChange);
   const layerActionsReadyRef = useRef(onLayerActionsReady);
@@ -509,7 +558,12 @@ export function CanvasSurface({
   useLayoutEffect(() => {
     artworkSamplingActiveRef.current = artworkSamplingActive;
     artworkSampleRef.current = onArtworkSample;
-    if (!artworkSamplingActive) return;
+    // One exit covers every way out: a taken sample, Escape, or the picker
+    // closing all clear the flag, and the loupe leaves with it.
+    if (!artworkSamplingActive) {
+      hideLoupeRef.current?.();
+      return;
+    }
     manipulationControllerRef.current?.cancelManipulation();
     releaseManipulationPointerCaptureRef.current?.();
     resetManipulationCursorRef.current?.();
@@ -558,6 +612,14 @@ export function CanvasSurface({
   useEffect(() => {
     objectLifecycleActionsReadyRef.current = onObjectLifecycleActionsReady;
   }, [onObjectLifecycleActionsReady]);
+
+  useEffect(() => {
+    escapeActionsReadyRef.current = onEscapeActionsReady;
+  }, [onEscapeActionsReady]);
+
+  useEffect(() => {
+    activeLayerRefusalRef.current = onActiveLayerRefusal;
+  }, [onActiveLayerRefusal]);
 
   useEffect(() => {
     shapeEditingActionsReadyRef.current = onShapeEditingActionsReady;
@@ -639,6 +701,9 @@ export function CanvasSurface({
     let measurementElement: HTMLDivElement | null = null;
     let rotationIndicatorElement: HTMLDivElement | null = null;
     let rotationIndicatorFrame: number | null = null;
+    let loupeElement: HTMLDivElement | null = null;
+    let loupeFrame: number | null = null;
+    let loupePointerListeners: Array<readonly [string, EventListener]> = [];
     let manipulationController: ManipulationController<ManipulationResult> | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
@@ -672,6 +737,16 @@ export function CanvasSurface({
     let marqueeBaseIds: readonly string[] = Object.freeze([]);
     let activeLineEndpointInteraction: ActiveLineEndpointInteraction | null = null;
     let artworkSamplingPointerId: number | null = null;
+    /**
+     * Page-space region outside the page that still accepts a select press.
+     *
+     * A page resize or a transform can legitimately leave an object off the
+     * sheet. Selection coordinates are otherwise clipped to the page, which
+     * made such an object unreachable — visible, selected, and impossible to
+     * drag back. This opens exactly the selected artwork's own footprint plus
+     * its handles, so empty workspace stays inert as before.
+     */
+    let recoverableSelectionRect: Rect | null = null;
     const editorPointerListeners: Array<readonly [keyof HTMLElementEventMap, EventListener]> = [];
     const releaseManipulationPointerCapture = (): void => {
       const capture = manipulationPointerCapture;
@@ -909,14 +984,36 @@ export function CanvasSurface({
           documentSession.page.layers,
         );
         const selectionBounds = selectedGeometry?.bounds;
+        recoverableSelectionRect =
+          selectionBounds === undefined
+            ? null
+            : inflateSelectionRect(
+                selectionBounds,
+                (SELECTION_FRAME_PADDING_PIXELS +
+                  SELECTION_HANDLE_HIT_RADIUS_PIXELS +
+                  ROTATION_HANDLE_OFFSET_PIXELS) /
+                  viewport.camera.zoom,
+              );
         const selectedVector =
           selectedGeometry?.objects.length === 1 && isVectorObject(selectedObject)
+            ? selectedObject
+            : null;
+        // One selected stroke gets the same oriented frame a vector does; a
+        // group keeps the axis-aligned union Phase 20 established.
+        const singleInk =
+          selectedGeometry?.objects.length === 1 && selectedObject instanceof InkObject
             ? selectedObject
             : null;
         activeSelectionOverlayRenderer.setSelection(
           selectedObject === undefined || selectionBounds === undefined || selectedVector !== null
             ? null
-            : { objectId: selectedObject.id, bounds: selectionBounds },
+            : {
+                objectId: selectedObject.id,
+                bounds: selectionBounds,
+                ...(singleInk === null
+                  ? {}
+                  : { orientation: inkSelectionOrientation(singleInk, singleInk.transform) }),
+              },
         );
         activeVectorInteractionRenderer.setSelection(selectedVector);
         const selectionState =
@@ -1086,6 +1183,164 @@ export function CanvasSurface({
         fontVariantNumeric: "tabular-nums",
       });
       host.appendChild(activeRotationIndicator);
+      /**
+       * The Eyedropper's magnifier.
+       *
+       * Built imperatively for the same reason the brush cursor is: it follows
+       * the pointer, and routing that through React would rerender the whole
+       * workspace on every move. It is transient presentation with no History,
+       * no PageObject, and no sampling logic of its own — it magnifies the same
+       * base canvas the authoritative sampler reads, and reports the colour
+       * that sampler returns.
+       */
+      loupeElement = document.createElement("div");
+      const activeLoupe = loupeElement;
+      activeLoupe.dataset.testid = "eyedropper-loupe";
+      activeLoupe.dataset.loupeState = "hidden";
+      activeLoupe.setAttribute("aria-hidden", "true");
+      Object.assign(activeLoupe.style, {
+        position: "absolute",
+        left: "0",
+        top: "0",
+        zIndex: "6",
+        display: "none",
+        pointerEvents: "none",
+        width: `${LOUPE_DIAMETER}px`,
+        height: `${LOUPE_DIAMETER}px`,
+      });
+      const loupeCircle = document.createElement("div");
+      Object.assign(loupeCircle.style, {
+        position: "absolute",
+        inset: "0",
+        borderRadius: "50%",
+        overflow: "hidden",
+        border: "2px solid var(--folio-surface, #ffffff)",
+        boxShadow: "0 0 0 1px rgba(37, 37, 34, 0.22), 0 8px 20px rgba(0, 0, 0, 0.18)",
+        background: "var(--folio-surface, #ffffff)",
+      });
+      const loupeCanvas = document.createElement("canvas");
+      Object.assign(loupeCanvas.style, {
+        display: "block",
+        width: "100%",
+        height: "100%",
+      });
+      const loupeCenter = document.createElement("div");
+      Object.assign(loupeCenter.style, {
+        position: "absolute",
+        boxSizing: "border-box",
+        border: "1px solid rgba(255, 255, 255, 0.95)",
+        outline: "1px solid rgba(37, 37, 34, 0.65)",
+        borderRadius: "1px",
+      });
+      const loupeSwatch = document.createElement("div");
+      loupeSwatch.dataset.loupeSwatch = "";
+      Object.assign(loupeSwatch.style, {
+        position: "absolute",
+        left: "50%",
+        bottom: "-11px",
+        transform: "translateX(-50%)",
+        padding: "2px 6px",
+        borderRadius: "6px",
+        border: "1px solid var(--folio-border, rgba(37, 37, 34, 0.12))",
+        background: "color-mix(in srgb, var(--folio-surface, #ffffff) 94%, transparent)",
+        color: "var(--folio-ink, #252522)",
+        font: "650 10px/1.2 Inter, ui-sans-serif, system-ui, sans-serif",
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      });
+      loupeCircle.appendChild(loupeCanvas);
+      loupeCircle.appendChild(loupeCenter);
+      activeLoupe.appendChild(loupeCircle);
+      activeLoupe.appendChild(loupeSwatch);
+      host.appendChild(activeLoupe);
+      const hideLoupe = (): void => {
+        if (loupeFrame !== null) {
+          cancelAnimationFrame(loupeFrame);
+          loupeFrame = null;
+        }
+        activeLoupe.style.display = "none";
+        activeLoupe.dataset.loupeState = "hidden";
+        delete activeLoupe.dataset.loupeColor;
+      };
+      const renderLoupe = (clientX: number, clientY: number): void => {
+        const hostBounds = host.getBoundingClientRect();
+        const sample = artworkColorSampler.sampleClientPoint({ clientX, clientY });
+        if (sample.status !== "success") {
+          hideLoupe();
+          return;
+        }
+        const devicePixelRatio = viewport.snapshot().devicePixelRatio;
+        const source = resolveLoupeSourceRect(
+          sample.backingPoint,
+          { width: pageCanvas.width, height: pageCanvas.height },
+          devicePixelRatio,
+        );
+        const backingDiameter = Math.round(LOUPE_DIAMETER * devicePixelRatio);
+        if (loupeCanvas.width !== backingDiameter || loupeCanvas.height !== backingDiameter) {
+          loupeCanvas.width = backingDiameter;
+          loupeCanvas.height = backingDiameter;
+        }
+        const loupeContext = loupeCanvas.getContext("2d");
+        if (loupeContext === null) {
+          hideLoupe();
+          return;
+        }
+        loupeContext.imageSmoothingEnabled = false;
+        loupeContext.clearRect(0, 0, backingDiameter, backingDiameter);
+        loupeContext.drawImage(
+          pageCanvas,
+          source.x,
+          source.y,
+          source.width,
+          source.height,
+          0,
+          0,
+          backingDiameter,
+          backingDiameter,
+        );
+        const indicator = resolveLoupeCenterIndicator(sample.backingPoint, source);
+        loupeCenter.style.left = `${indicator.left}px`;
+        loupeCenter.style.top = `${indicator.top}px`;
+        loupeCenter.style.width = `${indicator.size}px`;
+        loupeCenter.style.height = `${indicator.size}px`;
+        const placement = resolveLoupePlacement(
+          { x: clientX - hostBounds.left, y: clientY - hostBounds.top },
+          { width: host.clientWidth, height: host.clientHeight },
+        );
+        activeLoupe.style.transform = `translate3d(${placement.left}px, ${placement.top}px, 0)`;
+        loupeSwatch.textContent = sample.color.toUpperCase();
+        activeLoupe.dataset.loupeColor = sample.color;
+        activeLoupe.dataset.loupeFlippedX = String(placement.flippedX);
+        activeLoupe.dataset.loupeFlippedY = String(placement.flippedY);
+        activeLoupe.dataset.loupeSourceX = String(source.x);
+        activeLoupe.dataset.loupeSourceY = String(source.y);
+        activeLoupe.style.display = "block";
+        activeLoupe.dataset.loupeState = "visible";
+      };
+      const scheduleLoupe = (clientX: number, clientY: number): void => {
+        if (loupeFrame !== null) cancelAnimationFrame(loupeFrame);
+        loupeFrame = requestAnimationFrame(() => {
+          loupeFrame = null;
+          renderLoupe(clientX, clientY);
+        });
+      };
+      hideLoupeRef.current = hideLoupe;
+      const loupePointerMove: EventListener = (nativeEvent) => {
+        if (!artworkSamplingActiveRef.current) return;
+        const event = nativeEvent as PointerEvent;
+        scheduleLoupe(event.clientX, event.clientY);
+      };
+      const loupePointerExit: EventListener = () => hideLoupe();
+      // Only movement drives it. A press is the moment the sample is taken and
+      // the loupe leaves, so scheduling a frame there would race that exit.
+      loupePointerListeners = [
+        ["pointermove", loupePointerMove],
+        ["pointerleave", loupePointerExit],
+        ["pointercancel", loupePointerExit],
+      ];
+      for (const [type, listener] of loupePointerListeners) {
+        host.addEventListener(type, listener, true);
+      }
       const hideRotationIndicator = (): void => {
         if (rotationIndicatorFrame !== null) {
           cancelAnimationFrame(rotationIndicatorFrame);
@@ -1095,22 +1350,27 @@ export function CanvasSurface({
         activeRotationIndicator.dataset.rotationIndicator = "hidden";
         activeRotationIndicator.textContent = "";
       };
-      const showRotationIndicator = (object: VectorPageObject, transform: Transform): void => {
-        if (object.type === "line") return;
+      /**
+       * Shows the live angle beside a rotation handle.
+       *
+       * The chip is transient presentation only: no History, no document
+       * state. Updates are coalesced onto one animation frame so a fast drag
+       * cannot outrun the compositor, and the position is clamped so the chip
+       * never leaves the workspace even when the handle nearly has.
+       */
+      const showRotationIndicator = (
+        pageHandle: Readonly<{ x: number; y: number }>,
+        rotationRadians: number,
+      ): void => {
         if (rotationIndicatorFrame !== null) cancelAnimationFrame(rotationIndicatorFrame);
         rotationIndicatorFrame = requestAnimationFrame(() => {
           rotationIndicatorFrame = null;
-          const frame = resolveOrientedSelectionFrame(
-            object.localBounds,
-            transform,
-            viewport.camera.zoom,
-          );
           const handle = viewport.worldToViewport({
-            x: viewport.pageRect.x + frame.rotationHandle.x,
-            y: viewport.pageRect.y + frame.rotationHandle.y,
+            x: viewport.pageRect.x + pageHandle.x,
+            y: viewport.pageRect.y + pageHandle.y,
           });
-          const degrees = normalizeRotationDegrees(transform.rotation);
-          activeRotationIndicator.textContent = `${degrees}°`;
+          const degrees = normalizeRotationDegrees(rotationRadians);
+          activeRotationIndicator.textContent = formatRotationAngleLabel(rotationRadians);
           activeRotationIndicator.style.left = `${Math.max(
             8,
             Math.min(host.clientWidth - 52, handle.x + 13),
@@ -1224,6 +1484,23 @@ export function CanvasSurface({
         },
         onHistoryChange: (notification) => {
           updateHistoryDiagnostics(notification.state);
+          // Undo and Redo restore the page the change belongs to, so a restored
+          // change is always visible instead of landing on an unseen page.
+          if (
+            notification.outcome === "succeeded" &&
+            (notification.operation === "undo" || notification.operation === "redo")
+          ) {
+            const targetPageId = historyCoordinator?.pageForCommand(notification.command.id);
+            if (
+              targetPageId !== null &&
+              targetPageId !== undefined &&
+              targetPageId !== documentSession.activePageId &&
+              documentSession.sketchbook.page(targetPageId) !== undefined
+            ) {
+              switchToPage(targetPageId);
+              publishPagesRef?.();
+            }
+          }
           historyChangeRef.current?.(notification);
         },
         onError: (error) => errorRef.current?.(error),
@@ -1851,6 +2128,7 @@ export function CanvasSurface({
       };
       const duplicateSelectedObjects = (): boolean => {
         cancelContinuousStyleEdit();
+        if (refuseActiveLayerWrite()) return false;
         const objects = selectedEditableObjects();
         if (objects.length === 0) return false;
         try {
@@ -1889,6 +2167,7 @@ export function CanvasSurface({
           }
         },
         paste: () => {
+          if (refuseActiveLayerWrite()) return false;
           try {
             const batch = editorClipboard.preparePaste(
               documentSession.collection,
@@ -1952,15 +2231,21 @@ export function CanvasSurface({
               })
             : null;
         activeVectorInteractionRenderer.setSelectionPreviewTransform(vectorPreviewTransform);
+        // Rotation feedback is decided once, here, and every branch below that
+        // knows a live rotation reports its handle through this one path.
+        hideRotationIndicator();
         if (
           vectorPreviewTransform !== null &&
           isVectorObject(object) &&
           object.type !== "line" &&
           state.kind === "rotation"
         ) {
-          showRotationIndicator(object, vectorPreviewTransform);
-        } else {
-          hideRotationIndicator();
+          const frame = resolveOrientedSelectionFrame(
+            object.localBounds,
+            vectorPreviewTransform,
+            viewport.camera.zoom,
+          );
+          showRotationIndicator(frame.rotationHandle, vectorPreviewTransform.rotation);
         }
         const selectedGeometry = selectionGeometry.resolve(
           documentSession.collection,
@@ -1983,6 +2268,20 @@ export function CanvasSurface({
           host.dataset.groupPreviewBoundsY = String(previewBounds.y);
           host.dataset.groupPreviewBoundsWidth = String(previewBounds.width);
           host.dataset.groupPreviewBoundsHeight = String(previewBounds.height);
+          if (state.kind === "rotation" && state.finalObjectRotation !== null) {
+            // The group frame stays axis-aligned, so the chip reports the angle
+            // the gesture is applying rather than a frame orientation.
+            showRotationIndicator(
+              {
+                x: previewBounds.x + previewBounds.width / 2,
+                y:
+                  previewBounds.y -
+                  (SELECTION_FRAME_PADDING_PIXELS + ROTATION_HANDLE_OFFSET_PIXELS) /
+                    viewport.camera.zoom,
+              },
+              state.finalObjectRotation,
+            );
+          }
         } else if (
           state.phase === "dragging" &&
           object instanceof InkObject &&
@@ -2001,6 +2300,11 @@ export function CanvasSurface({
               Object.freeze({ object, scale: state.finalObjectScale, visual }),
             );
           }
+          const previewTransform = new Transform({
+            translation: state.finalObjectTranslation,
+            rotation: state.finalObjectRotation,
+            scale: state.finalObjectScale,
+          });
           activeTransformPreviewRenderer.setPreview({
             objectId: object.id,
             bounds: visual.bounds,
@@ -2011,6 +2315,21 @@ export function CanvasSurface({
             }),
             visual,
           });
+          // The frame follows the live preview, so a rotating stroke is not
+          // left inside a stale upright box.
+          activeSelectionOverlayRenderer.setSelection({
+            objectId: object.id,
+            bounds: getStrokeRenderedBounds(object.stroke, previewTransform),
+            orientation: inkSelectionOrientation(object, previewTransform),
+          });
+          if (state.kind === "rotation") {
+            const frame = orientedFrameGeometry(
+              inkSelectionOrientation(object, previewTransform),
+              SELECTION_FRAME_PADDING_PIXELS,
+              viewport.camera.zoom,
+            );
+            showRotationIndicator(frame.rotationHandle, previewTransform.rotation);
+          }
         } else if (
           state.phase === "dragging" &&
           isVectorObject(object) &&
@@ -2258,8 +2577,29 @@ export function CanvasSurface({
         return true;
       };
 
+      /**
+       * The page point a Select-tool press acts on.
+       *
+       * Inside the page this is the ordinary mapping. Outside it, the point
+       * resolves only where the current selection actually reaches, so an
+       * off-page object remains grabbable while empty workspace stays inert.
+       */
+      const selectionInteractionPoint = (position: ScreenPoint): PagePoint | null => {
+        const insidePage = manipulationCoordinateMapper.screenToPage(position, false);
+        if (insidePage !== null) return insidePage;
+        const recoverable = recoverableSelectionRect;
+        if (recoverable === null) return null;
+        const outside = manipulationCoordinateMapper.screenToPage(position, true);
+        if (outside === null) return null;
+        return outside.x >= recoverable.x &&
+          outside.x <= recoverable.x + recoverable.width &&
+          outside.y >= recoverable.y &&
+          outside.y <= recoverable.y + recoverable.height
+          ? outside
+          : null;
+      };
       const selectionCandidatesAt = (position: ScreenPoint): readonly PageObject[] => {
-        const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
+        const pagePosition = selectionInteractionPoint(position);
         if (pagePosition === null) return Object.freeze([]);
         return Object.freeze(
           queryEditorSelectionCandidates(hitTestEngine, pagePosition)
@@ -2298,7 +2638,7 @@ export function CanvasSurface({
           effective.editable,
           documentSession.page.layers,
         );
-        const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
+        const pagePosition = selectionInteractionPoint(position);
         if (selection === null || pagePosition === null) {
           activeVectorInteractionRenderer.setLineHandleHover(null);
           resetManipulationCursor();
@@ -2411,6 +2751,21 @@ export function CanvasSurface({
         host.dataset.lineEndpointInteraction = "dragging";
       };
 
+      /**
+       * The one creation-eligibility gate for the active Layer.
+       *
+       * Refusal is deliberate: silently depositing invisible artwork or writing
+       * through a lock is worse than declining, and auto-unlocking would undo an
+       * explicit user decision.
+       */
+      const refuseActiveLayerWrite = (): boolean => {
+        const refusal = effective.activeLayerRefusal(documentSession.activeLayerId);
+        if (refusal === null) return false;
+        host.dataset.activeLayerWriteRefusal = refusal;
+        activeLayerRefusalRef.current?.(refusal);
+        return true;
+      };
+
       const bridgeEditorPointer = (
         phase: SelectionPointerInput["phase"],
         event: PointerEvent,
@@ -2425,6 +2780,34 @@ export function CanvasSurface({
         if (phase === "move") {
           updateManipulationCursor(position);
           updateVectorHover(position, mode);
+        }
+        // A creation press that starts off the page produces nothing. The brush
+        // cursor already reports that the workspace is not drawable, so this
+        // keeps behaviour and feedback in agreement instead of depositing
+        // unreachable artwork beyond the paper.
+        if (
+          phase === "down" &&
+          CREATION_INTERACTION_MODES.has(mode) &&
+          event.isPrimary &&
+          event.button === 0 &&
+          manipulationCoordinateMapper.screenToPage(position, false) === null
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
+        // A hidden or locked active Layer refuses the press before any wet
+        // stroke or rubber band appears, so nothing is ever drawn and discarded.
+        if (
+          phase === "down" &&
+          CREATION_INTERACTION_MODES.has(mode) &&
+          event.isPrimary &&
+          event.button === 0 &&
+          refuseActiveLayerWrite()
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
         }
         if (mode === "ink") {
           resetManipulationCursor();
@@ -2461,7 +2844,7 @@ export function CanvasSurface({
               effective.editable,
               documentSession.page.layers,
             );
-            const pagePosition = manipulationCoordinateMapper.screenToPage(position, false);
+            const pagePosition = selectionInteractionPoint(position);
             const selectedLine =
               editorSelection.size === 1
                 ? documentSession.collection.lookup(editorSelection.ids[0] ?? "")
@@ -2592,10 +2975,11 @@ export function CanvasSurface({
               }
             }
           } else {
-            let pagePosition = manipulationCoordinateMapper.screenToPage(
-              position,
-              activeManipulationController.hasActiveSession(),
-            );
+            // Reaching here means the press already resolved to a handle or to
+            // the selection's own body, so the gesture belongs to that object.
+            // Clipping its coordinates to the page would refuse to start a drag
+            // on artwork a page resize left outside the sheet.
+            let pagePosition = manipulationCoordinateMapper.screenToPage(position, true);
             if (route === "rotation" && event.shiftKey && pagePosition !== null) {
               pagePosition = snapRotationPointer(
                 activeManipulationController.getManipulationState(),
@@ -2917,6 +3301,25 @@ export function CanvasSurface({
         onStrokeStart: (update) => activeStrokeRenderer.beginStroke(update),
         onStrokeUpdate: (update) => activeStrokeRenderer.updateStroke(update),
         onStrokeFinalized: (stroke) => {
+          // Backstop for any press that reached the ink controller directly.
+          if (refuseActiveLayerWrite()) {
+            activeStrokeRenderer.cancelStroke(null);
+            return;
+          }
+          // A stroke that lies wholly outside the paper is unreachable artwork.
+          // The brush cursor already reports the workspace as undrawable, so the
+          // gesture is discarded rather than committed where it cannot be seen.
+          const pageGeometry = documentSession.geometry;
+          const strokeBounds = getStrokeRenderedBounds(stroke);
+          if (
+            strokeBounds.x + strokeBounds.width <= 0 ||
+            strokeBounds.y + strokeBounds.height <= 0 ||
+            strokeBounds.x >= pageGeometry.width ||
+            strokeBounds.y >= pageGeometry.height
+          ) {
+            activeStrokeRenderer.cancelStroke(null);
+            return;
+          }
           const object = documentSession.createStrokeObject(stroke);
           activeStrokeRenderer.finalizeStroke(
             object.stroke,
@@ -2983,17 +3386,24 @@ export function CanvasSurface({
         }
       };
       const eraseAtPointer = (event: PointerEvent): void => {
-        const object = firstErasableInkCandidate(
-          selectionCandidatesAt(
-            Object.freeze({
-              x: event.clientX,
-              y: event.clientY,
-              coordinateSpace: "screen",
-            }),
-          ),
-          eraserObjectIds,
-          effective.erasable,
-        );
+        const screenPosition: ScreenPoint = Object.freeze({
+          x: event.clientX,
+          y: event.clientY,
+          coordinateSpace: "screen",
+        });
+        // The Eraser owns its own radius; whole-stroke removal is unchanged.
+        const pagePosition = manipulationCoordinateMapper.screenToPage(screenPosition, false);
+        const eraserRadius = Math.max(resolveDrawingStyle().width, 1) / 2;
+        const candidates =
+          pagePosition === null
+            ? selectionCandidatesAt(screenPosition)
+            : Object.freeze(
+                hitTestEngine
+                  .queryNearby(pagePosition, eraserRadius)
+                  .map(({ objectId }) => documentSession.collection.lookup(objectId))
+                  .filter((object): object is PageObject => object !== undefined),
+              );
+        const object = firstErasableInkCandidate(candidates, eraserObjectIds, effective.erasable);
         if (object === null) return;
         try {
           const state = activeHistoryCoordinator.executeManipulation(
@@ -3110,7 +3520,7 @@ export function CanvasSurface({
       const commitShapeCreation = (): void => {
         const creation = activeShapeCreation;
         if (creation === null) return;
-        if (!creation.draft.valid) {
+        if (!creation.draft.valid || refuseActiveLayerWrite()) {
           clearShapeCreation();
           return;
         }
@@ -3402,6 +3812,47 @@ export function CanvasSurface({
       host.dataset.shapeCreationCapability = "ready";
       host.dataset.shapeCreationState = "idle";
       host.dataset.manipulationPointerCapture = "released";
+      /**
+       * Cancels the most local canvas interaction, exactly once per Escape.
+       *
+       * Cancelling a transform restores the original geometry through the
+       * manipulation session itself, so nothing here reaches History.
+       */
+      const escapeActions: EditorEscapeActions = Object.freeze({
+        escape: (): boolean => {
+          if (activeShapeCreation !== null) {
+            clearShapeCreation();
+            return true;
+          }
+          if (activeLineEndpointInteraction !== null) {
+            finishLineEndpointInteraction(false);
+            return true;
+          }
+          if (activeManipulationController.hasActiveSession()) {
+            activeManipulationController.cancelManipulation();
+            releaseManipulationPointerCapture();
+            activeTransformPreviewRenderer.setPreview(null);
+            activeVectorInteractionRenderer.setSelectionPreviewTransform(null);
+            hideRotationIndicator();
+            updateSelection(activeSelectionController.getSelection(), false);
+            return true;
+          }
+          if (marqueeOrigin !== null) {
+            activeVectorInteractionRenderer.setMarquee(null);
+            marqueeOrigin = null;
+            marqueeAdditive = false;
+            marqueeBaseIds = Object.freeze([]);
+            host.dataset.marqueeState = "idle";
+            return true;
+          }
+          if (editorSelection.ids.length > 0) {
+            selectEditorObjects([]);
+            return true;
+          }
+          return false;
+        },
+      });
+      escapeActionsReadyRef.current?.(escapeActions);
       controllerReadyRef.current?.(controller);
       selectionControllerReadyRef.current?.(activeSelectionController);
       manipulationControllerReadyRef.current?.(activeManipulationController);
@@ -3480,6 +3931,7 @@ export function CanvasSurface({
       selectionGeometry.clear();
       historyCoordinator?.destroy();
       objectLifecycleActionsReadyRef.current?.(null);
+      escapeActionsReadyRef.current?.(null);
       pageActionsReadyRef.current?.(null);
       layerActionsReadyRef.current?.(null);
       shapeEditingActionsReadyRef.current?.(null);
@@ -3499,6 +3951,16 @@ export function CanvasSurface({
       inkLayer?.destroy();
       measurementElement?.remove();
       rotationIndicatorElement?.remove();
+      if (loupeFrame !== null) {
+        cancelAnimationFrame(loupeFrame);
+        loupeFrame = null;
+      }
+      for (const [type, listener] of loupePointerListeners) {
+        host.removeEventListener(type, listener, true);
+      }
+      loupePointerListeners = [];
+      hideLoupeRef.current = null;
+      loupeElement?.remove();
       controller.destroy();
     };
   }, []);
@@ -3562,11 +4024,41 @@ interface SelectionEditingSnapshotInput {
 }
 
 /**
+ * Presentation geometry for one selected stroke's oriented frame.
+ *
+ * The frame uses the stroke's *visual* local bounds, which stop at the ink
+ * rather than at the padded rectangle repainting needs, and rotates about the
+ * stroke's own pivot. Nothing here touches the Ink transform: this describes
+ * the artwork, it does not move it.
+ */
+function inflateSelectionRect(rect: ObjectBounds, amount: number): Rect {
+  return Object.freeze({
+    x: rect.x - amount,
+    y: rect.y - amount,
+    width: rect.width + amount * 2,
+    height: rect.height + amount * 2,
+  });
+}
+
+function inkSelectionOrientation(
+  object: InkObject,
+  transform: Transform,
+): SelectionOverlayOrientation {
+  return Object.freeze({
+    localBounds: getStrokeVisualLocalBounds(object.stroke, transform.scale),
+    pivot: getStrokeTransformPivot(object.stroke),
+    translation: transform.translation,
+    rotation: transform.rotation,
+    scale: transform.scale,
+  });
+}
+
+/**
  * Builds the contextual-toolbar snapshot for the whole selection.
  *
- * A single vector keeps its oriented selection frame so Phase 17 rotation and
- * resize presentation is unchanged; Ink and multi-object selections report the
- * axis-aligned union instead.
+ * A single vector or a single stroke keeps its oriented selection frame so
+ * rotation and resize presentation follow the artwork; multi-object selections
+ * report the axis-aligned union instead.
  */
 function createSelectionEditingSnapshot(
   input: SelectionEditingSnapshotInput,
@@ -3604,6 +4096,25 @@ function createSelectionEditingSnapshot(
       width: singleVector.localBounds.width * singleVector.transform.scale * viewport.camera.zoom,
       height: singleVector.localBounds.height * singleVector.transform.scale * viewport.camera.zoom,
       rotation: singleVector.transform.rotation,
+    });
+  } else if (objects.length === 1 && primary instanceof InkObject) {
+    const orientation = inkSelectionOrientation(primary, primary.transform);
+    const frame = orientedFrameGeometry(orientation, 0, viewport.camera.zoom);
+    const centers = frame.corners.reduce(
+      (total, corner) => ({ x: total.x + corner.x, y: total.y + corner.y }),
+      { x: 0, y: 0 },
+    );
+    const pageCenter = { x: centers.x / 4, y: centers.y / 4 };
+    const viewportCenter = viewport.worldToViewport({
+      x: viewport.pageRect.x + pageCenter.x,
+      y: viewport.pageRect.y + pageCenter.y,
+    });
+    selectionFrame = Object.freeze({
+      centerX: viewportCenter.x,
+      centerY: viewportCenter.y,
+      width: orientation.localBounds.width * orientation.scale * viewport.camera.zoom,
+      height: orientation.localBounds.height * orientation.scale * viewport.camera.zoom,
+      rotation: orientation.rotation,
     });
   }
   return Object.freeze({

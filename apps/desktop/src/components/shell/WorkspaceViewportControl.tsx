@@ -49,7 +49,7 @@ export function WorkspaceViewportControl({
     >
       <button
         type="button"
-        className="grid size-8 place-items-center transition-colors duration-100 hover:bg-folio-surface-hover disabled:opacity-35"
+        className="grid size-8 place-items-center transition-colors duration-100 hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-folio-accent disabled:opacity-35"
         aria-label="Zoom out"
         onClick={onZoomOut}
         disabled={atMinimum}
@@ -60,7 +60,7 @@ export function WorkspaceViewportControl({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="h-8 min-w-16 border-x border-folio-border px-2 font-medium tabular-nums transition-colors duration-100 hover:bg-folio-surface-hover"
+            className="h-8 min-w-16 border-x border-folio-border px-2 font-medium tabular-nums transition-colors duration-100 hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-folio-accent"
             aria-label={`Zoom options, ${zoomLabel}`}
           >
             {zoomLabel}
@@ -128,7 +128,7 @@ export function WorkspaceViewportControl({
       </DropdownMenu>
       <button
         type="button"
-        className="grid size-8 place-items-center transition-colors duration-100 hover:bg-folio-surface-hover disabled:opacity-35"
+        className="grid size-8 place-items-center transition-colors duration-100 hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-folio-accent disabled:opacity-35"
         aria-label="Zoom in"
         onClick={onZoomIn}
         disabled={atMaximum}

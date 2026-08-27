@@ -1,6 +1,24 @@
 import { RenderingError } from "./errors";
 
-const MINIMUM_PATTERN_SCREEN_SPACING = 2;
+/** Below this screen spacing the pattern is pure moiré and is skipped outright. */
+const MINIMUM_PATTERN_SCREEN_SPACING = 4;
+/** Above this screen spacing the pattern draws at full strength. */
+const FULL_PATTERN_SCREEN_SPACING = 12;
+
+/**
+ * Fades paper patterns out as their spacing approaches the pixel grid.
+ *
+ * A grid drawn at six screen pixels of spacing reads as noise rather than as
+ * paper, so density drives opacity instead of the pattern simply appearing.
+ */
+export function paperPatternAlpha(screenSpacing: number): number {
+  if (!Number.isFinite(screenSpacing) || screenSpacing <= MINIMUM_PATTERN_SCREEN_SPACING) return 0;
+  if (screenSpacing >= FULL_PATTERN_SCREEN_SPACING) return 1;
+  return (
+    (screenSpacing - MINIMUM_PATTERN_SCREEN_SPACING) /
+    (FULL_PATTERN_SCREEN_SPACING - MINIMUM_PATTERN_SCREEN_SPACING)
+  );
+}
 import { DirtyRegionAccumulator } from "./internal/dirty-regions";
 import {
   assertFiniteNumber,
@@ -148,9 +166,11 @@ export class Renderer {
     // Pattern spacing is page-anchored, so zooming magnifies the same physical
     // paper. Below roughly two screen pixels of spacing the pattern reads as a
     // flat tint, so it is skipped rather than drawn as millions of primitives.
-    if (spacing * zoom < MINIMUM_PATTERN_SCREEN_SPACING) return;
+    const patternAlpha = paperPatternAlpha(spacing * zoom);
+    if (patternAlpha <= 0) return;
 
     context.save();
+    context.globalAlpha *= patternAlpha;
     context.beginPath();
     context.rect(x, y, width, height);
     context.clip();

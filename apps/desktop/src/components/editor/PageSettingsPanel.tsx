@@ -1,4 +1,6 @@
 import {
+  MAXIMUM_PAGE_EXTENT,
+  MINIMUM_PAGE_EXTENT,
   orientPageGeometry,
   PAPER_COLOR_PRESETS,
   PAPER_TYPES,
@@ -7,14 +9,14 @@ import {
 } from "@folio/editor";
 import type { PageActions, PagesSnapshot } from "@folio/editor";
 import { cn } from "@folio/ui";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
+import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
-  INTERACTION_MOTION,
-  motionSeconds,
-  PROFESSIONAL_EASE,
-} from "../../motion/interaction-motion";
-import { activePresetId, PAGE_PRESET_OPTIONS, parsePageExtent } from "./page-navigator-model";
+  floatingSurfaceMotion,
+  useFloatingSurfaceMotion,
+} from "../../motion/floating-surface-motion";
+import { activePresetId, pagePresetOptions, parsePageExtent } from "./page-navigator-model";
 import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
 
 interface PageSettingsPanelProps {
@@ -25,7 +27,7 @@ interface PageSettingsPanelProps {
 }
 
 export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSettingsPanelProps) {
-  const reducedMotion = useReducedMotion() === true;
+  const motionPreset = useFloatingSurfaceMotion();
   const boundaryRef = useRef<HTMLElement | null>(null);
   const page = snapshot.pages.find((candidate) => candidate.id === snapshot.activePageId) ?? null;
   const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef, {
@@ -52,15 +54,23 @@ export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSe
             data-floating-surface="folio"
             data-page-orientation={page.orientation}
             data-page-paper-type={page.paperType}
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{
-              duration: motionSeconds(INTERACTION_MOTION.floatingMilliseconds, reducedMotion),
-              ease: PROFESSIONAL_EASE,
-            }}
+            {...floatingSurfaceMotion(motionPreset)}
           >
-            <span className="text-[11px] font-semibold text-folio-ink">Page settings</span>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-folio-ink">Page settings</span>
+              <button
+                type="button"
+                className="grid size-6 place-items-center rounded-lg text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                aria-label="Close page settings"
+                data-testid="page-settings-close"
+                onClick={() => {
+                  actions?.cancelPaperColorEdit();
+                  onDismiss();
+                }}
+              >
+                <X className="size-3.5" aria-hidden="true" />
+              </button>
+            </div>
 
             <Field label="Preset">
               <select
@@ -78,7 +88,7 @@ export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSe
                   actions?.setPageGeometry(page.id, geometry.width, geometry.height);
                 }}
               >
-                {PAGE_PRESET_OPTIONS.map((option) => (
+                {pagePresetOptions(activePresetId(page)).map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
                   </option>
@@ -102,34 +112,50 @@ export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSe
             </div>
 
             <Field label="Orientation">
-              <div className="flex gap-1" role="group" aria-label="Page orientation">
-                {(["portrait", "landscape"] as const).map((orientation) => (
-                  <button
-                    key={orientation}
-                    type="button"
-                    className={cn(
-                      "flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border text-[11px] capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
-                      page.orientation === orientation
-                        ? "border-folio-accent bg-folio-accent-soft text-folio-accent"
-                        : "border-folio-border text-folio-muted hover:bg-folio-hover hover:text-folio-ink",
-                    )}
-                    aria-pressed={page.orientation === orientation}
-                    data-testid={`page-orientation-${orientation}`}
-                    onClick={() => actions?.setPageOrientation(page.id, orientation)}
-                  >
-                    <span
-                      className="rounded-[2px] border border-current"
-                      style={
-                        orientation === "portrait"
-                          ? { width: 8, height: 11 }
-                          : { width: 11, height: 8 }
-                      }
-                      aria-hidden="true"
-                    />
-                    {orientation}
-                  </button>
-                ))}
-              </div>
+              {page.orientation === "square" ? (
+                // A square page has no orientation to choose. Showing Square as
+                // its own state is honest; two inert buttons are not.
+                <div
+                  className="flex h-8 items-center justify-center gap-1.5 rounded-lg border border-folio-accent bg-folio-accent-soft text-[11px] text-folio-accent"
+                  data-testid="page-orientation-square"
+                >
+                  <span
+                    className="rounded-[2px] border border-current"
+                    style={{ width: 10, height: 10 }}
+                    aria-hidden="true"
+                  />
+                  Square
+                </div>
+              ) : (
+                <div className="flex gap-1" role="group" aria-label="Page orientation">
+                  {(["portrait", "landscape"] as const).map((orientation) => (
+                    <button
+                      key={orientation}
+                      type="button"
+                      className={cn(
+                        "flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border text-[11px] capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+                        page.orientation === orientation
+                          ? "border-folio-accent bg-folio-accent-soft text-folio-accent"
+                          : "border-folio-border text-folio-muted hover:bg-folio-hover hover:text-folio-ink",
+                      )}
+                      aria-pressed={page.orientation === orientation}
+                      data-testid={`page-orientation-${orientation}`}
+                      onClick={() => actions?.setPageOrientation(page.id, orientation)}
+                    >
+                      <span
+                        className="rounded-[2px] border border-current"
+                        style={
+                          orientation === "portrait"
+                            ? { width: 8, height: 11 }
+                            : { width: 11, height: 8 }
+                        }
+                        aria-hidden="true"
+                      />
+                      {orientation}
+                    </button>
+                  ))}
+                </div>
+              )}
             </Field>
 
             <Field label="Paper">
@@ -251,13 +277,22 @@ function ExtentField({
   readonly onCommit: (next: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
+  const [invalid, setInvalid] = useState(false);
   const focusedRef = useRef(false);
   useEffect(() => {
     if (!focusedRef.current) setDraft(String(value));
   }, [value]);
   const commit = (): void => {
     const parsed = parsePageExtent(draft);
-    if (parsed === null || parsed === value) {
+    if (parsed === null) {
+      // Restoring the committed value without a word is what made this feel
+      // broken; the field now says why the entry was rejected.
+      setInvalid(true);
+      setDraft(String(value));
+      return;
+    }
+    setInvalid(false);
+    if (parsed === value) {
       setDraft(String(value));
       return;
     }
@@ -269,16 +304,23 @@ function ExtentField({
         {label}
       </span>
       <input
-        className="h-7 w-full rounded-lg border border-folio-border bg-folio-surface px-1.5 text-[11px] tabular-nums text-folio-ink outline-none focus:ring-2 focus:ring-folio-accent"
+        className={cn(
+          "h-7 w-full rounded-lg border bg-folio-surface px-1.5 text-[11px] tabular-nums text-folio-ink outline-none focus:ring-2 focus:ring-folio-accent",
+          invalid ? "border-red-500 dark:border-red-400" : "border-folio-border",
+        )}
         type="number"
         inputMode="numeric"
         aria-label={`Page ${label.toLowerCase()}`}
+        aria-invalid={invalid}
         data-testid={testId}
         value={draft}
         onFocus={() => {
           focusedRef.current = true;
         }}
-        onChange={(event) => setDraft(event.currentTarget.value)}
+        onChange={(event) => {
+          setInvalid(false);
+          setDraft(event.currentTarget.value);
+        }}
         onBlur={() => {
           focusedRef.current = false;
           commit();
@@ -290,11 +332,21 @@ function ExtentField({
           } else if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
+            setInvalid(false);
             setDraft(String(value));
             event.currentTarget.blur();
           }
         }}
       />
+      {invalid ? (
+        <span
+          className="text-[10px] leading-snug text-red-600 dark:text-red-400"
+          data-testid={`${testId}-error`}
+          role="alert"
+        >
+          Enter {MINIMUM_PAGE_EXTENT}–{MAXIMUM_PAGE_EXTENT}.
+        </span>
+      ) : null}
     </label>
   );
 }

@@ -15,11 +15,36 @@ export interface PageRow extends PageSnapshot {
   readonly label: string;
 }
 
-export const PAGE_THUMBNAIL_WIDTH = 66;
-export const PAGE_THUMBNAIL_HEIGHT = 84;
+export const PAGE_THUMBNAIL_HEIGHT = 66;
+export const PAGE_THUMBNAIL_MINIMUM_WIDTH = 44;
+export const PAGE_THUMBNAIL_MAXIMUM_WIDTH = 104;
+
+/**
+ * Thumbnail card size for one page.
+ *
+ * The card follows the page's own aspect so a landscape page reads as landscape
+ * in the filmstrip instead of being letterboxed inside a portrait frame.
+ */
+export function pageThumbnailSize(
+  page: Pick<PageSnapshot, "width" | "height">,
+): Readonly<{ width: number; height: number }> {
+  const aspect = page.width / page.height;
+  const width = Math.round(
+    Math.min(
+      PAGE_THUMBNAIL_MAXIMUM_WIDTH,
+      Math.max(PAGE_THUMBNAIL_MINIMUM_WIDTH, PAGE_THUMBNAIL_HEIGHT * aspect),
+    ),
+  );
+  return Object.freeze({ width, height: PAGE_THUMBNAIL_HEIGHT });
+}
 export const PAGE_NAVIGATOR_MAX_WIDTH = 620;
-/** Horizontal space reserved on each side for the hint and viewport controls. */
-export const PAGE_NAVIGATOR_SIDE_RESERVE = 280;
+/**
+ * Horizontal space reserved on each side of the centred navigator.
+ *
+ * Sized so the strip can never reach the Layers / Page Settings slot on the
+ * right or the tool dock on the left, at any supported window width.
+ */
+export const PAGE_NAVIGATOR_SIDE_RESERVE = 340;
 
 export function pageRows(snapshot: PagesSnapshot): readonly PageRow[] {
   const total = snapshot.pages.length;
@@ -60,17 +85,32 @@ export function nextPageFocusIndex(
   return Math.min(Math.max(next, 0), pageCount - 1);
 }
 
+/** One concise sentence; the notification title carries it alone. */
 export function describeDeletedPage(label: string, objectCount: number): string {
   if (objectCount === 0) return `${label} deleted`;
   return `${label} deleted with ${objectCount} object${objectCount === 1 ? "" : "s"}`;
 }
 
-/** Preset options offered by Page Settings, including the custom sentinel. */
+/**
+ * Preset options offered by Page Settings.
+ *
+ * "Custom" is a state the width and height fields produce, never an option the
+ * user picks, so it is only listed while the current geometry matches no preset.
+ */
 export const PAGE_PRESET_OPTIONS: readonly Readonly<{ id: PagePresetId; label: string }>[] =
-  Object.freeze([
-    ...PAGE_PRESETS.map((preset) => Object.freeze({ id: preset.id, label: preset.label })),
+  Object.freeze(
+    PAGE_PRESETS.map((preset) => Object.freeze({ id: preset.id, label: preset.label })),
+  );
+
+export function pagePresetOptions(
+  activeId: PagePresetId,
+): readonly Readonly<{ id: PagePresetId; label: string }>[] {
+  if (activeId !== "custom") return PAGE_PRESET_OPTIONS;
+  return Object.freeze([
+    ...PAGE_PRESET_OPTIONS,
     Object.freeze({ id: "custom" as PagePresetId, label: "Custom" }),
   ]);
+}
 
 export function activePresetId(page: Pick<PageSnapshot, "width" | "height">): PagePresetId {
   return matchPagePreset({ width: page.width, height: page.height });

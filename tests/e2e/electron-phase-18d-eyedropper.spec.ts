@@ -92,7 +92,13 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     await nextPaint(window);
     await window.mouse.move(redPoint.x + 1, redPoint.y + 1);
     await window.mouse.move(redPoint.x, redPoint.y);
-    await expect(inkCanvas).toHaveAttribute("data-eyedropper-cursor", "crosshair");
+    // Sampling now shows a pipette cursor rather than a generic crosshair. The
+    // resolved CSS is asserted, not just the diagnostic label: a custom cursor
+    // image with an explicit hotspot and a standard keyword fallback.
+    await expect(inkCanvas).toHaveAttribute("data-eyedropper-cursor", "pipette");
+    const eyedropperCursorCss = await inkCanvas.evaluate((canvas) => canvas.style.cursor);
+    expect(eyedropperCursorCss).toContain('url("data:image/svg+xml,');
+    expect(eyedropperCursorCss).toMatch(/\)\s+3\s+23,\s*crosshair$/u);
     await capture(window, testInfo, "02-eyedropper-active-over-page.png");
 
     const outsidePoint = await workspacePointOutsidePage(surface, inkCanvas);
@@ -190,6 +196,11 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     await window.keyboard.press("Escape");
 
     // A selected vector continues to own one continuous color edit and no overlay pixels leak in.
+    // A selected-vector picker parks in the workspace corner by design. On the
+    // landscape default page that corner sits over artwork at 1440 wide, so
+    // this section uses a wider window to keep the sampled strokes reachable.
+    // Picker-versus-page placement is tracked separately as UX-033.
+    await window.setViewportSize({ width: 1760, height: 900 });
     await selectZoomMenuItem(window, "Fit Page");
     await toolDock.getByRole("button", { name: "Select", exact: true }).click();
     const selectedRectanglePoint = await pageToScreen(surface, inkCanvas, { x: 450, y: 240 });
@@ -212,7 +223,7 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     });
     await window.mouse.move(selectedRedPoint.x + 1, selectedRedPoint.y + 1);
     await window.mouse.move(selectedRedPoint.x, selectedRedPoint.y);
-    await expect(inkCanvas).toHaveAttribute("data-eyedropper-cursor", "crosshair");
+    await expect(inkCanvas).toHaveAttribute("data-eyedropper-cursor", "pipette");
     await capture(window, testInfo, "05-selected-rectangle-eyedropper.png");
     await window.mouse.click(selectedRedPoint.x, selectedRedPoint.y);
     durations.push(await sampleDuration(surface));
@@ -244,7 +255,7 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     await workspace.click({ position: { x: 20, y: 20 } });
     await expect(picker).toHaveCount(0);
     expect(await historyDepth(surface)).toBe(selectedHistory + 1);
-    await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
     const recentAfterVectorCommit = await recentColors(picker);
     expect(recentAfterVectorCommit.filter((color) => color === selectedOverlapPixel)).toHaveLength(
       1,
@@ -390,7 +401,7 @@ async function openRecentForSelectedVector(
   shapeToolbar: Locator,
   picker: Locator,
 ): Promise<readonly string[]> {
-  await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+  await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
   await expect(picker).toHaveAttribute("data-picker-source", "selected-vector");
   return recentColors(picker);
 }

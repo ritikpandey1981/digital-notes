@@ -12,8 +12,10 @@ export type NotificationTone = "success" | "info" | "error";
 
 export interface NotificationInput {
   title: string;
-  description: string;
+  description?: string;
   tone?: NotificationTone;
+  /** Optional single recovery action, normally Undo for a destructive change. */
+  action?: Readonly<{ label: string; onAction: () => void }>;
 }
 
 interface NotificationItem extends NotificationInput {
@@ -49,9 +51,18 @@ export function NotificationProvider({ children }: React.PropsWithChildren) {
   }, []);
 
   const notify = React.useCallback(
-    ({ title, description, tone = "info" }: NotificationInput) => {
+    ({ title, description, tone = "info", action }: NotificationInput) => {
       const id = nextId.current++;
-      setNotifications((current) => [...current, { id, title, description, tone }]);
+      setNotifications((current) => [
+        ...current,
+        {
+          id,
+          title,
+          tone,
+          ...(description === undefined ? {} : { description }),
+          ...(action === undefined ? {} : { action }),
+        },
+      ]);
       const timer = window.setTimeout(() => dismiss(id), 4200);
       timers.current.set(id, timer);
     },
@@ -71,8 +82,13 @@ export function NotificationProvider({ children }: React.PropsWithChildren) {
   return (
     <NotificationContext.Provider value={value}>
       {children}
+      {/*
+        Anchored bottom-centre so it never overlaps the bottom-right viewport
+        controls, and clear of the left hint pill.
+      */}
       <div
-        className="pointer-events-none fixed bottom-11 right-4 z-[80] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2"
+        className="pointer-events-none fixed bottom-4 left-1/2 z-[80] flex w-[min(340px,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
+        data-testid="notification-region"
         aria-live="polite"
         aria-label="Notifications"
       >
@@ -108,26 +124,42 @@ export function NotificationProvider({ children }: React.PropsWithChildren) {
                     ease: PROFESSIONAL_EASE,
                   },
                 }}
-                className="pointer-events-auto flex gap-3 rounded-[16px] border border-folio-border bg-folio-glass p-3.5 text-folio-ink shadow-xl backdrop-blur-xl"
+                className="folio-floating-surface pointer-events-auto flex items-center gap-2.5 px-3 py-2 text-folio-ink"
+                data-testid="notification"
                 role="status"
               >
                 <ToneIcon
                   className={cn(
-                    "mt-0.5 size-4 shrink-0",
+                    "size-3.5 shrink-0",
                     notification.tone === "success" && "text-emerald-600 dark:text-emerald-400",
                     notification.tone === "info" && "text-folio-accent",
                     notification.tone === "error" && "text-red-600 dark:text-red-400",
                   )}
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">{notification.title}</p>
-                  <p className="mt-0.5 text-xs leading-5 text-folio-muted">
-                    {notification.description}
-                  </p>
+                  <p className="truncate text-[11px] font-semibold">{notification.title}</p>
+                  {notification.description === undefined ? null : (
+                    <p className="truncate text-[10px] leading-4 text-folio-muted">
+                      {notification.description}
+                    </p>
+                  )}
                 </div>
+                {notification.action === undefined ? null : (
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-folio-accent transition-colors hover:bg-folio-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                    data-testid="notification-action"
+                    onClick={() => {
+                      notification.action?.onAction();
+                      dismiss(notification.id);
+                    }}
+                  >
+                    {notification.action.label}
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="rounded-lg p-1 text-folio-muted transition-[background-color,color,transform,box-shadow] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
+                  className="shrink-0 rounded-md p-1 text-folio-muted transition-[background-color,color,transform] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
                   aria-label={`Dismiss ${notification.title}`}
                   onClick={() => dismiss(notification.id)}
                 >

@@ -2,6 +2,7 @@ import { createManipulationManager, type ManipulationState } from "@folio/manipu
 import type { PagePoint } from "@folio/selection";
 import { describe, expect, it } from "vitest";
 import {
+  formatRotationAngleLabel,
   normalizeRotationDegrees,
   ROTATION_SNAP_INCREMENT_RADIANS,
   snapRotationPointer,
@@ -20,6 +21,28 @@ describe("rotation presentation", () => {
     [-1, 359],
   ])("normalizes %s degrees to %s°", (degrees, expected) => {
     expect(normalizeRotationDegrees((degrees * Math.PI) / 180)).toBe(expected);
+  });
+
+  it("formats the live rotation chip in the canonical range", () => {
+    // M-014: the chip reads the same angle whichever way the user dragged to
+    // reach it, so a full turn back reports 0° rather than -360°.
+    expect(formatRotationAngleLabel(0)).toBe("0°");
+    expect(formatRotationAngleLabel(ROTATION_SNAP_INCREMENT_RADIANS)).toBe("15°");
+    expect(formatRotationAngleLabel(Math.PI / 4)).toBe("45°");
+    expect(formatRotationAngleLabel(Math.PI)).toBe("180°");
+    expect(formatRotationAngleLabel(-Math.PI / 2)).toBe("270°");
+    expect(formatRotationAngleLabel(-Math.PI * 2)).toBe("0°");
+  });
+
+  it("reports whole degrees for every snap increment", () => {
+    const labels = Array.from({ length: 24 }, (_, step) =>
+      formatRotationAngleLabel(ROTATION_SNAP_INCREMENT_RADIANS * step),
+    );
+
+    expect(labels[0]).toBe("0°");
+    expect(labels[6]).toBe("90°");
+    expect(labels[12]).toBe("180°");
+    expect(labels.every((label) => /^\d{1,3}°$/u.test(label))).toBe(true);
   });
 
   it("maps a Shift-modified pointer to an absolute 15° rotation", () => {

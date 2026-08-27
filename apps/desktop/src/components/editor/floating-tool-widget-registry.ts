@@ -17,6 +17,7 @@ const defaultRegistrations: readonly FloatingToolWidgetRegistration[] = Object.f
   Object.freeze({ tool: "Pen", widget: "drawing-options" }),
   Object.freeze({ tool: "Marker", widget: "drawing-options" }),
   Object.freeze({ tool: "Highlighter", widget: "drawing-options" }),
+  Object.freeze({ tool: "Eraser", widget: "drawing-options" }),
   Object.freeze({ tool: "Shapes", widget: "shapes" }),
 ]);
 
@@ -36,6 +37,15 @@ export function createFloatingToolWidgetRegistry(
   });
 }
 
+/**
+ * Resolves the floating widget after a tool is selected from the dock.
+ *
+ * The two widget classes behave differently on purpose. Settings are a
+ * persistent workspace panel: selecting a tool may open them but never closes
+ * them, because the dock's options affordance owns closing and a panel that
+ * vanished on re-click was the old undiscoverable behaviour. The shape chooser
+ * is a transient popover, so its own tool button keeps toggling it.
+ */
 export function resolveFloatingWidgetAfterToolSelection(
   activeTool: EditorTool,
   selectedTool: EditorTool,
@@ -44,7 +54,7 @@ export function resolveFloatingWidgetAfterToolSelection(
 ): FloatingToolWidgetId | null {
   const selectedWidget = registry.widgetFor(selectedTool);
   if (selectedWidget === null) return null;
-  if (selectedTool === "Shapes" && selectedTool !== activeTool) return selectedWidget;
-  if (selectedTool !== activeTool) return null;
-  return activeWidget === selectedWidget ? null : selectedWidget;
+  if (selectedTool !== activeTool) return selectedWidget === "shapes" ? selectedWidget : null;
+  if (selectedWidget === "shapes") return activeWidget === "shapes" ? null : "shapes";
+  return activeWidget ?? selectedWidget;
 }

@@ -9,6 +9,17 @@ export function normalizeRotationDegrees(radians: number): number {
   return ((degrees % 360) + 360) % 360;
 }
 
+/**
+ * The text of the live rotation chip.
+ *
+ * Angles are reported in the editor's canonical 0–359 range rather than signed,
+ * so one rotation reads the same whichever direction the user dragged to reach
+ * it. Purely presentational: nothing reads this back.
+ */
+export function formatRotationAngleLabel(radians: number): string {
+  return `${normalizeRotationDegrees(radians)}°`;
+}
+
 export function snapRotationPointer(
   state: ManipulationState,
   current: PagePoint,

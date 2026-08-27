@@ -1,13 +1,30 @@
 import { RenderingError } from "./errors";
-import { assertRect, freezeRect } from "./internal/geometry";
+import { assertPoint, assertRect, freezePoint, freezeRect } from "./internal/geometry";
 import { RenderScheduler } from "./render-scheduler";
-import type { AnimationFrameAdapter, Rect } from "./types";
+import type { AnimationFrameAdapter, Point, Rect } from "./types";
 import type { Viewport } from "./viewport";
+
+/** Local geometry that lets one selected object carry an oriented frame. */
+export interface SelectionOverlayOrientation {
+  /** Tight local bounds of the artwork, before its transform. */
+  readonly localBounds: Rect;
+  readonly translation: Point;
+  readonly rotation: number;
+  readonly scale: number;
+  /** The point the object rotates about, in the same local space. */
+  readonly pivot: Point;
+}
 
 /** Cached document bounds required to draw one selection overlay. */
 export interface SelectionOverlayTarget {
   readonly objectId: string;
+  /** Axis-aligned page bounds, used for invalidation and for group frames. */
   readonly bounds: Rect;
+  /**
+   * Present for a single transformed object. The frame then follows the
+   * object's own orientation instead of boxing its axis-aligned extent.
+   */
+  readonly orientation?: SelectionOverlayOrientation | undefined;
 }
 
 /** Renderer-owned visual configuration in logical viewport pixels. */
@@ -73,8 +90,59 @@ function freezeTarget(target: SelectionOverlayTarget): SelectionOverlayTarget {
   }
   assertRect(target.bounds, "selectionOverlay.bounds");
   const bounds = Object.isFrozen(target.bounds) ? target.bounds : freezeRect(target.bounds);
-  if (Object.isFrozen(target) && bounds === target.bounds) return target;
-  return Object.freeze({ objectId: target.objectId, bounds });
+  const orientation =
+    target.orientation === undefined ? undefined : freezeOrientation(target.orientation);
+  if (Object.isFrozen(target) && bounds === target.bounds && orientation === target.orientation) {
+    return target;
+  }
+  return Object.freeze({
+    objectId: target.objectId,
+    bounds,
+    ...(orientation === undefined ? {} : { orientation }),
+  });
+}
+
+function freezeOrientation(orientation: SelectionOverlayOrientation): SelectionOverlayOrientation {
+  assertRect(orientation.localBounds, "selectionOverlay.orientation.localBounds");
+  assertPoint(orientation.translation, "selectionOverlay.orientation.translation");
+  assertPoint(orientation.pivot, "selectionOverlay.orientation.pivot");
+  if (
+    !Number.isFinite(orientation.rotation) ||
+    !Number.isFinite(orientation.scale) ||
+    orientation.scale <= 0
+  ) {
+    throw new RenderingError(
+      "INVALID_GEOMETRY",
+      "An oriented selection frame requires finite rotation and positive finite scale.",
+      { orientation },
+    );
+  }
+  return Object.freeze({
+    localBounds: freezeRect(orientation.localBounds),
+    translation: freezePoint(orientation.translation),
+    rotation: orientation.rotation,
+    scale: orientation.scale,
+    pivot: freezePoint(orientation.pivot),
+  });
+}
+
+function sameOrientation(
+  first: SelectionOverlayOrientation | undefined,
+  second: SelectionOverlayOrientation | undefined,
+): boolean {
+  if (first === undefined || second === undefined) return first === second;
+  return (
+    first.rotation === second.rotation &&
+    first.scale === second.scale &&
+    first.translation.x === second.translation.x &&
+    first.translation.y === second.translation.y &&
+    first.pivot.x === second.pivot.x &&
+    first.pivot.y === second.pivot.y &&
+    first.localBounds.x === second.localBounds.x &&
+    first.localBounds.y === second.localBounds.y &&
+    first.localBounds.width === second.localBounds.width &&
+    first.localBounds.height === second.localBounds.height
+  );
 }
 
 function sameTarget(
@@ -87,7 +155,8 @@ function sameTarget(
     first.bounds.x === second.bounds.x &&
     first.bounds.y === second.bounds.y &&
     first.bounds.width === second.bounds.width &&
-    first.bounds.height === second.bounds.height
+    first.bounds.height === second.bounds.height &&
+    sameOrientation(first.orientation, second.orientation)
   );
 }
 
@@ -109,6 +178,51 @@ function intersectsOrTouches(first: Rect, second: Rect): boolean {
 }
 
 const MAX_DIRTY_SELECTION_REGIONS = 8;
+
+/**
+ * Page-space frame points for an oriented selection.
+ *
+ * Padding and the rotation offset are divided by both zoom and scale so the
+ * frame keeps one screen-stable thickness whatever the object or camera does.
+ */
+export function orientedFrameGeometry(
+  orientation: SelectionOverlayOrientation,
+  paddingPixels: number,
+  zoom: number,
+): Readonly<{
+  corners: readonly Point[];
+  topMidpoint: Point;
+  rotationHandle: Point;
+}> {
+  const { localBounds, pivot, rotation, scale, translation } = orientation;
+  const padding = paddingPixels / zoom / scale;
+  const rotationOffset = ROTATION_HANDLE_OFFSET_PIXELS / zoom / scale;
+  const left = localBounds.x - padding;
+  const right = localBounds.x + localBounds.width + padding;
+  const top = localBounds.y - padding;
+  const bottom = localBounds.y + localBounds.height + padding;
+  const centerX = (left + right) / 2;
+  const cosine = Math.cos(rotation);
+  const sine = Math.sin(rotation);
+  const project = (x: number, y: number): Point => {
+    const localX = (x - pivot.x) * scale;
+    const localY = (y - pivot.y) * scale;
+    return Object.freeze({
+      x: pivot.x + translation.x + localX * cosine - localY * sine,
+      y: pivot.y + translation.y + localX * sine + localY * cosine,
+    });
+  };
+  return Object.freeze({
+    corners: Object.freeze([
+      project(left, top),
+      project(right, top),
+      project(right, bottom),
+      project(left, bottom),
+    ]),
+    topMidpoint: project(centerX, top),
+    rotationHandle: project(centerX, top - rotationOffset),
+  });
+}
 
 /**
  * Draws only selection visuals on a dedicated transparent overlay.
@@ -241,29 +355,62 @@ export class SelectionOverlayRenderer {
   private drawTarget(target: SelectionOverlayTarget): void {
     const snapshot = this.viewport.snapshot();
     const context = this.context;
-    const padding = this.style.padding / snapshot.camera.zoom;
-    const bounds = {
-      x: target.bounds.x - padding,
-      y: target.bounds.y - padding,
-      width: target.bounds.width + padding * 2,
-      height: target.bounds.height + padding * 2,
-    };
     context.save();
     context.setTransform(snapshot.devicePixelRatio, 0, 0, snapshot.devicePixelRatio, 0, 0);
     context.translate(snapshot.size.width / 2, snapshot.size.height / 2);
     context.scale(snapshot.camera.zoom, snapshot.camera.zoom);
     context.translate(-snapshot.camera.position.x, -snapshot.camera.position.y);
     context.translate(snapshot.pageRect.x, snapshot.pageRect.y);
-    context.beginPath();
-    context.rect(0, 0, snapshot.pageRect.width, snapshot.pageRect.height);
-    context.clip();
-    context.fillStyle = this.style.highlightColor;
-    context.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+    // Deliberately unclipped. Artwork stays clipped to the page by the layers
+    // that draw it; selection chrome is how a user drags an object that a page
+    // resize pushed off the sheet, so clipping it strands the object instead.
     context.strokeStyle = this.style.outlineColor;
     context.lineWidth = this.style.outlineWidth / snapshot.camera.zoom;
-    context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
-    this.drawHandles(bounds, snapshot.camera.zoom);
+    context.fillStyle = this.style.highlightColor;
+    if (target.orientation === undefined) {
+      const padding = this.style.padding / snapshot.camera.zoom;
+      const bounds = {
+        x: target.bounds.x - padding,
+        y: target.bounds.y - padding,
+        width: target.bounds.width + padding * 2,
+        height: target.bounds.height + padding * 2,
+      };
+      context.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+      context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+      this.drawHandles(bounds, snapshot.camera.zoom);
+    } else {
+      this.drawOrientedFrame(target.orientation, snapshot.camera.zoom);
+    }
     context.restore();
+  }
+
+  /** Draws the frame in the object's own orientation, handles included. */
+  private drawOrientedFrame(orientation: SelectionOverlayOrientation, zoom: number): void {
+    const context = this.context;
+    const frame = orientedFrameGeometry(orientation, this.style.padding, zoom);
+    const first = frame.corners[0];
+    if (first === undefined) return;
+    context.beginPath();
+    context.moveTo(first.x, first.y);
+    for (const corner of frame.corners.slice(1)) context.lineTo(corner.x, corner.y);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.beginPath();
+    context.moveTo(frame.topMidpoint.x, frame.topMidpoint.y);
+    context.lineTo(frame.rotationHandle.x, frame.rotationHandle.y);
+    context.stroke();
+    const handleSize = HANDLE_SIZE_PIXELS / zoom;
+    const halfHandle = handleSize / 2;
+    context.fillStyle = "#ffffff";
+    for (const corner of frame.corners) {
+      context.fillRect(corner.x - halfHandle, corner.y - halfHandle, handleSize, handleSize);
+      context.strokeRect(corner.x - halfHandle, corner.y - halfHandle, handleSize, handleSize);
+    }
+    context.beginPath();
+    context.arc(frame.rotationHandle.x, frame.rotationHandle.y, halfHandle, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
   }
 
   private drawHandles(bounds: Rect, zoom: number): void {

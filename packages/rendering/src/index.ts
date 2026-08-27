@@ -7,7 +7,9 @@ export { RenderingError, type RenderingErrorCode } from "./errors";
 export { Renderer, type RendererOptions } from "./renderer";
 export { RenderScheduler } from "./render-scheduler";
 export {
+  orientedFrameGeometry,
   SelectionOverlayRenderer,
+  type SelectionOverlayOrientation,
   type SelectionOverlayRendererOptions,
   type SelectionOverlayRendererSnapshot,
   type SelectionOverlayStyle,

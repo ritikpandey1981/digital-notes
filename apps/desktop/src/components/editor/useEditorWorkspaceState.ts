@@ -17,7 +17,11 @@ import {
   type FloatingToolWidgetId,
 } from "./floating-tool-widget-registry";
 import { createShapeToolState } from "./shape-tool-state";
-import { createDefaultToolOptionsDescriptorRegistry } from "./tool-options-registry";
+import {
+  createDefaultToolOptionsDescriptorRegistry,
+  DEFAULT_ERASER_SIZE,
+  describeEraserToolOptions,
+} from "./tool-options-registry";
 
 export function useEditorWorkspaceState() {
   const [activeTool, setActiveTool] = React.useState<EditorTool>("Select");
@@ -27,6 +31,9 @@ export function useEditorWorkspaceState() {
   const [, setFoundationVersion] = React.useState(0);
   const [colorSystem] = React.useState(() => createEditorColorSystem());
   const [brushStore] = React.useState(() => createBrushToolStateStore());
+  // The Eraser owns its runtime size outright. It shares nothing with the pen
+  // family, so changing a brush can never move the eraser silently.
+  const [eraserSize, setEraserSize] = React.useState(DEFAULT_ERASER_SIZE);
   const [shapeToolState] = React.useState(() => createShapeToolState());
   const [toolOptionsRegistry] = React.useState(() => createDefaultToolOptionsDescriptorRegistry());
   const [floatingWidgetRegistry] = React.useState(() => createFloatingToolWidgetRegistry());
@@ -58,14 +65,33 @@ export function useEditorWorkspaceState() {
       }),
     [resolvedBrush],
   );
+  const eraserDrawingStyle: CanvasDrawingStyle = React.useMemo(
+    () =>
+      Object.freeze({ color: "#000000", width: eraserSize, opacity: 1, pressureEnabled: false }),
+    [eraserSize],
+  );
   const shapeState = shapeToolState.snapshot();
-  const drawingStyle = activeTool === "Shapes" ? shapeState.style : penDrawingStyle;
+  const drawingStyle =
+    activeTool === "Shapes"
+      ? shapeState.style
+      : activeTool === "Eraser"
+        ? eraserDrawingStyle
+        : penDrawingStyle;
   const toolOptions = React.useMemo(
     () =>
-      activeFloatingWidget === "drawing-options"
-        ? toolOptionsRegistry.describe(activeTool, resolvedBrush, presetSelection)
-        : null,
-    [activeFloatingWidget, activeTool, presetSelection, resolvedBrush, toolOptionsRegistry],
+      activeFloatingWidget !== "drawing-options"
+        ? null
+        : activeTool === "Eraser"
+          ? describeEraserToolOptions(eraserSize)
+          : toolOptionsRegistry.describe(activeTool, resolvedBrush, presetSelection),
+    [
+      activeFloatingWidget,
+      activeTool,
+      eraserSize,
+      presetSelection,
+      resolvedBrush,
+      toolOptionsRegistry,
+    ],
   );
   const selectTool = React.useCallback(
     (tool: EditorTool): void => {
@@ -80,6 +106,12 @@ export function useEditorWorkspaceState() {
     [activeTool, floatingWidgetRegistry, shapeToolState],
   );
   const dismissFloatingWidget = React.useCallback((): void => setActiveFloatingWidget(null), []);
+  const activeToolWidget = floatingWidgetRegistry.widgetFor(activeTool);
+  /** The dock's explicit options affordance, independent of tool activation. */
+  const toggleToolOptions = React.useCallback((): void => {
+    if (activeToolWidget === null) return;
+    setActiveFloatingWidget((current) => (current === activeToolWidget ? null : activeToolWidget));
+  }, [activeToolWidget]);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
   const selectShape = React.useCallback(
     (shape: ShapeToolKind): void => {
@@ -117,8 +149,14 @@ export function useEditorWorkspaceState() {
     [brushStore, drawingKind, refresh],
   );
   const setDrawingWidth = React.useCallback(
-    (strokeWidth: number): void => updatePreset({ size: strokeWidth }),
-    [updatePreset],
+    (strokeWidth: number): void => {
+      if (activeTool === "Eraser") {
+        setEraserSize(strokeWidth);
+        return;
+      }
+      updatePreset({ size: strokeWidth });
+    },
+    [activeTool, updatePreset],
   );
   const setDrawingOpacity = React.useCallback(
     (opacity: number): void =>
@@ -202,6 +240,8 @@ export function useEditorWorkspaceState() {
     activeShape: shapeState.activeShape,
     armedShape,
     activeFloatingWidget,
+    activeToolHasOptions: activeToolWidget !== null,
+    toggleToolOptions,
     selectTool,
     selectShape,
     drawingStyle,

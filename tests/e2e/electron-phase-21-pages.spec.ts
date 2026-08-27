@@ -63,11 +63,11 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
       if (message.type() === "error") consoleErrors.push(message.text());
     });
 
-    // 1. Launch defaults to a single A4 portrait blank page.
+    // 1. Launch defaults to a single A4 landscape blank page.
     await expect(surface).toHaveAttribute("data-page-count", "1");
-    await expect(surface).toHaveAttribute("data-page-width", "794");
-    await expect(surface).toHaveAttribute("data-page-height", "1123");
-    await expect(surface).toHaveAttribute("data-page-orientation", "portrait");
+    await expect(surface).toHaveAttribute("data-page-width", "1123");
+    await expect(surface).toHaveAttribute("data-page-height", "794");
+    await expect(surface).toHaveAttribute("data-page-orientation", "landscape");
     await expect(surface).toHaveAttribute("data-page-paper-type", "blank");
     await expect(surface).toHaveAttribute("data-layer-count", "1");
     await expect(window.getByTestId("page-navigator")).toHaveCount(0);
@@ -84,10 +84,13 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
 
     // 4-6. Orientation, presets, and custom dimensions all commit once each.
     const historyBeforeGeometry = await depth(surface);
+    await settings.getByTestId("page-orientation-portrait").click();
+    await expect(surface).toHaveAttribute("data-page-width", "794");
+    await expect(surface).toHaveAttribute("data-page-orientation", "portrait");
+    expect(await depth(surface)).toBe(historyBeforeGeometry + 1);
     await settings.getByTestId("page-orientation-landscape").click();
     await expect(surface).toHaveAttribute("data-page-width", "1123");
     await expect(surface).toHaveAttribute("data-page-orientation", "landscape");
-    expect(await depth(surface)).toBe(historyBeforeGeometry + 1);
 
     await settings.getByTestId("page-orientation-portrait").click();
     await settings.getByTestId("page-preset").selectOption("a5");

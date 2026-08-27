@@ -13,6 +13,7 @@ import {
   rgbDraftToHex,
   type PickerRect,
 } from "./color-picker-model";
+import { collectZones, hardZone, softZone } from "./editor-occupied-zones";
 
 describe("Phase 18B color picker model", () => {
   it("keeps the Rail tool-scoped and reduces its deterministic no-scroll capacity", () => {
@@ -58,7 +59,14 @@ describe("Phase 18B color picker model", () => {
       { width: 332, height: maximumHeight },
       { width: 960, height: 640 },
       "quick-rail",
-      { bounds: usableBounds, occupiedRects: [viewportControls, rail, toolDock] },
+      {
+        bounds: usableBounds,
+        zones: collectZones([
+          hardZone("viewport-controls", viewportControls),
+          hardZone("quick-color-rail", rail),
+          hardZone("tool-dock", toolDock),
+        ]),
+      },
     );
     const picker = { ...placement, width: 332, height: maximumHeight };
 
@@ -71,30 +79,99 @@ describe("Phase 18B color picker model", () => {
   });
 
   it.each([
-    ["center", { left: 420, top: 260, width: 120, height: 100 }, "fallback", true],
-    ["near left", { left: 20, top: 250, width: 90, height: 100 }, "right", true],
-    ["near right", { left: 890, top: 250, width: 90, height: 100 }, "fallback", true],
-    ["near bottom", { left: 80, top: 590, width: 840, height: 70 }, "fallback", true],
-    ["small", { left: 500, top: 330, width: 1, height: 1 }, "fallback", true],
-    ["large", { left: 200, top: 80, width: 600, height: 540 }, "fallback", false],
-    ["impossible", { left: 0, top: 0, width: 1000, height: 700 }, "fallback", false],
+    ["center", { left: 420, top: 260, width: 120, height: 100 }, true],
+    ["near left", { left: 20, top: 250, width: 90, height: 100 }, true],
+    ["near right", { left: 890, top: 250, width: 90, height: 100 }, true],
+    ["near bottom", { left: 80, top: 590, width: 840, height: 70 }, true],
+    ["small", { left: 500, top: 330, width: 1, height: 1 }, true],
+    ["large", { left: 200, top: 80, width: 600, height: 540 }, false],
+    ["impossible", { left: 0, top: 0, width: 1000, height: 700 }, false],
   ] as const)(
-    "places a selected-vector picker deterministically for a %s avoid rect",
-    (_label, avoidRect, expectedSide, avoidable) => {
+    "keeps a selected-vector picker off its own toolbar for a %s artwork rect",
+    (_label, artworkRect, avoidable) => {
+      const toolbar = { left: 450, top: 50, width: 100, height: 48 };
       const placement = resolveColorPickerPlacement(
-        { left: 450, top: 50, width: 100, height: 48 },
+        toolbar,
         { width: 332, height: 460 },
         { width: 1000, height: 700 },
         "selected-vector",
-        { avoidRect },
+        { zones: collectZones([softZone("selected-artwork", artworkRect)]) },
       );
       const picker = { ...placement, width: 332, height: 460 };
 
-      expect(placement.side).toBe(expectedSide);
       expectInside(picker, { left: 12, top: 12, width: 976, height: 676 });
-      expect(overlapArea(picker, avoidRect) === 0).toBe(avoidable);
+      // The trigger stays reachable in every arrangement, even the impossible one.
+      expect(overlapArea(picker, toolbar)).toBe(0);
+      expect(overlapArea(picker, artworkRect) === 0).toBe(avoidable);
     },
   );
+
+  it("prefers an anchor-relative side over the top-left workspace corner", () => {
+    // UX-033/034: the default landscape page with a selected vector used to
+    // resolve to the top-left fallback, covering both the artwork and the
+    // toolbar that opened the picker.
+    const placement = resolveColorPickerPlacement(
+      { left: 450, top: 560, width: 326, height: 48 },
+      { width: 332, height: 460 },
+      { width: 1440, height: 900 },
+      "selected-vector",
+      {
+        bounds: { left: 0, top: 48, width: 1440, height: 852 },
+        zones: collectZones([
+          softZone("selected-artwork", { left: 380, top: 300, width: 460, height: 240 }),
+          hardZone("tool-dock", { left: 16, top: 240, width: 48, height: 300 }),
+          hardZone("utility-rail", { left: 1364, top: 56, width: 60, height: 400 }),
+        ]),
+      },
+    );
+    const picker = { ...placement, width: 332, height: 460 };
+
+    expect(placement.side).not.toBe("fallback");
+    expect(overlapArea(picker, { left: 450, top: 560, width: 326, height: 48 })).toBe(0);
+    expect(overlapArea(picker, { left: 380, top: 300, width: 460, height: 240 })).toBe(0);
+    expect(overlapArea(picker, { left: 1364, top: 56, width: 60, height: 400 })).toBe(0);
+  });
+
+  it("opens beside the rail that holds the trigger, not beside the button", () => {
+    // Live geometry from a 1440x900 window: the Rail's current-color button
+    // has six pixels of rail around it, so a gap measured from the button
+    // still lands on the rail and used to disqualify every anchor-relative
+    // side, exiling the picker to a far corner.
+    const utilityRail = { left: 1376, top: 255, width: 48, height: 437 };
+    const placement = resolveColorPickerPlacement(
+      { left: 1382, top: 314, width: 36, height: 36 },
+      { width: 332, height: 596 },
+      { width: 1440, height: 900 },
+      "quick-rail",
+      {
+        bounds: { left: 74, top: 48, width: 1366, height: 802 },
+        zones: collectZones([
+          hardZone("tool-dock", { left: 16, top: 326, width: 48, height: 296 }),
+          hardZone("utility-rail", utilityRail),
+          hardZone("quick-color-rail", { left: 1376, top: 309, width: 48, height: 384 }),
+          hardZone("viewport-controls", { left: 1294, top: 850, width: 130, height: 34 }),
+        ]),
+      },
+    );
+    const picker = { ...placement, width: 332, height: 596 };
+
+    expect(placement.side).toBe("left");
+    expect(picker.left + picker.width).toBeLessThanOrEqual(utilityRail.left);
+    expect(overlapArea(picker, utilityRail)).toBe(0);
+  });
+
+  it("resolves the same placement for the same input", () => {
+    const inputs = [
+      { left: 900, top: 220, width: 36, height: 36 },
+      { width: 332, height: 594 },
+      { width: 1024, height: 700 },
+      "quick-rail",
+    ] as const;
+    const first = resolveColorPickerPlacement(...inputs);
+    const second = resolveColorPickerPlacement(...inputs);
+
+    expect(second).toEqual(first);
+  });
 
   it("maps pointer and keyboard SV input while retaining the supplied hue", () => {
     expect(hsvFromSvPointer({ left: 10, top: 20, width: 200, height: 100 }, 110, 45, 245)).toEqual({

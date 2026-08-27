@@ -150,8 +150,8 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       await selectedColor.evaluate((button) => getComputedStyle(button).transitionProperty),
     ).toContain("box-shadow");
     await expectRecentlyUsedColor(window, "#2563eb", false);
-    await expect(palette).toHaveCount(0);
-    await penButton.click();
+    // Choosing from the quick colour rail retargets the active tool's colour;
+    // the tool settings panel is persistent and stays open to show the change.
     await expect(palette).toBeVisible();
     await palette.getByTestId("tool-options-color-trigger").click();
     const customColor = window.getByRole("textbox", { name: "Hex color" });
@@ -284,11 +284,13 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       x: hostBounds.x + hostBounds.width - 24,
       y: hostBounds.y + 24,
     };
+    // Tool settings are a persistent workspace panel: workspace pointer
+    // activity leaves them in place, and Escape or the dock's options
+    // affordance closes them. The press itself starts off the page, so it
+    // creates nothing.
     await window.mouse.click(emptyWorkspacePoint.x, emptyWorkspacePoint.y);
-    await expect(palette).toHaveCount(0, { timeout: 1_000 });
-    await expect(surface).toHaveAttribute("data-document-object-count", "0");
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
+    await expect(surface).toHaveAttribute("data-document-object-count", "0");
     await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
@@ -334,11 +336,13 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     for (const futureTool of ["Layers", "Reference", "AI"] as const) {
       await expect(toolDock.getByRole("button", { name: futureTool, exact: true })).toHaveCount(0);
     }
+    // Tool settings are a persistent workspace panel: workspace pointer
+    // activity leaves them in place, and Escape or the dock's options
+    // affordance closes them. The press itself starts off the page, so it
+    // creates nothing.
     await window.mouse.click(emptyWorkspacePoint.x, emptyWorkspacePoint.y);
-    await expect(palette).toHaveCount(0, { timeout: 1_000 });
-    await expect(surface).toHaveAttribute("data-document-object-count", "0");
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(palette).toBeVisible();
+    await expect(surface).toHaveAttribute("data-document-object-count", "0");
 
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
     await drawPath(window, pageToScreen, [
@@ -347,8 +351,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       { x: 240, y: 180 },
     ]);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
-    await expect(palette).toHaveCount(0, { timeout: 1_000 });
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    // Drawing commits the stroke and leaves the persistent settings panel open.
     await expect(palette).toBeVisible();
     await expect(window.getByRole("spinbutton", { name: "Size value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
@@ -432,7 +435,8 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       width: 40,
       pressureEnabled: false,
     });
-    await expect(palette).toHaveCount(0);
+    // Drawing leaves the persistent settings panel open.
+    await expect(palette).toBeVisible();
     await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
     await expect(palette).toBeVisible();
 

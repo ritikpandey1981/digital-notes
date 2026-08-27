@@ -143,15 +143,26 @@ export class VectorInteractionOverlayRenderer {
     context.scale(snapshot.camera.zoom, snapshot.camera.zoom);
     context.translate(-snapshot.camera.position.x, -snapshot.camera.position.y);
     context.translate(snapshot.pageRect.x, snapshot.pageRect.y);
-    context.beginPath();
-    context.rect(0, 0, snapshot.pageRect.width, snapshot.pageRect.height);
-    context.clip();
+    // Hover feedback traces the artwork, so it is clipped with the artwork.
+    // Selection chrome below is not: an object pushed off the page by a resize
+    // still has to be selectable, rotatable, and draggable back on.
+    const withPageClip = (draw: () => void): void => {
+      context.save();
+      context.beginPath();
+      context.rect(0, 0, snapshot.pageRect.width, snapshot.pageRect.height);
+      context.clip();
+      draw();
+      context.restore();
+    };
     if (this.#hover !== null && this.#hover !== this.#selection) {
-      if (isVectorObject(this.#hover)) {
-        this.#drawEmphasis(this.#hover, this.#hoverPresentation, snapshot.camera.zoom);
-      } else {
-        this.#drawBoundsHover(this.#hover, snapshot.camera.zoom, this.#hoverPresentation);
-      }
+      const hover = this.#hover;
+      withPageClip(() => {
+        if (isVectorObject(hover)) {
+          this.#drawEmphasis(hover, this.#hoverPresentation, snapshot.camera.zoom);
+        } else {
+          this.#drawBoundsHover(hover, snapshot.camera.zoom, this.#hoverPresentation);
+        }
+      });
     }
     if (this.#selection !== null) {
       const endpointPreview = this.#lineEndpointPreview;
@@ -167,7 +178,10 @@ export class VectorInteractionOverlayRenderer {
           : this.#lineHandleHover,
       );
     }
-    if (this.#marquee !== null) this.#drawMarquee(this.#marquee, snapshot.camera.zoom);
+    if (this.#marquee !== null) {
+      const marquee = this.#marquee;
+      withPageClip(() => this.#drawMarquee(marquee, snapshot.camera.zoom));
+    }
     context.restore();
   }
 

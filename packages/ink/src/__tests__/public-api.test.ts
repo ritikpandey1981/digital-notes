@@ -17,6 +17,8 @@ describe("@folio/ink public API", () => {
       "evaluatePressureResponse",
       "getStrokeLocalRenderBounds",
       "getStrokeRenderedBounds",
+      "getStrokeTransformPivot",
+      "getStrokeVisualLocalBounds",
       "resolveBrushPreset",
     ]);
   });

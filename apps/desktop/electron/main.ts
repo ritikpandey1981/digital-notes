@@ -14,6 +14,9 @@ function resolveAssetPath(fileName: string): string {
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
     title: "Folio",
+    // Every dimension below describes the web content area, not the OS frame, so
+    // the editor shell's own minimum is exactly what the renderer receives.
+    useContentSize: true,
     width: 1200,
     height: 800,
     minWidth: 960,

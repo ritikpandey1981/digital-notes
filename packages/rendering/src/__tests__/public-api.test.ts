@@ -18,6 +18,7 @@ describe("@folio/rendering public API", () => {
       "TransformPreviewRenderer",
       "TranslationPreviewRenderer",
       "Viewport",
+      "orientedFrameGeometry",
     ]);
   });
 

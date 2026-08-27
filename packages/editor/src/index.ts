@@ -72,6 +72,7 @@ export {
   type CanvasDrawingStyle,
   type CanvasInteractionMode,
   type CanvasSurfaceProps,
+  type EditorEscapeActions,
   type LayerActions,
   type LayerSnapshot,
   type LayersSnapshot,

@@ -5,13 +5,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { useLayoutEffect, useRef } from "react";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { StrokePreviewCanvas } from "./StrokePreviewCanvas";
 import type { ToolOptionPropertyDescriptor, ToolOptionsDescriptor } from "./tool-options-registry";
+import {
+  floatingSurfaceMotion,
+  useFloatingSurfaceMotion,
+} from "../../motion/floating-surface-motion";
 import {
   INTERACTION_MOTION,
   motionSeconds,
@@ -69,10 +73,14 @@ export function ToolOptionsWidget({
   previewScale,
 }: ToolOptionsWidgetProps) {
   const renderCountRef = useRef(0);
-  const reducedMotion = useReducedMotion() === true;
+  const motionPreset = useFloatingSurfaceMotion();
   const paletteVisible = descriptor !== null;
   const paletteRef = useRef<HTMLElement | null>(null);
-  const floatingWidgetScope = useFloatingWidgetDismissal(paletteVisible, onDismiss, paletteRef);
+  // Tool settings belong to the tool, not to the pointer: drawing, opening
+  // Layers, or opening Pages must never take them away mid-sketch.
+  const floatingWidgetScope = useFloatingWidgetDismissal(paletteVisible, onDismiss, paletteRef, {
+    outsidePointerDismissal: "ignore",
+  });
   useLayoutEffect(() => {
     renderCountRef.current += 1;
     if (paletteRef.current !== null) {
@@ -95,7 +103,7 @@ export function ToolOptionsWidget({
             ref={paletteRef}
             data-floating-widget-scope={floatingWidgetScope}
             key="context-tool-palette"
-            className="folio-floating-surface pointer-events-auto w-[304px] p-3"
+            className="folio-floating-surface pointer-events-auto w-[248px] p-2"
             role="group"
             aria-label={`${descriptor.displayName} tool options`}
             data-testid="context-tool-palette"
@@ -103,23 +111,7 @@ export function ToolOptionsWidget({
             data-elevation="temporary"
             data-motion-profile="professional"
             data-floating-surface="folio"
-            initial={{ opacity: 0, x: -8 }}
-            animate={{
-              opacity: 1,
-              x: 0,
-              transition: {
-                duration: motionSeconds(INTERACTION_MOTION.paletteOpenMilliseconds, reducedMotion),
-                ease: PROFESSIONAL_EASE,
-              },
-            }}
-            exit={{
-              opacity: 0,
-              x: -6,
-              transition: {
-                duration: motionSeconds(INTERACTION_MOTION.paletteCloseMilliseconds, reducedMotion),
-                ease: PROFESSIONAL_EASE,
-              },
-            }}
+            {...floatingSurfaceMotion(motionPreset, "left")}
           >
             <motion.div
               key={descriptor.id}
@@ -127,21 +119,23 @@ export function ToolOptionsWidget({
               initial={{ opacity: 0.84, x: -3 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{
-                duration: motionSeconds(INTERACTION_MOTION.contentMilliseconds, reducedMotion),
+                duration: motionSeconds(
+                  INTERACTION_MOTION.contentMilliseconds,
+                  motionPreset.reducedMotion,
+                ),
                 ease: PROFESSIONAL_EASE,
               }}
             >
-              <div className="mb-1 flex items-center justify-between px-1">
-                <div>
-                  <p className="text-xs font-semibold text-folio-ink">{descriptor.displayName}</p>
-                  <p className="text-[10px] text-folio-muted">Tool options</p>
-                </div>
-                <span className="rounded-full bg-folio-hover px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-folio-muted">
-                  Live
-                </span>
+              <div className="flex items-center justify-between px-1 pb-0.5">
+                <p
+                  className="text-[11px] font-semibold text-folio-ink"
+                  data-testid="tool-options-title"
+                >
+                  {descriptor.displayName}
+                </p>
               </div>
               {descriptor.preset === null ? null : (
-                <div className="mb-1 flex items-center gap-2 rounded-xl px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted transition-colors duration-100 hover:bg-folio-hover">
+                <div className="flex items-center gap-2 rounded-lg px-1 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted transition-colors duration-100 hover:bg-folio-hover">
                   <span className="shrink-0">Preset</span>
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
@@ -196,7 +190,7 @@ export function ToolOptionsWidget({
                 </div>
               )}
               <StrokePreviewCanvas descriptor={descriptor} renderScale={previewScale} />
-              <span className="my-1 h-px w-full bg-folio-border" aria-hidden="true" />
+              <span className="my-0.5 h-px w-full bg-folio-border" aria-hidden="true" />
               {descriptor.properties.map((property) => {
                 const render = propertyControlRenderers[property.key];
                 const action = propertyActions[property.key];
@@ -228,7 +222,7 @@ function CompactColorTrigger({
   const activeColor = requireString(descriptor.value, "Stroke color");
   return (
     <div
-      className="rounded-xl px-2 py-1.5 transition-colors duration-100 ease-out hover:bg-folio-hover"
+      className="rounded-lg px-1 py-0.5 transition-colors duration-100 ease-out hover:bg-folio-hover"
       data-tool-option="strokeColor"
     >
       <div className="flex items-center justify-between gap-3">
@@ -237,7 +231,7 @@ function CompactColorTrigger({
         </span>
         <button
           type="button"
-          className="flex h-8 min-w-28 items-center gap-2 rounded-lg border border-folio-border bg-folio-surface px-2 transition-[background-color,box-shadow] hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+          className="flex h-7 min-w-24 items-center gap-2 rounded-lg border border-folio-border bg-folio-surface px-2 transition-[background-color,box-shadow] hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
           aria-label={`Open ${activeColor} color picker`}
           data-testid="tool-options-color-trigger"
           onClick={(event) => onOpen(event.currentTarget)}

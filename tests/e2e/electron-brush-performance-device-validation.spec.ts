@@ -76,6 +76,10 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
     await expect(cursor).toHaveAttribute("data-visible", "true");
 
     await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    // Selecting a tool no longer closes an open settings panel; the dock's
+    // options affordance and Escape own that. Close it explicitly so the
+    // render-count measurements below observe a bare canvas.
+    await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
     const pageToScreen = await pageCoordinateMapper(inkCanvas, surface);
     const renderCountsBeforeDrawing = await renderCounts([workspace, host, surface, dock]);

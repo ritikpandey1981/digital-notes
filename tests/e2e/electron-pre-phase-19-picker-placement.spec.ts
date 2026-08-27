@@ -81,7 +81,7 @@ test("keeps the responsive color picker clear of minimum-window chrome and selec
     const historyBeforePreview = Number(await surface.getAttribute("data-history-undo-depth"));
     const originalColor = await selectedVectorColor(surface);
 
-    await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
     await expect(picker).toHaveAttribute("data-picker-source", "selected-vector");
     await expectSelectedArtworkAvoidance(window, picker);
     expect(overlapArea(await requiredBox(picker), await requiredBox(rail))).toBe(0);

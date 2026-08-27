@@ -1,14 +1,13 @@
 import { cn } from "@folio/ui";
 import { Circle, Minus, Square } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useRef } from "react";
 import type { ShapeToolKind } from "./editor-types";
 import { ToolTooltip } from "./ToolTooltip";
 import {
-  INTERACTION_MOTION,
-  motionSeconds,
-  PROFESSIONAL_EASE,
-} from "../../motion/interaction-motion";
+  floatingSurfaceMotion,
+  useFloatingSurfaceMotion,
+} from "../../motion/floating-surface-motion";
 import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
 
 interface ShapesWidgetProps {
@@ -25,7 +24,7 @@ const shapes = [
 ] as const;
 
 export function ShapesWidget({ open, activeShape, onSelectShape, onDismiss }: ShapesWidgetProps) {
-  const reducedMotion = useReducedMotion() === true;
+  const motionPreset = useFloatingSurfaceMotion();
   const boundaryRef = useRef<HTMLElement | null>(null);
   const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef);
   return (
@@ -43,13 +42,7 @@ export function ShapesWidget({ open, activeShape, onSelectShape, onDismiss }: Sh
             data-elevation="temporary"
             data-floating-surface="folio"
             data-motion-profile="fade-slide-140ms"
-            initial={{ opacity: 0, x: -6 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -4 }}
-            transition={{
-              duration: motionSeconds(INTERACTION_MOTION.floatingMilliseconds, reducedMotion),
-              ease: PROFESSIONAL_EASE,
-            }}
+            {...floatingSurfaceMotion(motionPreset, "left")}
           >
             {shapes.map(({ id, label, icon: Icon }) => {
               const active = id === activeShape;

@@ -29,7 +29,17 @@ export interface EffectiveObjectState {
   readonly lockedByLayer: (object: PageObject) => boolean;
   /** Presentation multiplier contributed by the owning Layer. */
   readonly layerOpacity: (object: PageObject) => number;
+  /**
+   * Why the active Layer cannot receive new artwork, or null when it can.
+   *
+   * Every creation route resolves through this one predicate so no path can
+   * silently deposit artwork onto a hidden or locked Layer.
+   */
+  readonly activeLayerRefusal: (activeLayerId: string) => ActiveLayerRefusal;
 }
+
+/** Reason a creation attempt against the active Layer was refused. */
+export type ActiveLayerRefusal = "hidden" | "locked" | null;
 
 interface LayerPresentation {
   readonly visible: boolean;
@@ -73,5 +83,11 @@ export function createEffectiveObjectState(getPage: () => PageDocument): Effecti
     lockedByLayer: (object: PageObject): boolean =>
       renderable(object) && presentationFor(getPage(), object).locked,
     layerOpacity: (object: PageObject): number => presentationFor(getPage(), object).opacity,
+    activeLayerRefusal: (activeLayerId: string): ActiveLayerRefusal => {
+      const layer = getPage().layer(activeLayerId);
+      if (layer === undefined) return null;
+      if (!layer.visible) return "hidden";
+      return layer.locked ? "locked" : null;
+    },
   });
 }

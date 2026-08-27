@@ -48,11 +48,11 @@ describe("Phase 21 page History", () => {
     coordinator = createCoordinator(session);
   });
 
-  it("starts as one A4 portrait page with one layer", () => {
+  it("starts as one A4 landscape page with one layer", () => {
     expect(session.sketchbook).toBeInstanceOf(SketchbookDocument);
     expect(session.sketchbook.pageCount).toBe(1);
-    expect(session.geometry).toEqual({ width: 794, height: 1123 });
-    expect(session.activePage.orientation).toBe("portrait");
+    expect(session.geometry).toEqual({ width: 1123, height: 794 });
+    expect(session.activePage.orientation).toBe("landscape");
     expect(session.paper.type).toBe("blank");
     expect(session.page.layerCount).toBe(1);
   });
@@ -116,7 +116,7 @@ describe("Phase 21 page History", () => {
     expect(session.collection.lookup(object.id)).toBe(object);
 
     coordinator.undo();
-    expect(session.geometry).toEqual({ width: 794, height: 1123 });
+    expect(session.geometry).toEqual({ width: 1123, height: 794 });
     expect(session.collection.lookup(object.id)).toBe(object);
   });
 
@@ -258,7 +258,7 @@ describe("Phase 21 page History", () => {
 
   it("ignores page changes that would not alter state", () => {
     expect(
-      coordinator.executePageGeometry(session.activePageId, { width: 794, height: 1123 }),
+      coordinator.executePageGeometry(session.activePageId, { width: 1123, height: 794 }),
     ).toBeNull();
     expect(coordinator.executePagePaper(session.activePageId, { type: "blank" })).toBeNull();
     expect(coordinator.executePageRename(session.activePageId, "")).toBeNull();

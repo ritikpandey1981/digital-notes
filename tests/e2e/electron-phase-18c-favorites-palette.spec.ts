@@ -133,7 +133,7 @@ test("Phase 18C keeps Favorites deliberate, ordered, target-safe, and separate f
     await window.mouse.click(...pointTuple(pageToScreen(320, 295)));
     await expect(surface).toHaveAttribute("data-selected-object-id", rectangle.id);
     const historyBeforeVectorFavorite = await historyDepth(surface);
-    await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
     await picker.getByRole("button", { name: "Use favorite color #0ea5e9" }).click();
     expect(await favoriteValues(picker)).toEqual(["#0ea5e9"]);
     await workspace.click({ position: { x: 420, y: 28 } });
@@ -152,7 +152,7 @@ test("Phase 18C keeps Favorites deliberate, ordered, target-safe, and separate f
     );
 
     const historyBeforeCancel = await historyDepth(surface);
-    await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
     await picker.getByRole("textbox", { name: "Hex color" }).fill("#dc2626");
     await picker.getByRole("button", { name: "Add #dc2626 to favorites" }).click();
     expect(await favoriteValues(picker)).toEqual(["#0ea5e9", "#dc2626"]);

@@ -183,7 +183,7 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await window.mouse.click(...pointTuple(pageToScreen(290, 280)));
     await expect(surface).toHaveAttribute("data-selected-object-id", rectangleA.id);
     const selectedHistory = await historyDepth(surface);
-    await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
     await expect(picker).toHaveAttribute("data-picker-source", "selected-vector");
     await expectRawSvCoalescing(window, workspace, picker);
     await picker.getByRole("textbox", { name: "Hex color" }).fill("#dc2626");
@@ -192,7 +192,17 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     expect(await historyDepth(surface)).toBe(selectedHistory);
     await capture(window, testInfo, "08-picker-from-selected-rectangle.png");
 
-    await window.mouse.click(...pointTuple(pageToScreen(565, 370)));
+    // One outside click both commits the edit and reaches the canvas beneath.
+    // The picker now opens beside the control that launched it rather than in
+    // a fixed corner, so the point is chosen from its live box: any part of
+    // rectangle B the picker is not covering will do.
+    const dismissalPoint = await firstUncoveredPagePoint(window, picker, pageToScreen, {
+      left: 500,
+      top: 320,
+      right: 630,
+      bottom: 420,
+    });
+    await window.mouse.click(dismissalPoint.x, dismissalPoint.y);
     await expect(picker).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-selected-object-id", rectangleB.id);
     expect(await historyDepth(surface)).toBe(selectedHistory + 1);
@@ -213,7 +223,7 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     );
     await window.mouse.click(...pointTuple(pageToScreen(290, 280)));
     const cancelDepth = await historyDepth(surface);
-    await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
     await picker.getByRole("textbox", { name: "Hex color" }).fill("#2563eb");
     await window.keyboard.press("Escape");
     await expect(picker).toHaveCount(0);
@@ -223,7 +233,7 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     );
 
     await window.mouse.click(...pointTuple(pageToScreen(565, 370)));
-    await shapeToolbar.getByRole("button", { name: "Shape stroke color" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
     await expect(picker.getByRole("button", { name: "Use recent color #9333ea" })).toBeVisible();
     await window.keyboard.press("Escape");
 
@@ -353,4 +363,36 @@ interface Point {
 
 function pointTuple(point: Point): [number, number] {
   return [point.x, point.y];
+}
+
+/**
+ * A screen point inside the given page rectangle that a floating surface is
+ * not covering, so an outside click lands on the artwork it is aimed at.
+ */
+async function firstUncoveredPagePoint(
+  window: Page,
+  surface: Locator,
+  pageToScreen: (x: number, y: number) => { x: number; y: number },
+  rect: Readonly<{ left: number; top: number; right: number; bottom: number }>,
+): Promise<{ x: number; y: number }> {
+  const covered = await surface.boundingBox();
+  const steps = 8;
+  for (let row = 1; row < steps; row += 1) {
+    for (let column = 1; column < steps; column += 1) {
+      const point = pageToScreen(
+        rect.left + ((rect.right - rect.left) * column) / steps,
+        rect.top + ((rect.bottom - rect.top) * row) / steps,
+      );
+      if (
+        covered === null ||
+        point.x < covered.x ||
+        point.y < covered.y ||
+        point.x > covered.x + covered.width ||
+        point.y > covered.y + covered.height
+      ) {
+        return point;
+      }
+    }
+  }
+  throw new Error("The floating surface covers the whole target rectangle.");
 }

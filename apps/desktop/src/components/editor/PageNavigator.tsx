@@ -8,24 +8,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { MoreHorizontal, Plus, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
-  INTERACTION_MOTION,
-  motionSeconds,
-  PROFESSIONAL_EASE,
-} from "../../motion/interaction-motion";
+  floatingSurfaceMotion,
+  useFloatingSurfaceMotion,
+} from "../../motion/floating-surface-motion";
 import {
   canDeletePage,
   describeDeletedPage,
   nextPageFocusIndex,
   PAGE_NAVIGATOR_MAX_WIDTH,
   PAGE_NAVIGATOR_SIDE_RESERVE,
-  PAGE_THUMBNAIL_HEIGHT,
-  PAGE_THUMBNAIL_WIDTH,
   pageMoveTarget,
   pageRows,
+  pageThumbnailSize,
   type PageRow,
 } from "./page-navigator-model";
 import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
@@ -51,7 +49,7 @@ export function PageNavigator({
   onOpenPageSettings,
   onNotify,
 }: PageNavigatorProps) {
-  const reducedMotion = useReducedMotion() === true;
+  const motionPreset = useFloatingSurfaceMotion();
   const boundaryRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -87,30 +85,28 @@ export function PageNavigator({
   };
 
   return (
-    <div className="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2">
+    // Anchored to the Pages control in the document toolbar rather than parked
+    // over the drawing. Pages are a document operation, so the navigator lives
+    // with the other document controls and leaves the canvas alone.
+    <div className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2">
       <AnimatePresence initial={false}>
         {open ? (
           <motion.section
             ref={boundaryRef}
             data-floating-widget-scope={floatingWidgetScope}
             className="folio-floating-surface pointer-events-auto flex items-stretch gap-1 p-1.5"
-            // Stay clear of the bottom-left hint and bottom-right viewport
-            // controls at every supported window width.
+            // Stay clear of the Layers/Page Settings slot on the right and the
+            // tool dock on the left at every supported window width.
             style={{
               maxWidth: `min(${PAGE_NAVIGATOR_MAX_WIDTH}px, calc(100vw - ${PAGE_NAVIGATOR_SIDE_RESERVE * 2}px))`,
             }}
             aria-label="Pages"
             data-testid="page-navigator"
             data-elevation="temporary"
+            data-navigator-anchor="document-controls"
             data-floating-surface="folio"
             data-page-count={rows.length}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 6 }}
-            transition={{
-              duration: motionSeconds(INTERACTION_MOTION.floatingMilliseconds, reducedMotion),
-              ease: PROFESSIONAL_EASE,
-            }}
+            {...floatingSurfaceMotion(motionPreset)}
           >
             <div
               ref={listRef}
@@ -198,9 +194,11 @@ function PageCard({
   onMove,
   onDelete,
 }: PageCardProps) {
+  const thumbnailSize = pageThumbnailSize(row);
   return (
     <div
       className="group relative shrink-0"
+      style={{ maxWidth: thumbnailSize.width + 8 }}
       data-testid={`page-card-${row.id}`}
       data-page-active={row.active}
     >
@@ -220,10 +218,15 @@ function PageCard({
         onClick={onActivate}
         onDoubleClick={onOpenSettings}
       >
-        <PageThumbnail page={page} revision={thumbnailRevision} active={row.active} />
+        <PageThumbnail
+          page={page}
+          size={thumbnailSize}
+          revision={thumbnailRevision}
+          active={row.active}
+        />
         <span
           className={cn(
-            "max-w-[66px] truncate text-[10px] tabular-nums",
+            "truncate text-[10px] tabular-nums",
             row.active ? "font-semibold text-folio-accent" : "text-folio-muted",
           )}
           data-testid={`page-label-${row.id}`}
@@ -291,10 +294,12 @@ function PageCard({
  */
 function PageThumbnail({
   page,
+  size,
   revision,
   active,
 }: {
   readonly page: Page | null;
+  readonly size: Readonly<{ width: number; height: number }>;
   readonly revision: number;
   readonly active: boolean;
 }) {
@@ -303,21 +308,16 @@ function PageThumbnail({
     const canvas = canvasRef.current;
     if (canvas === null || page === null) return;
     const ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(PAGE_THUMBNAIL_WIDTH * ratio);
-    canvas.height = Math.round(PAGE_THUMBNAIL_HEIGHT * ratio);
+    canvas.width = Math.round(size.width * ratio);
+    canvas.height = Math.round(size.height * ratio);
     const context = canvas.getContext("2d");
     if (context === null) return;
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     const lineColor =
       getComputedStyle(document.documentElement).getPropertyValue("--folio-page-rule").trim() ||
       "rgba(102, 118, 151, 0.16)";
-    renderPageThumbnail(
-      context,
-      page,
-      { width: PAGE_THUMBNAIL_WIDTH, height: PAGE_THUMBNAIL_HEIGHT },
-      { pageLineColor: lineColor },
-    );
-  }, [page, revision]);
+    renderPageThumbnail(context, page, size, { pageLineColor: lineColor });
+  }, [page, revision, size]);
   return (
     <canvas
       ref={canvasRef}
@@ -325,7 +325,7 @@ function PageThumbnail({
         "rounded border shadow-sm",
         active ? "border-folio-accent" : "border-folio-border",
       )}
-      style={{ width: PAGE_THUMBNAIL_WIDTH, height: PAGE_THUMBNAIL_HEIGHT }}
+      style={{ width: size.width, height: size.height }}
       data-testid="page-thumbnail"
       aria-hidden="true"
     />

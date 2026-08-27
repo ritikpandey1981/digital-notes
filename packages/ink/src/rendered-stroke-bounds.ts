@@ -21,6 +21,26 @@ export function getStrokeLocalRenderBounds(stroke: Stroke, renderedScale = 1): R
   });
 }
 
+/**
+ * Tight local bounds describing only the ink a reader can see.
+ *
+ * `getStrokeLocalRenderBounds` deliberately overstates: it adds a render
+ * padding margin so dirty-rect invalidation never clips a repaint, and it
+ * squares the rectangle around the transform pivot so rotation stays stable.
+ * Both are correct for repainting and wrong for a selection frame, where the
+ * slack reads as a loose box floating around a thin stroke. This is the same
+ * geometry without either allowance, and it is presentation-only: nothing
+ * about repainting, hit testing, or the document reads it.
+ */
+export function getStrokeVisualLocalBounds(stroke: Stroke, renderedScale = 1): Rect {
+  return freezeRect(resolveStrokeRenderGeometry(stroke, renderedScale).bounds);
+}
+
+/** The stable pivot both the render and visual local bounds rotate about. */
+export function getStrokeTransformPivot(stroke: Stroke): Point {
+  return stroke.bounds.center;
+}
+
 /** Bounds actual brush geometry under Folio's scale-compensated Ink transform semantics. */
 export function getStrokeRenderedBounds(
   stroke: Stroke,

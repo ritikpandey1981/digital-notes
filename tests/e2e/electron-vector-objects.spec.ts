@@ -229,7 +229,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect(surface).toHaveAttribute("data-selected-object-type", "ellipse");
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
     const historyBeforeStyle = Number(await surface.getAttribute("data-history-undo-depth"));
-    await shapeToolbar.getByLabel("Shape stroke color").click();
+    await shapeToolbar.getByLabel("Stroke color").click();
     await emitRapidColorInputs(window.getByRole("textbox", { name: "Hex color" }), [
       "#2563eb",
       "#16a34a",
@@ -242,7 +242,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await expect.poll(() => nonTransparentPixelCount(vectorInteractionCanvas)).toBeGreaterThan(0);
     await expect.poll(() => pixelAlphaAt(vectorInteractionCanvas, pageToScreen(240, 450))).toBe(0);
     const toolbarBeforeExpansion = await shapeToolbar.boundingBox();
-    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke width" }).click();
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-expanded-section", "strokeWidth");
     const widthPanel = shapeToolbar.getByRole("group", { name: "Width options" });
     await expect(widthPanel).toBeVisible();
@@ -274,7 +274,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
       "1000 px",
       "1000.0 px",
     ]);
-    await shapeToolbar.getByRole("button", { name: "Shape stroke opacity" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke opacity" }).click();
     const opacityPanel = shapeToolbar.getByRole("group", { name: "Opacity options" });
     await expect(opacityPanel).toBeVisible();
     await expect(opacityPanel).toHaveAttribute("data-toolbar-expansion-mechanism", "shared");
@@ -294,12 +294,12 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await window.keyboard.press("Escape");
     await expect(opacityPanel).toHaveCount(0);
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-expanded-section", "");
-    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke width" }).click();
     await expect(shapeToolbar.getByRole("group", { name: "Width options" })).toBeVisible();
     await window.getByRole("button", { name: "Select", exact: true }).click();
     await expect(shapeToolbar.getByRole("group", { name: "Width options" })).toHaveCount(0);
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
-    await shapeToolbar.getByRole("button", { name: "Duplicate shape" }).focus();
+    await shapeToolbar.getByRole("button", { name: "Duplicate" }).focus();
     await window.keyboard.press("Control+Z");
     await expect
       .poll(
@@ -343,9 +343,9 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     await window.keyboard.press("Control+C");
     await window.keyboard.press("Control+V");
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "4");
-    await shapeToolbar.getByRole("button", { name: "Duplicate shape" }).click();
+    await shapeToolbar.getByRole("button", { name: "Duplicate" }).click();
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "5");
-    await shapeToolbar.getByRole("button", { name: "Delete shape" }).click();
+    await shapeToolbar.getByRole("button", { name: "Delete" }).click();
     await expect(surface).toHaveAttribute("data-document-vector-object-count", "4");
 
     const historyBeforeRapidCreation = Number(
@@ -582,7 +582,7 @@ async function expectPanelInsideWorkspace(panel: Locator, host: Locator): Promis
 async function toolbarMetrics(toolbar: Locator): Promise<ToolbarMetrics> {
   return toolbar.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    const firstControl = element.querySelector('button[aria-label="Shape stroke color"]');
+    const firstControl = element.querySelector('button[aria-label="Stroke color"]');
     const lastButton = element.querySelector('button[aria-label="More selection options"]');
     if (!(firstControl instanceof HTMLElement) || !(lastButton instanceof HTMLElement)) {
       throw new Error("Toolbar edge controls are missing.");

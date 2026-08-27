@@ -3,6 +3,7 @@ import {
   type ArtworkColorSampleResult,
   type CanvasDrawingStyle,
   type CanvasSurfaceProps,
+  type EditorEscapeActions,
   type ObjectLifecycleActions,
   type ShapeEditingActions,
   type ShapeEditingSnapshot,
@@ -17,6 +18,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
   brushCursorDiameter,
   cursorPresentationForTool,
+  EYEDROPPER_CURSOR,
   nativeCursorForBrushRegion,
   pointIsWithinBrushPage,
   usesImperativeBrushCursor,
@@ -33,6 +35,8 @@ interface CanvasHostProps {
   readonly onArtworkSample: (result: ArtworkColorSampleResult) => void;
   readonly viewportSnapshot: EditorViewportSnapshot;
   readonly onObjectLifecycleActionsReady: (actions: ObjectLifecycleActions | null) => void;
+  readonly onEscapeActionsReady: (actions: EditorEscapeActions | null) => void;
+  readonly onActiveLayerRefusal: (reason: "hidden" | "locked") => void;
   readonly onShapeEditingActionsReady: (actions: ShapeEditingActions | null) => void;
   readonly onShapeEditingChange: (snapshot: ShapeEditingSnapshot | null) => void;
   readonly onLayerActionsReady: (actions: LayerActions | null) => void;
@@ -56,6 +60,8 @@ export const CanvasHost = memo(function CanvasHost({
   onArtworkSample,
   viewportSnapshot,
   onObjectLifecycleActionsReady,
+  onEscapeActionsReady,
+  onActiveLayerRefusal,
   onShapeEditingActionsReady,
   onShapeEditingChange,
   onLayerActionsReady,
@@ -134,9 +140,9 @@ export const CanvasHost = memo(function CanvasHost({
     if (inkCanvas === undefined || inkCanvas === null) return;
     if (artworkSamplingActive) {
       inkCanvas.dataset.desktopToolCursor = "eyedropper";
-      inkCanvas.dataset.desktopCursorCss = "default";
+      inkCanvas.dataset.desktopCursorCss = EYEDROPPER_CURSOR;
       inkCanvas.dataset.desktopCursorPhase = "steady";
-      inkCanvas.style.cursor = "default";
+      inkCanvas.style.cursor = EYEDROPPER_CURSOR;
       return;
     }
     const presentation = cursorPresentationForTool(activeTool);
@@ -296,14 +302,14 @@ export const CanvasHost = memo(function CanvasHost({
     }
     brushCursor.dataset.visible = "false";
     brushCursor.style.opacity = "0";
-    const setCursor = (cursor: "crosshair" | "default"): void => {
-      inkCanvas.style.cursor = cursor;
-      inkCanvas.dataset.eyedropperCursor = cursor;
+    const setCursor = (over: boolean): void => {
+      inkCanvas.style.cursor = over ? EYEDROPPER_CURSOR : "default";
+      inkCanvas.dataset.eyedropperCursor = over ? "pipette" : "default";
     };
     const handlePointerMove = (event: PointerEvent): void => {
       const surface = inkCanvas.closest<HTMLElement>("[data-viewport-page-x]");
       if (surface === null) {
-        setCursor("default");
+        setCursor(false);
         return;
       }
       const bounds = outerHost.getBoundingClientRect();
@@ -316,9 +322,9 @@ export const CanvasHost = memo(function CanvasHost({
           height: Number(surface.dataset.viewportPageHeight),
         },
       );
-      setCursor(overPage ? "crosshair" : "default");
+      setCursor(overPage);
     };
-    const handlePointerLeave = (): void => setCursor("default");
+    const handlePointerLeave = (): void => setCursor(false);
     outerHost.addEventListener("pointermove", handlePointerMove, true);
     outerHost.addEventListener("pointerleave", handlePointerLeave, true);
     return () => {
@@ -357,6 +363,8 @@ export const CanvasHost = memo(function CanvasHost({
         onHistoryChange={handleHistoryChange}
         onArtworkColorUsed={onDrawingColorUsed}
         onObjectLifecycleActionsReady={onObjectLifecycleActionsReady}
+        onEscapeActionsReady={onEscapeActionsReady}
+        onActiveLayerRefusal={onActiveLayerRefusal}
         onShapeEditingActionsReady={onShapeEditingActionsReady}
         onShapeEditingChange={onShapeEditingChange}
         onLayerActionsReady={onLayerActionsReady}

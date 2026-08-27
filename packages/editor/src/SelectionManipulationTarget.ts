@@ -116,30 +116,44 @@ export function resolveSelectionManipulationHit(
     : null;
 }
 
+/**
+ * Corners of the oriented frame for one transformed object.
+ *
+ * `pivot` exists for Ink. A vector's local bounds are centred on the point it
+ * rotates about, so the pivot can be derived; a stroke's *visual* bounds are
+ * tight around the ink and need not be centred on the stroke's pivot, so the
+ * caller supplies the real one instead of the frame inventing a wrong centre.
+ */
 export function resolveOrientedSelectionFrame(
   localBounds: ObjectBounds,
   transform: Transform,
   zoom: number,
+  explicitPivot?: Readonly<{ x: number; y: number }>,
 ): OrientedSelectionFrame {
   if (!Number.isFinite(zoom) || zoom <= 0) {
     throw new RangeError("Oriented selection geometry requires a positive finite zoom.");
   }
-  const pivot = Object.freeze({
-    x: localBounds.x + localBounds.width / 2,
-    y: localBounds.y + localBounds.height / 2,
-  });
+  const pivot = Object.freeze(
+    explicitPivot ?? {
+      x: localBounds.x + localBounds.width / 2,
+      y: localBounds.y + localBounds.height / 2,
+    },
+  );
   const padding = OUTLINE_PADDING_PIXELS / zoom / transform.scale;
   const rotationOffset = ROTATION_HANDLE_OFFSET_PIXELS / zoom / transform.scale;
   const left = localBounds.x - padding;
   const right = localBounds.x + localBounds.width + padding;
   const top = localBounds.y - padding;
   const bottom = localBounds.y + localBounds.height + padding;
+  // The frame is centred on the artwork; only rotation happens about the pivot.
+  const frameCenterX = (left + right) / 2;
+  const frameCenterY = (top + bottom) / 2;
   const transformPoint = (point: Readonly<{ x: number; y: number }>) =>
     transform.applyToPoint(point, pivot);
   return Object.freeze({
-    center: transformPoint(pivot),
-    topMidpoint: transformPoint({ x: pivot.x, y: top }),
-    rotationHandle: transformPoint({ x: pivot.x, y: top - rotationOffset }),
+    center: transformPoint({ x: frameCenterX, y: frameCenterY }),
+    topMidpoint: transformPoint({ x: frameCenterX, y: top }),
+    rotationHandle: transformPoint({ x: frameCenterX, y: top - rotationOffset }),
     corners: Object.freeze([
       transformPoint({ x: left, y: top }),
       transformPoint({ x: right, y: top }),

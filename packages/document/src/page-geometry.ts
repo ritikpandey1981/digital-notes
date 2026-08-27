@@ -62,7 +62,13 @@ export const PAGE_PRESETS: readonly PagePreset[] = Object.freeze([
   }),
 ]);
 
-export const DEFAULT_PAGE_GEOMETRY: PageGeometry = Object.freeze({ width: 794, height: 1123 });
+/**
+ * A new sketchbook opens on A4 landscape.
+ *
+ * Sketching favours the wider format, and every later page inherits the current
+ * page instead of this constant, so an existing document is never re-oriented.
+ */
+export const DEFAULT_PAGE_GEOMETRY: PageGeometry = Object.freeze({ width: 1123, height: 794 });
 
 /** Validates and freezes one page extent. */
 export function createPageGeometry(geometry: PageGeometry): PageGeometry {

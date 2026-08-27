@@ -6,9 +6,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { CopyPlus, MoreHorizontal, Trash2 } from "lucide-react";
+import { CopyPlus, Lock, MoreHorizontal, Trash2 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -16,11 +17,14 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { pushDismissal } from "./floating-dismissal-stack";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { ExpandableToolbarSection } from "./ExpandableToolbarSection";
 import { ToolTooltip } from "./ToolTooltip";
+import { collectEditorOccupiedZones, measureSurfaceRect } from "./editor-workspace-zones";
 import {
   resolveShapeEditingToolbarPlacement,
+  toolbarZonesFromOccupied,
   type ShapeEditingToolbarSize,
 } from "./shape-editing-toolbar-position";
 import type { ToolOptionPropertyDescriptor } from "./tool-options-registry";
@@ -36,7 +40,6 @@ interface ShapeEditingToolbarProps {
   readonly onDelete: () => void;
   readonly layers: readonly Readonly<{ id: string; name: string }>[];
   readonly onMoveToLayer: (layerId: string) => void;
-  readonly rightOccupiedWidth?: number;
 }
 
 const TOOLBAR_MARGIN = 12;
@@ -52,9 +55,9 @@ export function ShapeEditingToolbar({
   onDelete,
   layers,
   onMoveToLayer,
-  rightOccupiedWidth = 0,
 }: ShapeEditingToolbarProps) {
   const toolbarRef = useRef<HTMLElement | null>(null);
+  const expandedSectionScope = useId();
   const selectedObjectIdRef = useRef<string | null>(null);
   const [toolbarSize, setToolbarSize] = useState<ShapeEditingToolbarSize>({
     width: 0,
@@ -62,6 +65,10 @@ export function ShapeEditingToolbar({
   });
   const [expandedSection, setExpandedSection] = useState<ExpandedSection | null>(null);
   const visible = snapshot !== null;
+  // A read-only selection stays visible and selectable, but every mutation
+  // control is disabled rather than silently doing nothing.
+  const readOnly = snapshot?.readOnly === true;
+  const interactive = visible && !readOnly;
   const activeExpandedSection =
     expandedSection !== null && snapshot?.objectId === expandedSection.objectId
       ? expandedSection.id
@@ -74,23 +81,23 @@ export function ShapeEditingToolbar({
     () => shapeOpacityDescriptor(snapshot?.opacity ?? 1),
     [snapshot?.opacity],
   );
+  // The toolbar reads the same measured chrome as every other floating
+  // surface, minus itself, so a Layers panel or open Page Settings pushes it
+  // aside exactly like the right rail always did.
+  const workspaceOrigin = measureSurfaceRect(
+    document.querySelector('[data-testid="editor-workspace"]'),
+  );
+  const occupiedZones =
+    snapshot === null || workspaceOrigin === undefined
+      ? []
+      : toolbarZonesFromOccupied(
+          collectEditorOccupiedZones({ exclude: ["selection-toolbar"] }),
+          workspaceOrigin,
+        );
   const placement =
     snapshot === null
       ? null
-      : resolveShapeEditingToolbarPlacement(
-          snapshot,
-          toolbarSize,
-          rightOccupiedWidth <= 0
-            ? []
-            : [
-                {
-                  x: snapshot.viewportSize.width - rightOccupiedWidth,
-                  y: 0,
-                  width: rightOccupiedWidth,
-                  height: snapshot.viewportSize.height,
-                },
-              ],
-        );
+      : resolveShapeEditingToolbarPlacement(snapshot, toolbarSize, occupiedZones);
   const maximumToolbarWidth =
     snapshot === null
       ? `calc(100% - ${TOOLBAR_MARGIN * 2}px)`
@@ -117,6 +124,10 @@ export function ShapeEditingToolbar({
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     if (toolbar === null) return;
+    // Deliberately the bar alone. An expanded Width or Opacity section hangs
+    // below it, and folding that into the toolbar's own size would make the bar
+    // jump the moment a section opens. Other surfaces still see the expansion:
+    // the shared zone collector unions it into this toolbar's occupied rect.
     const measure = (): void => {
       const bounds = toolbar.getBoundingClientRect();
       setToolbarSize((previous) =>
@@ -145,19 +156,18 @@ export function ShapeEditingToolbar({
       onCancelStyleEdit();
       setExpandedSection(null);
     };
-    const dismissWithEscape = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
+    document.addEventListener("pointerdown", dismissOutside, true);
+    // The expanded section joins the shared dismissal stack so one Escape
+    // closes it alone and never also clears the canvas selection beneath it.
+    const releaseDismissal = pushDismissal(expandedSectionScope, () => {
       onCancelStyleEdit();
       setExpandedSection(null);
-    };
-    document.addEventListener("pointerdown", dismissOutside, true);
-    window.addEventListener("keydown", dismissWithEscape);
+    });
     return () => {
       document.removeEventListener("pointerdown", dismissOutside, true);
-      window.removeEventListener("keydown", dismissWithEscape);
+      releaseDismissal();
     };
-  }, [activeExpandedSection, onCancelStyleEdit]);
+  }, [activeExpandedSection, expandedSectionScope, onCancelStyleEdit]);
 
   return (
     <section
@@ -173,18 +183,19 @@ export function ShapeEditingToolbar({
       data-toolbar-sizing="content"
       data-toolbar-placement={placement?.side ?? "hidden"}
       data-toolbar-collision-policy="selection-controls"
-      data-toolbar-right-occupied-width={rightOccupiedWidth}
+      data-toolbar-occupied-zones={occupiedZones.length}
       data-toolbar-expanded-section={activeExpandedSection ?? ""}
+      data-selection-read-only={readOnly}
       data-selected-shape-type={snapshot?.objectType ?? ""}
       data-floating-surface="folio"
     >
       <button
         type="button"
-        className="group relative flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-folio-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-        aria-label="Shape stroke color"
+        className="group relative flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-folio-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent disabled:pointer-events-none disabled:opacity-35"
+        aria-label="Stroke color"
         data-testid="selected-vector-color-trigger"
-        tabIndex={visible ? 0 : -1}
-        disabled={!visible}
+        tabIndex={interactive ? 0 : -1}
+        disabled={!interactive}
         onClick={(event) => onOpenColorPicker(event.currentTarget)}
       >
         <span
@@ -192,16 +203,25 @@ export function ShapeEditingToolbar({
           style={{ backgroundColor: snapshot?.strokeColor ?? "#111111" }}
           aria-hidden="true"
         />
-        <ToolTooltip label="Shape stroke color" side="bottom" />
+        <ToolTooltip label="Stroke color" side="bottom" />
       </button>
+      {readOnly ? (
+        <span
+          className="flex shrink-0 items-center gap-1 rounded-md bg-folio-surface-muted px-1.5 py-0.5 text-[10px] font-medium text-folio-muted"
+          data-testid="selection-read-only-badge"
+        >
+          <Lock className="size-3" aria-hidden="true" />
+          Locked
+        </span>
+      ) : null}
       <span className="h-6 w-px shrink-0 bg-folio-border" aria-hidden="true" />
       <ExpandableToolbarSection
         id="strokeWidth"
         label="Width"
-        ariaLabel="Shape stroke width"
+        ariaLabel="Stroke width"
         summary={`${formatWidth(snapshot?.strokeWidth ?? 2)} px`}
-        open={visible && activeExpandedSection === "strokeWidth"}
-        disabled={!visible}
+        open={interactive && activeExpandedSection === "strokeWidth"}
+        disabled={!interactive}
         onOpenChange={(open) => {
           if (!open) onCancelStyleEdit();
           setExpandedSection(
@@ -220,10 +240,10 @@ export function ShapeEditingToolbar({
       <ExpandableToolbarSection
         id="opacity"
         label="Opacity"
-        ariaLabel="Shape stroke opacity"
+        ariaLabel="Stroke opacity"
         summary={`${Math.round((snapshot?.opacity ?? 1) * 100)} %`}
-        open={visible && activeExpandedSection === "opacity"}
-        disabled={!visible}
+        open={interactive && activeExpandedSection === "opacity"}
+        disabled={!interactive}
         onOpenChange={(open) => {
           if (!open) onCancelStyleEdit();
           setExpandedSection(
@@ -241,20 +261,20 @@ export function ShapeEditingToolbar({
       </ExpandableToolbarSection>
       <span className="h-6 w-px shrink-0 bg-folio-border" aria-hidden="true" />
       <ToolbarButton
-        label="Duplicate shape"
-        disabled={!visible}
+        label="Duplicate"
+        disabled={!interactive}
         onClick={onDuplicate}
         icon={<CopyPlus className="size-4" aria-hidden="true" />}
       />
       <ToolbarButton
-        label="Delete shape"
-        disabled={!visible}
+        label="Delete"
+        disabled={!interactive}
         onClick={onDelete}
         danger
         icon={<Trash2 className="size-4" aria-hidden="true" />}
       />
       <MoveToLayerMenu
-        visible={visible}
+        visible={interactive}
         layers={layers}
         currentLayerId={snapshot?.layerId ?? null}
         onMoveToLayer={onMoveToLayer}
@@ -363,6 +383,7 @@ function MoveToLayerMenu({
           data-testid="selection-more-options"
           tabIndex={visible ? 0 : -1}
           disabled={!visible}
+          data-selection-read-only={!visible}
         >
           <MoreHorizontal className="size-[17px]" aria-hidden="true" />
         </button>

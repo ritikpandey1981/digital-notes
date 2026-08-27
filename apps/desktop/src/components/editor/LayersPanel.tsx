@@ -1,23 +1,44 @@
 import type { LayerActions, LayersSnapshot } from "@folio/editor";
 import { cn } from "@folio/ui";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ChevronDown, ChevronUp, Eye, EyeOff, Lock, LockOpen, Plus, Trash2 } from "lucide-react";
-import { useRef, useState, type KeyboardEvent } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  INTERACTION_MOTION,
-  motionSeconds,
-  PROFESSIONAL_EASE,
-} from "../../motion/interaction-motion";
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Lock,
+  LockOpen,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import {
+  floatingSurfaceMotion,
+  useFloatingSurfaceMotion,
+} from "../../motion/floating-surface-motion";
 import { ContinuousSlider } from "./ContinuousSlider";
 import {
   canDeleteLayer,
   describeDeletedLayer,
+  LAYER_DRAG_THRESHOLD,
   LAYER_PANEL_WIDTH,
   LAYER_ROW_HEIGHT,
   layerRows,
   moveTargetIndex,
   nextFocusIndex,
   normalizeLayerName,
+  resolveLayerAutoScroll,
+  resolveLayerDragMove,
+  resolveLayerDropIndex,
   type LayerRow,
 } from "./layers-panel-model";
 import { useFloatingWidgetDismissal } from "./useFloatingWidgetDismissal";
@@ -30,16 +51,34 @@ interface LayersPanelProps {
   readonly onNotify: (message: string) => void;
 }
 
+/** Live state of one reorder gesture. Presentation only until it commits. */
+interface LayerDragState {
+  readonly layerId: string;
+  readonly fromIndex: number;
+  readonly insertIndex: number;
+}
+
 export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: LayersPanelProps) {
-  const reducedMotion = useReducedMotion() === true;
+  const motionPreset = useFloatingSurfaceMotion();
   const boundaryRef = useRef<HTMLElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const handleRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [renamingLayerId, setRenamingLayerId] = useState<string | null>(null);
   const [opacityLayerId, setOpacityLayerId] = useState<string | null>(null);
   const [focusIndex, setFocusIndex] = useState(0);
+  const [drag, setDrag] = useState<LayerDragState | null>(null);
+  const cancelDragRef = useRef<(() => void) | null>(null);
+  const rows = layerRows(snapshot);
   const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef, {
     outsidePointerDismissal: "ignore",
     onEscape: () => {
+      // A live drag is the innermost transient state, so it unwinds first and
+      // leaves the order exactly as it was.
+      if (cancelDragRef.current !== null) {
+        cancelDragRef.current();
+        return;
+      }
       if (renamingLayerId !== null) {
         setRenamingLayerId(null);
         return;
@@ -52,35 +91,132 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
       onDismiss();
     },
   });
-  const rows = layerRows(snapshot);
   // Closing the panel discards transient row state without an effect.
   if (!open && (renamingLayerId !== null || opacityLayerId !== null)) {
     setRenamingLayerId(null);
     setOpacityLayerId(null);
   }
 
+  const beginDrag = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, fromIndex: number, layerId: string): void => {
+      if (event.button !== 0 || rows.length < 2) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const handle = event.currentTarget;
+      const pointerId = event.pointerId;
+      const originY = event.clientY;
+      let pointerY = originY;
+      let started = false;
+      let insertIndex = fromIndex;
+      let autoScrollFrame: number | null = null;
+
+      const rowMetrics = (): readonly Readonly<{ top: number; height: number }>[] =>
+        rowRefs.current.slice(0, rows.length).map((element) => {
+          const bounds = element?.getBoundingClientRect();
+          return { top: bounds?.top ?? 0, height: bounds?.height ?? LAYER_ROW_HEIGHT };
+        });
+
+      const updateInsertion = (): void => {
+        const next = resolveLayerDropIndex(pointerY, rowMetrics());
+        if (next === insertIndex) return;
+        insertIndex = next;
+        setDrag({ layerId, fromIndex, insertIndex });
+      };
+
+      const stepAutoScroll = (): void => {
+        autoScrollFrame = null;
+        const list = listRef.current;
+        if (list === null || !started) return;
+        const bounds = list.getBoundingClientRect();
+        const delta = resolveLayerAutoScroll(pointerY, {
+          top: bounds.top,
+          height: bounds.height,
+        });
+        if (delta !== 0) {
+          list.scrollTop += delta;
+          updateInsertion();
+          autoScrollFrame = requestAnimationFrame(stepAutoScroll);
+        }
+      };
+
+      const finish = (commit: boolean): void => {
+        if (autoScrollFrame !== null) cancelAnimationFrame(autoScrollFrame);
+        autoScrollFrame = null;
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+        cancelDragRef.current = null;
+        setDrag(null);
+        try {
+          handle.releasePointerCapture(pointerId);
+        } catch {
+          // The browser may already have released it.
+        }
+        if (!commit || !started) return;
+        const move = resolveLayerDragMove(fromIndex, insertIndex, rows.length);
+        // A no-op drag must not reach History at all, so it stops here rather
+        // than relying on the command layer to notice nothing changed.
+        if (move.changed) actions?.moveLayer(layerId, move.targetStorageIndex);
+      };
+
+      const handleMove = (moveEvent: PointerEvent): void => {
+        if (moveEvent.pointerId !== pointerId) return;
+        pointerY = moveEvent.clientY;
+        if (!started) {
+          if (Math.abs(pointerY - originY) < LAYER_DRAG_THRESHOLD) return;
+          started = true;
+          setDrag({ layerId, fromIndex, insertIndex });
+        }
+        updateInsertion();
+        if (autoScrollFrame === null) autoScrollFrame = requestAnimationFrame(stepAutoScroll);
+      };
+      const handleUp = (upEvent: PointerEvent): void => {
+        if (upEvent.pointerId !== pointerId) return;
+        finish(true);
+      };
+      const handleCancel = (cancelEvent: PointerEvent): void => {
+        if (cancelEvent.pointerId !== pointerId) return;
+        finish(false);
+      };
+
+      handle.setPointerCapture(pointerId);
+      cancelDragRef.current = () => finish(false);
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp);
+      window.addEventListener("pointercancel", handleCancel);
+    },
+    [actions, rows.length],
+  );
+
+  useEffect(() => () => cancelDragRef.current?.(), []);
+
+  const moveRow = useCallback(
+    (row: LayerRow, direction: "up" | "down", index: number): void => {
+      const target = moveTargetIndex(row, direction, rows.length);
+      if (target === null || actions?.moveLayer(row.id, target) !== true) return;
+      const next = nextFocusIndex(index, direction, rows.length);
+      setFocusIndex(next);
+      // Focus follows the row so a run of keyboard moves keeps working.
+      queueMicrotask(() => handleRefs.current[next]?.focus());
+    },
+    [actions, rows.length],
+  );
+
   const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (renamingLayerId !== null) return;
-    const row = rows[focusIndex];
+    const index = rowIndexFromEvent(event.target, rows.length) ?? focusIndex;
+    const row = rows[index];
     if (row === undefined) return;
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       const direction = event.key === "ArrowUp" ? "up" : "down";
       event.preventDefault();
       if (event.altKey) {
-        const target = moveTargetIndex(row, direction, rows.length);
-        if (target !== null && actions?.moveLayer(row.id, target) === true) {
-          setFocusIndex(nextFocusIndex(focusIndex, direction, rows.length));
-        }
+        moveRow(row, direction, index);
         return;
       }
-      const next = nextFocusIndex(focusIndex, direction, rows.length);
+      const next = nextFocusIndex(index, direction, rows.length);
       setFocusIndex(next);
-      rowRefs.current[next]?.focus();
-      return;
-    }
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      actions?.setActiveLayer(row.id);
+      handleRefs.current[next]?.focus();
       return;
     }
     if (event.key === "F2") {
@@ -103,13 +239,8 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
             data-elevation="temporary"
             data-floating-surface="folio"
             data-layer-count={rows.length}
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{
-              duration: motionSeconds(INTERACTION_MOTION.floatingMilliseconds, reducedMotion),
-              ease: PROFESSIONAL_EASE,
-            }}
+            data-layer-drag-state={drag === null ? "idle" : "dragging"}
+            {...floatingSurfaceMotion(motionPreset)}
           >
             <header className="flex shrink-0 items-center justify-between px-3 py-2">
               <span className="text-[11px] font-semibold text-folio-ink">Layers</span>
@@ -127,10 +258,10 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
               </button>
             </header>
             <div
+              ref={listRef}
               className="min-h-0 flex-1 overflow-y-auto px-1 pb-1"
-              role="listbox"
+              role="list"
               aria-label="Layer list"
-              aria-orientation="vertical"
               data-testid="layers-list"
               onKeyDown={handleListKeyDown}
             >
@@ -140,11 +271,21 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
                   ref={(element) => {
                     rowRefs.current[index] = element;
                   }}
+                  handleRef={(element) => {
+                    handleRefs.current[index] = element;
+                  }}
                   row={row}
-                  tabIndex={index === focusIndex ? 0 : -1}
+                  index={index}
+                  handleTabIndex={index === focusIndex ? 0 : -1}
                   layerCount={rows.length}
+                  dragging={drag?.layerId === row.id}
+                  dropBefore={drag !== null && drag.insertIndex === index}
+                  dropAfter={
+                    drag !== null && drag.insertIndex === rows.length && index === rows.length - 1
+                  }
                   renaming={renamingLayerId === row.id}
                   opacityOpen={opacityLayerId === row.id}
+                  onDragHandlePointerDown={(event) => beginDrag(event, index, row.id)}
                   onFocusRow={() => setFocusIndex(index)}
                   onActivate={() => actions?.setActiveLayer(row.id)}
                   onToggleVisible={() => actions?.setLayerVisible(row.id, !row.visible)}
@@ -167,10 +308,7 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
                   onOpacityStart={() => actions?.beginLayerOpacityEdit(row.id)}
                   onOpacityChange={(value) => actions?.previewLayerOpacity(value)}
                   onOpacityCommit={() => actions?.commitLayerOpacityEdit()}
-                  onMove={(direction) => {
-                    const target = moveTargetIndex(row, direction, rows.length);
-                    if (target !== null) actions?.moveLayer(row.id, target);
-                  }}
+                  onMove={(direction) => moveRow(row, direction, index)}
                   onDelete={() => {
                     const removed = actions?.deleteLayer(row.id);
                     if (removed !== null && removed !== undefined) {
@@ -187,12 +325,27 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
   );
 }
 
+/** Resolves the row a keyboard event came from, whichever control has focus. */
+function rowIndexFromEvent(target: EventTarget | null, rowCount: number): number | null {
+  if (!(target instanceof Element)) return null;
+  const raw = target.closest("[data-layer-row-index]")?.getAttribute("data-layer-row-index");
+  if (raw === null || raw === undefined) return null;
+  const index = Number(raw);
+  return Number.isInteger(index) && index >= 0 && index < rowCount ? index : null;
+}
+
 interface LayerRowViewProps {
   readonly row: LayerRow;
-  readonly tabIndex: number;
+  readonly index: number;
+  readonly handleTabIndex: number;
   readonly layerCount: number;
+  readonly dragging: boolean;
+  readonly dropBefore: boolean;
+  readonly dropAfter: boolean;
   readonly renaming: boolean;
   readonly opacityOpen: boolean;
+  readonly handleRef: (element: HTMLButtonElement | null) => void;
+  readonly onDragHandlePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onFocusRow: () => void;
   readonly onActivate: () => void;
   readonly onToggleVisible: () => void;
@@ -208,13 +361,27 @@ interface LayerRowViewProps {
   readonly onDelete: () => void;
 }
 
+/**
+ * One layer row.
+ *
+ * The list is a plain list of list items rather than a listbox of options: the
+ * rows hold their own buttons, and a listbox option that contains interactive
+ * controls is not a pattern assistive technology can navigate. Active state is
+ * carried by `aria-current` on the row's own name control.
+ */
 function LayerRowView({
   ref,
+  handleRef,
   row,
-  tabIndex,
+  index,
+  handleTabIndex,
   layerCount,
+  dragging,
+  dropBefore,
+  dropAfter,
   renaming,
   opacityOpen,
+  onDragHandlePointerDown,
   onFocusRow,
   onActivate,
   onToggleVisible,
@@ -229,25 +396,54 @@ function LayerRowView({
   onMove,
   onDelete,
 }: LayerRowViewProps & { readonly ref?: (element: HTMLDivElement | null) => void }) {
+  const optionsRef = useRef<HTMLDivElement | null>(null);
+  // Expanding the last visible row used to leave its controls clipped below the
+  // panel edge; the panel now scrolls the expansion into view instead.
+  useEffect(() => {
+    if (!opacityOpen) return;
+    optionsRef.current?.scrollIntoView({ block: "nearest" });
+  }, [opacityOpen]);
   return (
-    <div data-testid={`layer-row-${row.id}`} data-layer-active={row.active}>
+    <div
+      ref={ref}
+      role="listitem"
+      data-testid={`layer-row-${row.id}`}
+      data-layer-row-index={index}
+      data-layer-active={row.active}
+      data-layer-dragging={dragging}
+      className="relative"
+    >
+      {dropBefore ? <DropIndicator position="before" /> : null}
+      {dropAfter ? <DropIndicator position="after" /> : null}
       <div
-        ref={ref}
-        role="option"
         data-testid={`layer-row-button-${row.id}`}
-        tabIndex={tabIndex}
-        aria-selected={row.active}
-        aria-label={`${row.name}, ${row.objectCount} object${row.objectCount === 1 ? "" : "s"}`}
         className={cn(
           "group flex items-center gap-1 rounded-lg px-1 outline-none transition-colors",
           row.active ? "bg-folio-accent-soft" : "hover:bg-folio-hover",
-          "focus-visible:ring-2 focus-visible:ring-folio-accent",
+          dragging && "opacity-60 shadow-sm ring-1 ring-folio-accent",
         )}
         style={{ height: LAYER_ROW_HEIGHT }}
         onFocus={onFocusRow}
         onClick={onActivate}
         onDoubleClick={onStartRename}
       >
+        <button
+          ref={handleRef}
+          type="button"
+          className={cn(
+            "flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-folio-muted opacity-0 transition-[color,opacity] hover:text-folio-ink focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent group-focus-within:opacity-100 group-hover:opacity-100",
+            dragging && "cursor-grabbing opacity-100 text-folio-ink",
+            layerCount < 2 && "pointer-events-none opacity-0",
+          )}
+          aria-label={`Reorder ${row.name}. Hold Alt with the arrow keys to move it`}
+          data-testid={`layer-drag-handle-${row.id}`}
+          tabIndex={handleTabIndex}
+          disabled={layerCount < 2}
+          onPointerDown={onDragHandlePointerDown}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <GripVertical className="size-3.5" aria-hidden="true" />
+        </button>
         <RowButton
           label={row.visible ? `Hide ${row.name}` : `Show ${row.name}`}
           testId={`layer-visibility-${row.id}`}
@@ -280,19 +476,56 @@ function LayerRowView({
             onCancel={onCancelRename}
           />
         ) : (
-          <span
-            className="min-w-0 flex-1 truncate text-[11px] text-folio-ink"
+          // Names read and behave like editable text: a hover affordance, a
+          // pencil on the active row, plus double-click and F2. The same
+          // control carries the active-layer state.
+          <button
+            type="button"
+            className="group/name flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left text-[11px] text-folio-ink transition-colors hover:bg-folio-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+            aria-label={`${row.name}, ${row.objectCount} object${row.objectCount === 1 ? "" : "s"}${row.active ? ", active layer" : ""}. Activate, or press F2 to rename`}
+            {...(row.active ? { "aria-current": true as const } : {})}
             data-testid={`layer-name-${row.id}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onActivate();
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              onStartRename();
+            }}
           >
-            {row.name}
+            <span className="min-w-0 truncate">{row.name}</span>
+            <Pencil
+              className="size-2.5 shrink-0 text-folio-muted opacity-0 transition-opacity group-hover/name:opacity-100"
+              aria-hidden="true"
+            />
+          </button>
+        )}
+        {/* Repeating "100%" on every row is noise; only a changed value earns space. */}
+        {row.opacity < 1 ? (
+          <span
+            className="w-8 shrink-0 text-right text-[10px] tabular-nums text-folio-muted"
+            data-testid={`layer-opacity-value-${row.id}`}
+          >
+            {Math.round(row.opacity * 100)}%
+          </span>
+        ) : (
+          <span className="sr-only" data-testid={`layer-opacity-value-${row.id}`}>
+            {Math.round(row.opacity * 100)}%
           </span>
         )}
-        <span
-          className="w-8 shrink-0 text-right text-[10px] tabular-nums text-folio-muted"
-          data-testid={`layer-opacity-value-${row.id}`}
+        {/* Delete belongs on the row, not two clicks deep under opacity. */}
+        <RowButton
+          label={`Delete ${row.name}`}
+          testId={`layer-delete-${row.id}`}
+          disabled={!canDeleteLayer(layerCount)}
+          className="opacity-0 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 data-[always-visible=true]:opacity-100"
+          alwaysVisible={row.active}
+          danger
+          onClick={onDelete}
         >
-          {Math.round(row.opacity * 100)}%
-        </span>
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </RowButton>
         <RowButton
           label={`Layer options for ${row.name}`}
           testId={`layer-options-${row.id}`}
@@ -304,6 +537,7 @@ function LayerRowView({
       </div>
       {opacityOpen ? (
         <div
+          ref={optionsRef}
           className="mb-1 rounded-lg bg-folio-surface-muted p-1"
           data-testid={`layer-options-panel-${row.id}`}
         >
@@ -342,18 +576,22 @@ function LayerRowView({
               <ChevronDown className="size-3.5" aria-hidden="true" />
             </RowButton>
             <span className="flex-1" />
-            <RowButton
-              label={`Delete ${row.name}`}
-              testId={`layer-delete-${row.id}`}
-              disabled={!canDeleteLayer(layerCount)}
-              onClick={onDelete}
-            >
-              <Trash2 className="size-3.5" aria-hidden="true" />
-            </RowButton>
           </div>
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** The line the dragged row will land on. */
+function DropIndicator({ position }: { readonly position: "before" | "after" }) {
+  return (
+    <span
+      className="pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-folio-accent"
+      style={position === "before" ? { top: -1 } : { bottom: -1 }}
+      data-testid={`layer-drop-indicator-${position}`}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -362,6 +600,9 @@ function RowButton({
   testId,
   pressed,
   disabled,
+  className,
+  alwaysVisible,
+  danger,
   onClick,
   children,
 }: {
@@ -369,6 +610,9 @@ function RowButton({
   readonly testId: string;
   readonly pressed?: boolean;
   readonly disabled?: boolean;
+  readonly className?: string;
+  readonly alwaysVisible?: boolean;
+  readonly danger?: boolean;
   readonly onClick: () => void;
   readonly children: React.ReactNode;
 }) {
@@ -378,9 +622,12 @@ function RowButton({
       className={cn(
         "flex size-6 shrink-0 items-center justify-center rounded text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent disabled:pointer-events-none disabled:opacity-35",
         pressed === true && "text-folio-ink",
+        danger === true && "hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400",
+        className,
       )}
       aria-label={label}
       data-testid={testId}
+      {...(alwaysVisible === undefined ? {} : { "data-always-visible": alwaysVisible })}
       {...(pressed === undefined ? {} : { "aria-pressed": pressed })}
       disabled={disabled === true}
       onClick={(event) => {

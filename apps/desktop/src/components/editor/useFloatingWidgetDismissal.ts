@@ -1,4 +1,5 @@
-import { useEffect, useId, type RefObject } from "react";
+import { useEffect, useId, useRef, type RefObject } from "react";
+import { pushDismissal } from "./floating-dismissal-stack";
 
 /** Owns dismissal for one floating widget and any portaled descendants carrying its scope. */
 export function useFloatingWidgetDismissal(
@@ -18,11 +19,30 @@ export function useFloatingWidgetDismissal(
 ): string {
   const generatedScopeId = useId();
   const scopeId = options.scopeId ?? generatedScopeId;
+  // Handlers change identity freely; the stack entry must not be re-ordered by
+  // it, so the live callbacks are read from refs kept current by one effect.
+  const escapeRef = useRef<() => void>(onDismiss);
+  const dismissRef = useRef(onDismiss);
+  const pointerPolicyRef = useRef(options.outsidePointerDismissal);
+  const canvasPolicyRef = useRef(options.canvasPageDismissal);
+  const { onEscape, outsidePointerDismissal, canvasPageDismissal } = options;
+
+  useEffect(() => {
+    escapeRef.current = onEscape ?? onDismiss;
+    dismissRef.current = onDismiss;
+    pointerPolicyRef.current = outsidePointerDismissal;
+    canvasPolicyRef.current = canvasPageDismissal;
+  }, [canvasPageDismissal, onDismiss, onEscape, outsidePointerDismissal]);
+
+  useEffect(() => {
+    if (!open) return;
+    return pushDismissal(scopeId, () => escapeRef.current());
+  }, [open, scopeId]);
 
   useEffect(() => {
     if (!open) return;
     const handleOutsidePointerDown = (event: PointerEvent): void => {
-      if (options.outsidePointerDismissal === "ignore") return;
+      if (pointerPolicyRef.current === "ignore") return;
       if (!(event.target instanceof Node)) return;
       if (boundaryRef.current?.contains(event.target) === true) return;
       if (event.target instanceof Element && isOwnedFloatingSurface(event.target, scopeId)) return;
@@ -36,37 +56,19 @@ export function useFloatingWidgetDismissal(
       if (canvasRegion === "workspace") {
         event.preventDefault();
         event.stopPropagation();
-        onDismiss();
+        dismissRef.current();
         return;
       }
       if (canvasRegion === "page") {
-        if (options.canvasPageDismissal === "synchronous") onDismiss();
-        else queueMicrotask(onDismiss);
+        if (canvasPolicyRef.current === "synchronous") dismissRef.current();
+        else queueMicrotask(() => dismissRef.current());
         return;
       }
-      onDismiss();
-    };
-    const handleEscape = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (event.target instanceof Element && isOwnedFloatingSurface(event.target, scopeId)) return;
-      event.preventDefault();
-      (options.onEscape ?? onDismiss)();
+      dismissRef.current();
     };
     document.addEventListener("pointerdown", handleOutsidePointerDown, true);
-    window.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
-      window.removeEventListener("keydown", handleEscape);
-    };
-  }, [
-    boundaryRef,
-    onDismiss,
-    open,
-    options.canvasPageDismissal,
-    options.outsidePointerDismissal,
-    options.onEscape,
-    scopeId,
-  ]);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+  }, [boundaryRef, open, scopeId]);
 
   return scopeId;
 }

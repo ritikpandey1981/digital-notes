@@ -224,6 +224,48 @@ function createDrawingToolOptionsProvider(
   });
 }
 
+/** The Eraser's own runtime size, independent of every brush family. */
+export const DEFAULT_ERASER_SIZE = 16;
+
+export const ERASER_WIDTH_CONSTRAINTS = Object.freeze({
+  minimum: 4,
+  maximum: 120,
+  step: 1,
+  largeStep: 8,
+});
+
+/**
+ * Describes the Eraser's options panel.
+ *
+ * The Eraser removes whole strokes, so size is a reach radius rather than a
+ * brush footprint; it is the only setting the current eraser actually has.
+ */
+export function describeEraserToolOptions(size: number): ToolOptionsDescriptor {
+  return Object.freeze({
+    id: "eraser-options",
+    tool: "Eraser",
+    displayName: "Eraser",
+    preset: null,
+    properties: Object.freeze([
+      numberProperty({
+        key: "strokeWidth",
+        displayName: "Size",
+        value: size,
+        ...ERASER_WIDTH_CONSTRAINTS,
+        defaultValue: DEFAULT_ERASER_SIZE,
+        precision: 0,
+        unit: "px",
+      }),
+    ]),
+    preview: Object.freeze({
+      color: "#94a3b8",
+      width: size,
+      opacity: 1,
+      pressureEnabled: false,
+    }),
+  });
+}
+
 function colorProperty(value: string): ToolOptionPropertyDescriptor {
   return Object.freeze({
     key: "strokeColor",

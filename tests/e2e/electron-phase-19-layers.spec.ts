@@ -342,9 +342,11 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     expect(canvasBefore).not.toBeNull();
 
     // Keyboard: rows are reachable and reorder with Alt + Arrow.
+    // A row is a list item holding its own buttons rather than a focusable
+    // option, so its keyboard anchor is the reorder handle Tab reaches first.
     await window.setViewportSize({ width: 1440, height: 900 });
     await window.waitForTimeout(300);
-    await window.getByTestId("layer-row-button-layer-2").focus();
+    await window.getByTestId("layer-drag-handle-layer-2").focus();
     await window.keyboard.press("F2");
     await expect(window.getByTestId("layer-rename-layer-2")).toBeVisible();
     await window.getByTestId("layer-rename-layer-2").fill("Construction");

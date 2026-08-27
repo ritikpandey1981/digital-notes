@@ -63,6 +63,14 @@ interface EditorHistoryCoordinatorOptions {
 /** Package-private editor boundary around one manager/controller lifetime. */
 export interface EditorHistoryCoordinator {
   readonly controller: IHistoryController<SketchbookDocument>;
+  /**
+   * The page one recorded command belongs to, or null when it is not page-scoped.
+   *
+   * Undo and Redo use this to restore the page context the change happened on,
+   * so a restored change is always visible rather than applied to a page the
+   * user cannot see.
+   */
+  readonly pageForCommand: (commandId: string) => string | null;
   readonly executeStroke: (object: InkObject) => IHistoryState;
   readonly executeObjectCreation: (object: PageObject) => IHistoryState;
   readonly executeVectorStyleUpdate: (
@@ -133,6 +141,8 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
   readonly #documentSession: InkDocumentSession;
   readonly #now: () => string;
   readonly #unsubscribe: () => void;
+  /** Command identity to the page it changed, for page-aware Undo and Redo. */
+  readonly #commandPages = new Map<string, string>();
   #destroyed = false;
 
   constructor(options: EditorHistoryCoordinatorOptions) {
@@ -549,9 +559,9 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const sketchbook = this.#documentSession.sketchbook;
     const page = this.#documentSession.createInheritedPage();
     const index = sketchbook.pageIndex(this.#documentSession.activePageId) + 1;
-    const state = this.controller.executeCommand(
-      createAddPageCommand({ page, index, timestamp: this.#now() }),
-    );
+    const command = createAddPageCommand({ page, index, timestamp: this.#now() });
+    this.#rememberCommandPage(command.id, page.id);
+    const state = this.controller.executeCommand(command);
     return Object.freeze({ pageId: page.id, state });
   }
 
@@ -603,14 +613,24 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     );
   }
 
+  pageForCommand(commandId: string): string | null {
+    return this.#commandPages.get(commandId) ?? null;
+  }
+
+  /** Records which page a command changed so Undo and Redo can return there. */
+  #rememberCommandPage(commandId: string, pageId: string): void {
+    this.#commandPages.set(commandId, pageId);
+  }
+
   /** Executes one page-scoped command against the active page. */
   #executePageCommand(command: EditorCommand<PageDocument>): IHistoryState {
-    return this.controller.executeCommand(
-      liftPageCommand(command, this.#documentSession.activePageId),
-    );
+    const pageId = this.#documentSession.activePageId;
+    this.#rememberCommandPage(command.id, pageId);
+    return this.controller.executeCommand(liftPageCommand(command, pageId));
   }
 
   #runTransaction(id: string, description: string, execute: () => void): IHistoryState {
+    this.#rememberCommandPage(id, this.#documentSession.activePageId);
     this.controller.beginTransaction({ id, timestamp: this.#now(), description });
     try {
       execute();

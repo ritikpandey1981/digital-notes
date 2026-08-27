@@ -1,13 +1,19 @@
 import { normalizeArtworkHex, rgbToHex, type HsvColor } from "@folio/editor";
+import {
+  candidatesAroundRect,
+  hardZone,
+  insetRect,
+  resolveOccupiedAwarePlacement,
+  unionRects,
+  workspaceFallbackCandidates,
+  type OccupiedZone,
+  type PlacementCandidate,
+  type WorkspaceRect,
+} from "./editor-occupied-zones";
 import type { ColorPickerSource } from "./useColorPickerSession";
 import type { EditorTool } from "./editor-types";
 
-export interface PickerRect {
-  readonly left: number;
-  readonly top: number;
-  readonly width: number;
-  readonly height: number;
-}
+export type PickerRect = WorkspaceRect;
 
 export interface PickerPlacement {
   readonly left: number;
@@ -18,10 +24,8 @@ export interface PickerPlacement {
 export interface PickerPlacementConstraints {
   /** Usable workspace bounds in the same coordinate space as the anchor. */
   readonly bounds?: PickerRect;
-  /** Selected artwork that should remain visible while its color is previewed. */
-  readonly avoidRect?: PickerRect | undefined;
-  /** Floating workspace chrome that must remain reachable. */
-  readonly occupiedRects?: readonly PickerRect[];
+  /** Measured editor chrome and artwork, classified hard or soft. */
+  readonly zones?: readonly OccupiedZone[];
 }
 
 export interface RgbDraft {
@@ -36,7 +40,8 @@ export const FAVORITE_COMPACT_CAPACITY = 20;
 
 const VIEWPORT_PADDING = 12;
 const PICKER_GAP = 10;
-const OCCUPIED_GAP = 0;
+/** Chrome stays reachable rather than merely uncovered. */
+const HARD_ZONE_GAP = 6;
 const QUICK_COLOR_TOOLS = new Set<EditorTool>(["Pencil", "Pen", "Marker", "Highlighter", "Shapes"]);
 
 export function quickColorRailSupportsTool(tool: EditorTool): boolean {
@@ -53,6 +58,13 @@ export function favoriteCollectionDisplayPolicy(
   return favoriteCount > FAVORITE_COMPACT_CAPACITY ? "bounded-scroll" : "compact";
 }
 
+/**
+ * Places the full color picker inside the workspace it was opened from.
+ *
+ * The picker never covers the control that opened it, treats measured editor
+ * chrome as hard, treats the selected artwork as soft, and falls back through a
+ * fixed candidate order so the same inputs always produce the same position.
+ */
 export function resolveColorPickerPlacement(
   anchor: PickerRect,
   picker: Readonly<{ width: number; height: number }>,
@@ -67,86 +79,41 @@ export function resolveColorPickerPlacement(
     height: viewport.height,
   };
   const bounds = insetRect(rawBounds, VIEWPORT_PADDING);
-  const width = Math.min(Math.max(0, picker.width), bounds.width);
-  const height = Math.min(Math.max(0, picker.height), bounds.height);
-  const anchorPositions = {
-    left: {
-      left: anchor.left - PICKER_GAP - width,
-      top: anchor.top + anchor.height / 2 - height / 2,
-      side: "left" as const,
-    },
-    right: {
-      left: anchor.left + anchor.width + PICKER_GAP,
-      top: anchor.top + anchor.height / 2 - height / 2,
-      side: "right" as const,
-    },
-    above: {
-      left: anchor.left + anchor.width / 2 - width / 2,
-      top: anchor.top - PICKER_GAP - height,
-      side: "above" as const,
-    },
-    below: {
-      left: anchor.left + anchor.width / 2 - width / 2,
-      top: anchor.top + anchor.height + PICKER_GAP,
-      side: "below" as const,
-    },
+  const surface = {
+    width: Math.min(Math.max(0, picker.width), bounds.width),
+    height: Math.min(Math.max(0, picker.height), bounds.height),
   };
-  const anchorOrder =
-    source === "quick-rail"
-      ? (["left", "right", "below", "above"] as const)
-      : (["right", "below", "left", "above"] as const);
-  const avoidCandidates =
-    constraints.avoidRect === undefined
-      ? []
-      : candidatesAroundRect(constraints.avoidRect, width, height);
-  const workspaceFallbacks = fallbackCandidates(bounds, width, height);
-  const candidates =
-    source === "selected-vector"
-      ? [
-          ...workspaceFallbacks.slice(0, 1),
-          ...avoidCandidates,
-          ...anchorOrder.map((side) => anchorPositions[side]),
-          ...workspaceFallbacks.slice(1),
-        ]
-      : [...anchorOrder.map((side) => anchorPositions[side]), ...workspaceFallbacks];
-  const evaluated = candidates.map((candidate, index) => {
-    const clamped = {
-      ...candidate,
-      left: clamp(candidate.left, bounds.left, bounds.left + bounds.width - width),
-      top: clamp(candidate.top, bounds.top, bounds.top + bounds.height - height),
-    };
-    const rect = { left: clamped.left, top: clamped.top, width, height };
-    return {
-      candidate: clamped,
-      index,
-      clampDistance:
-        Math.abs(candidate.left - clamped.left) + Math.abs(candidate.top - clamped.top),
-      avoidOverlap:
-        constraints.avoidRect === undefined ? 0 : intersectionArea(rect, constraints.avoidRect),
-      occupiedOverlap: (constraints.occupiedRects ?? []).reduce(
-        (total, occupied) => total + intersectionArea(rect, inflateRect(occupied, OCCUPIED_GAP)),
-        0,
-      ),
-    };
+  // The picker's own trigger is always hard: covering it strands the user with
+  // no way back to the control they just used.
+  const zones = [...(constraints.zones ?? []), hardZone("picker-anchor", anchor)].filter(
+    (zone): zone is OccupiedZone => zone !== null,
+  );
+  const softRects = zones.filter((zone) => zone.kind === "soft").map((zone) => zone.rect);
+  // A trigger normally sits *inside* a rail or panel. Opening a gap from the
+  // button's own edge leaves the picker overlapping the few pixels of rail
+  // around it, which disqualifies every anchor-relative side and drops the
+  // picker into a far corner. Opening from the containing surface instead is
+  // what "beside the control you clicked" actually means.
+  const launchRect = zones.reduce(
+    (rect, zone) =>
+      zone.kind === "hard" && containsRect(zone.rect, anchor) ? unionRects(rect, zone.rect) : rect,
+    anchor,
+  );
+  const candidates: readonly PlacementCandidate[] = [
+    ...anchorCandidates(launchRect, surface, source),
+    ...softRects.flatMap((rect) => candidatesAroundRect(rect, surface, PICKER_GAP, "artwork")),
+    ...workspaceFallbackCandidates(bounds, surface),
+  ];
+  const placement = resolveOccupiedAwarePlacement({
+    surface,
+    bounds,
+    candidates,
+    zones,
+    anchor,
+    hardGap: HARD_ZONE_GAP,
   });
-  const preferred =
-    evaluated.find(
-      ({ avoidOverlap, occupiedOverlap }) => avoidOverlap === 0 && occupiedOverlap === 0,
-    ) ??
-    [...evaluated].sort(
-      (first, second) =>
-        first.occupiedOverlap - second.occupiedOverlap ||
-        first.avoidOverlap - second.avoidOverlap ||
-        first.clampDistance - second.clampDistance ||
-        first.index - second.index,
-    )[0];
-  const placement = preferred?.candidate ?? {
-    left: bounds.left,
-    top: bounds.top,
-    side: "fallback" as const,
-  };
   return Object.freeze({
-    side: placement.side,
+    side: sideFromReason(placement.reason),
     left: placement.left,
     top: placement.top,
   });
@@ -245,94 +212,64 @@ export function quickColorRailSwatchCount(workspaceHeight: number): number {
   return 7;
 }
 
-interface PlacementCandidate {
-  readonly left: number;
-  readonly top: number;
-  readonly side: PickerPlacement["side"];
-}
-
-function candidatesAroundRect(
-  rect: PickerRect,
-  width: number,
-  height: number,
+/**
+ * Anchor-relative positions in the order that suits each launch site.
+ *
+ * A Rail trigger on the right edge opens inward; a Tool Options trigger on the
+ * left opens outward; a selection toolbar floats over the artwork, so it opens
+ * below or above before it tries either side.
+ */
+function anchorCandidates(
+  anchor: PickerRect,
+  surface: Readonly<{ width: number; height: number }>,
+  source: ColorPickerSource,
 ): readonly PlacementCandidate[] {
-  return [
-    {
-      left: rect.left - PICKER_GAP - width,
-      top: rect.top,
-      side: "left",
+  const positions = {
+    left: {
+      left: anchor.left - PICKER_GAP - surface.width,
+      top: anchor.top + anchor.height / 2 - surface.height / 2,
+      reason: "anchor-left",
     },
-    {
-      left: rect.left + rect.width + PICKER_GAP,
-      top: rect.top,
-      side: "right",
+    right: {
+      left: anchor.left + anchor.width + PICKER_GAP,
+      top: anchor.top + anchor.height / 2 - surface.height / 2,
+      reason: "anchor-right",
     },
-    {
-      left: rect.left + rect.width / 2 - width / 2,
-      top: rect.top - PICKER_GAP - height,
-      side: "above",
+    above: {
+      left: anchor.left + anchor.width / 2 - surface.width / 2,
+      top: anchor.top - PICKER_GAP - surface.height,
+      reason: "anchor-above",
     },
-    {
-      left: rect.left + rect.width / 2 - width / 2,
-      top: rect.top + rect.height + PICKER_GAP,
-      side: "below",
+    below: {
+      left: anchor.left + anchor.width / 2 - surface.width / 2,
+      top: anchor.top + anchor.height + PICKER_GAP,
+      reason: "anchor-below",
     },
-  ];
+  } as const;
+  const order =
+    source === "quick-rail"
+      ? (["left", "below", "above", "right"] as const)
+      : source === "selected-vector"
+        ? (["below", "above", "right", "left"] as const)
+        : (["right", "below", "above", "left"] as const);
+  return Object.freeze(order.map((side) => positions[side]));
 }
 
-function fallbackCandidates(
-  bounds: PickerRect,
-  width: number,
-  height: number,
-): readonly PlacementCandidate[] {
-  const left = bounds.left;
-  const right = bounds.left + bounds.width - width;
-  const top = bounds.top;
-  const bottom = bounds.top + bounds.height - height;
-  const centerX = bounds.left + (bounds.width - width) / 2;
-  const centerY = bounds.top + (bounds.height - height) / 2;
-  return [
-    { left, top, side: "fallback" },
-    { left: right, top, side: "fallback" },
-    { left, top: bottom, side: "fallback" },
-    { left: right, top: bottom, side: "fallback" },
-    { left: centerX, top, side: "fallback" },
-    { left: centerX, top: bottom, side: "fallback" },
-    { left, top: centerY, side: "fallback" },
-    { left: right, top: centerY, side: "fallback" },
-  ];
-}
-
-function insetRect(rect: PickerRect, amount: number): PickerRect {
-  return {
-    left: rect.left + amount,
-    top: rect.top + amount,
-    width: Math.max(0, rect.width - amount * 2),
-    height: Math.max(0, rect.height - amount * 2),
-  };
-}
-
-function inflateRect(rect: PickerRect, amount: number): PickerRect {
-  return {
-    left: rect.left - amount,
-    top: rect.top - amount,
-    width: rect.width + amount * 2,
-    height: rect.height + amount * 2,
-  };
-}
-
-function intersectionArea(first: PickerRect, second: PickerRect): number {
-  const width = Math.max(
-    0,
-    Math.min(first.left + first.width, second.left + second.width) -
-      Math.max(first.left, second.left),
+function containsRect(outer: PickerRect, inner: PickerRect): boolean {
+  return (
+    inner.left >= outer.left &&
+    inner.top >= outer.top &&
+    inner.left + inner.width <= outer.left + outer.width &&
+    inner.top + inner.height <= outer.top + outer.height
   );
-  const height = Math.max(
-    0,
-    Math.min(first.top + first.height, second.top + second.height) -
-      Math.max(first.top, second.top),
-  );
-  return width * height;
+}
+
+function sideFromReason(reason: string): PickerPlacement["side"] {
+  if (!reason.startsWith("anchor-") && !reason.startsWith("artwork-")) return "fallback";
+  const side = reason.slice(reason.indexOf("-") + 1);
+  return side === "left" || side === "right" || side === "above" || side === "below"
+    ? side
+    : "fallback";
 }
 
 function horizontalOverlap(first: PickerRect, second: PickerRect): boolean {

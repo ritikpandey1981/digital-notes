@@ -3,6 +3,7 @@ import type {
   CanvasDrawingStyle,
   ColorTargetAdapter,
   EditorColorSystemSnapshot,
+  EditorEscapeActions,
   LayerActions,
   LayersSnapshot,
   PageActions,
@@ -28,14 +29,16 @@ import { ToolDock } from "./ToolDock";
 import { ToolOptionsWidget } from "./ToolOptionsWidget";
 import { FullColorPicker } from "./FullColorPicker";
 import { QuickColorRail } from "./QuickColorRail";
+import { WorkspaceUtilityRail } from "./WorkspaceUtilityRail";
 import { createContinuousColorTarget } from "./color-target-adapters";
-import { quickColorRailSupportsTool } from "./color-picker-model";
+import { registerCanvasEscape } from "./floating-dismissal-stack";
 import { useColorPickerSession } from "./useColorPickerSession";
 import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
 interface EditorWorkspaceProps {
   layersPanelOpen: boolean;
+  onToggleLayersPanel: () => void;
   onDismissLayersPanel: () => void;
   pageNavigatorOpen: boolean;
   onDismissPageNavigator: () => void;
@@ -46,6 +49,8 @@ interface EditorWorkspaceProps {
   activeShape: ShapeToolKind;
   armedShape: ShapeToolKind | null;
   activeFloatingWidget: FloatingToolWidgetId | null;
+  activeToolHasOptions: boolean;
+  onToggleToolOptions: () => void;
   onSelectTool: (tool: EditorTool) => void;
   onSelectShape: (shape: ShapeToolKind) => void;
   drawingStyle: CanvasDrawingStyle;
@@ -70,6 +75,7 @@ interface EditorWorkspaceProps {
 
 export function EditorWorkspace({
   layersPanelOpen,
+  onToggleLayersPanel,
   onDismissLayersPanel,
   pageNavigatorOpen,
   onDismissPageNavigator,
@@ -80,6 +86,8 @@ export function EditorWorkspace({
   activeShape,
   armedShape,
   activeFloatingWidget,
+  activeToolHasOptions,
+  onToggleToolOptions,
   onSelectTool,
   onSelectShape,
   drawingStyle,
@@ -102,6 +110,14 @@ export function EditorWorkspace({
   onViewportNavigationLearned,
 }: EditorWorkspaceProps) {
   const workspaceRef = useRef<HTMLElement | null>(null);
+  const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
+  const handleHistoryActionsReady = useCallback(
+    (actions: WorkspaceHistoryActions | null) => {
+      historyActionsRef.current = actions;
+      onHistoryActionsReady(actions);
+    },
+    [onHistoryActionsReady],
+  );
   const [pageActions, setPageActions] = useState<PageActions | null>(null);
   const [pagesSnapshot, setPagesSnapshot] = useState<PagesSnapshot>(() =>
     Object.freeze({ pages: Object.freeze([]), activePageId: "" }),
@@ -138,12 +154,35 @@ export function EditorWorkspace({
     setLayersSnapshot(snapshot);
   }, []);
   const { notify } = useNotifications();
+  // Destructive page and Layer removals are undoable, so the notification offers
+  // the recovery directly instead of only announcing the loss.
   const notifyPageDeleted = useCallback(
-    (message: string) => notify({ title: "Page deleted", description: message }),
+    (message: string) =>
+      notify({
+        title: message,
+        action: { label: "Undo", onAction: () => historyActionsRef.current?.undo() },
+      }),
     [notify],
   );
   const notifyLayerDeleted = useCallback(
-    (message: string) => notify({ title: "Layer deleted", description: message }),
+    (message: string) =>
+      notify({
+        title: message,
+        action: { label: "Undo", onAction: () => historyActionsRef.current?.undo() },
+      }),
+    [notify],
+  );
+  // Refusal feedback is transient and identical for every creation route, so one
+  // short notification replaces silent, invisible artwork.
+  const handleActiveLayerRefusal = useCallback(
+    (reason: "hidden" | "locked") =>
+      notify({
+        title: reason === "hidden" ? "Layer is hidden" : "Layer is locked",
+        description:
+          reason === "hidden"
+            ? "Show the active layer to draw on it."
+            : "Unlock the active layer to draw on it.",
+      }),
     [notify],
   );
   const [shapeEditingSnapshot, setShapeEditingSnapshot] = useState<ShapeEditingSnapshot | null>(
@@ -174,6 +213,12 @@ export function EditorWorkspace({
     },
     [],
   );
+  const escapeActionsRef = useRef<EditorEscapeActions | null>(null);
+  const handleEscapeActionsReady = useCallback((actions: EditorEscapeActions | null) => {
+    escapeActionsRef.current = actions;
+  }, []);
+  // The canvas sits beneath every floating surface in the shared dismissal stack.
+  useEffect(() => registerCanvasEscape(() => escapeActionsRef.current?.escape() ?? false), []);
   const handleShapeEditingActionsReady = useCallback((actions: ShapeEditingActions | null) => {
     shapeEditingActionsRef.current = actions;
   }, []);
@@ -289,7 +334,6 @@ export function EditorWorkspace({
       shapeEditingSnapshot,
     ],
   );
-  const quickColorRailVisible = quickColorRailSupportsTool(activeTool) && colorTarget !== null;
   return (
     <section
       ref={workspaceRef}
@@ -306,6 +350,8 @@ export function EditorWorkspace({
         onArtworkSample={handleArtworkSample}
         viewportSnapshot={viewportSnapshot}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
+        onEscapeActionsReady={handleEscapeActionsReady}
+        onActiveLayerRefusal={handleActiveLayerRefusal}
         onShapeEditingActionsReady={handleShapeEditingActionsReady}
         onShapeEditingChange={handleShapeEditingChange}
         onLayerActionsReady={handleLayerActionsReady}
@@ -313,13 +359,19 @@ export function EditorWorkspace({
         onPageActionsReady={handlePageActionsReady}
         onPagesChange={handlePagesChange}
         onDrawingColorUsed={onDrawingColorUsed}
-        onHistoryActionsReady={onHistoryActionsReady}
+        onHistoryActionsReady={handleHistoryActionsReady}
         onHistoryAvailabilityChange={onHistoryAvailabilityChange}
         onViewportActionsReady={onViewportActionsReady}
         onViewportChange={onViewportChange}
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
-      <ToolDock activeTool={activeTool} onSelectTool={onSelectTool} />
+      <ToolDock
+        activeTool={activeTool}
+        onSelectTool={onSelectTool}
+        activeToolHasOptions={activeToolHasOptions}
+        toolOptionsOpen={activeFloatingWidget !== null}
+        onToggleToolOptions={onToggleToolOptions}
+      />
       <PageNavigator
         open={pageNavigatorOpen}
         snapshot={pagesSnapshot}
@@ -360,7 +412,6 @@ export function EditorWorkspace({
         onDelete={deleteSelection}
         layers={layersSnapshot.layers}
         onMoveToLayer={handleMoveSelectionToLayer}
-        rightOccupiedWidth={quickColorRailVisible ? 76 : 0}
       />
       <ToolOptionsWidget
         descriptor={toolOptions}
@@ -374,15 +425,20 @@ export function EditorWorkspace({
         onDismiss={onDismissFloatingWidget}
         previewScale={viewportSnapshot.zoom}
       />
-      <QuickColorRail
-        activeTool={activeTool}
-        target={colorTarget}
-        palette={colors.activePalette}
-        onOpenPicker={(anchor) => openCreationPicker(anchor, "quick-rail")}
-        onApplyColor={(color) => {
-          if (colorTarget !== null) colorPicker.applyDirect(colorTarget, color);
-        }}
-      />
+      <WorkspaceUtilityRail
+        layersPanelOpen={layersPanelOpen}
+        onToggleLayersPanel={onToggleLayersPanel}
+      >
+        <QuickColorRail
+          activeTool={activeTool}
+          target={colorTarget}
+          palette={colors.activePalette}
+          onOpenPicker={(anchor) => openCreationPicker(anchor, "quick-rail")}
+          onApplyColor={(color) => {
+            if (colorTarget !== null) colorPicker.applyDirect(colorTarget, color);
+          }}
+        />
+      </WorkspaceUtilityRail>
       {colorPicker.snapshot === null ? null : (
         <FullColorPicker
           key={colorPicker.snapshot.target.id}

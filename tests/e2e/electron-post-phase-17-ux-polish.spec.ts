@@ -129,7 +129,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await expect(presetMenu).toHaveCount(0);
     await expect(presetTrigger).toBeFocused();
     await presetTrigger.click();
-    await window.getByText("Tool options", { exact: true }).click();
+    await window.getByTestId("tool-options-title").click();
     await expect(presetMenu).toHaveCount(0);
 
     const shapesButton = toolDock.getByRole("button", { name: "Shapes", exact: true });

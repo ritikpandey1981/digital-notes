@@ -1,4 +1,5 @@
 import type { ShapeEditingSnapshot } from "@folio/editor";
+import type { OccupiedZone } from "./editor-occupied-zones";
 
 export interface ShapeEditingToolbarSize {
   readonly width: number;
@@ -19,6 +20,32 @@ interface Rect {
 }
 
 export type ShapeEditingToolbarOccupiedZone = Rect;
+
+/**
+ * Projects shared workspace zones into the toolbar's viewport coordinate space.
+ *
+ * The zone model measures client rectangles; the toolbar is positioned inside
+ * the workspace element, so the two spaces differ by the workspace origin. Soft
+ * zones are dropped: the toolbar is *about* the selected artwork and is already
+ * placed relative to it.
+ */
+export function toolbarZonesFromOccupied(
+  zones: readonly OccupiedZone[],
+  workspaceOrigin: Readonly<{ left: number; top: number }>,
+): readonly ShapeEditingToolbarOccupiedZone[] {
+  return Object.freeze(
+    zones
+      .filter((zone) => zone.kind === "hard")
+      .map(({ rect }) =>
+        Object.freeze({
+          x: rect.left - workspaceOrigin.left,
+          y: rect.top - workspaceOrigin.top,
+          width: rect.width,
+          height: rect.height,
+        }),
+      ),
+  );
+}
 
 interface PlacementCandidate {
   readonly left: number;

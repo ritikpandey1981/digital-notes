@@ -42,6 +42,19 @@ const eraserCursor = createSvgCursor(
   "cell",
 );
 
+/**
+ * The eyedropper cursor.
+ *
+ * The hotspot sits on the pipette tip so the sampled pixel is exactly the point
+ * the cursor appears to touch, and a small ring marks it against dark artwork.
+ */
+export const EYEDROPPER_CURSOR = createSvgCursor(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26"><path d="M4 22l1-4 9.5-9.5 3 3L8 21l-4 1z" fill="#ffffff" stroke="#111827" stroke-width="1.4" stroke-linejoin="round"/><path d="M14.8 7.6l3.6 3.6 2.6-2.6a2.55 2.55 0 000-3.6 2.55 2.55 0 00-3.6 0l-2.6 2.6z" fill="#a5b4fc" stroke="#111827" stroke-width="1.4" stroke-linejoin="round"/><circle cx="3.5" cy="22.5" r="2.1" fill="none" stroke="#ffffff" stroke-width="2.2"/><circle cx="3.5" cy="22.5" r="2.1" fill="none" stroke="#111827" stroke-width="1"/></svg>',
+  3,
+  23,
+  "crosshair",
+);
+
 const initialShapeCrosshairCursor = createSvgCursor(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18" fill="none" stroke="#111111" stroke-width="1.5" stroke-linecap="square"/></svg>',
   12,

@@ -1,12 +1,11 @@
 import { cn } from "@folio/ui";
 import { ChevronDown } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import type { ReactNode } from "react";
 import {
-  INTERACTION_MOTION,
-  motionSeconds,
-  PROFESSIONAL_EASE,
-} from "../../motion/interaction-motion";
+  floatingSurfaceMotion,
+  useFloatingSurfaceMotion,
+} from "../../motion/floating-surface-motion";
 
 interface ExpandableToolbarSectionProps {
   readonly id: string;
@@ -30,7 +29,7 @@ export function ExpandableToolbarSection({
   onOpenChange,
   children,
 }: ExpandableToolbarSectionProps) {
-  const reducedMotion = useReducedMotion() === true;
+  const motionPreset = useFloatingSurfaceMotion();
   const panelId = `shape-toolbar-${id}-panel`;
   return (
     <>
@@ -70,13 +69,7 @@ export function ExpandableToolbarSection({
             data-toolbar-expansion-panel={id}
             data-toolbar-expansion-mechanism="shared"
             data-floating-surface="folio"
-            initial={{ opacity: 0, y: -5, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.985 }}
-            transition={{
-              duration: motionSeconds(INTERACTION_MOTION.contentMilliseconds, reducedMotion),
-              ease: PROFESSIONAL_EASE,
-            }}
+            {...floatingSurfaceMotion(motionPreset)}
           >
             {children}
           </motion.div>

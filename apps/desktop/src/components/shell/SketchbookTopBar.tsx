@@ -4,7 +4,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@folio/ui";
-import { BookOpen, Layers, MoreHorizontal, Moon, Redo2, Settings2, Sun, Undo2 } from "lucide-react";
+import {
+  BookOpen,
+  MoreHorizontal,
+  Moon,
+  Redo2,
+  Settings2,
+  SlidersHorizontal,
+  Sun,
+  Undo2,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import appIconUrl from "../../../../../assets/app-icon.svg";
 import type { WorkspaceHistoryAvailability } from "../editor/workspace-history";
@@ -15,21 +24,27 @@ import { useTheme } from "../theme/ThemeProvider";
 interface SketchbookTopBarProps extends WorkspaceHistoryAvailability {
   readonly onUndo: () => void;
   readonly onRedo: () => void;
-  readonly layersPanelOpen: boolean;
-  readonly onToggleLayersPanel: () => void;
   readonly pageNavigatorOpen: boolean;
   readonly onTogglePageNavigator: () => void;
+  readonly pageSettingsOpen: boolean;
+  readonly onTogglePageSettings: () => void;
 }
 
+/**
+ * Document-level controls only.
+ *
+ * Pages, Page Settings, and History belong to the document; Layers and colour
+ * are artwork utilities and live on the right-hand rail beside the canvas.
+ */
 export function SketchbookTopBar({
   canUndo,
   canRedo,
   onUndo,
   onRedo,
-  layersPanelOpen,
-  onToggleLayersPanel,
   pageNavigatorOpen,
   onTogglePageNavigator,
+  pageSettingsOpen,
+  onTogglePageSettings,
 }: SketchbookTopBarProps) {
   const { openDialog } = useShellDialog();
   const { theme, toggleTheme } = useTheme();
@@ -68,12 +83,12 @@ export function SketchbookTopBar({
           <BookOpen className="size-4" aria-hidden="true" />
         </TopBarButton>
         <TopBarButton
-          label="Layers"
-          testId="layers-toggle"
-          pressed={layersPanelOpen}
-          onClick={onToggleLayersPanel}
+          label="Page settings"
+          testId="page-settings-toggle"
+          pressed={pageSettingsOpen}
+          onClick={onTogglePageSettings}
         >
-          <Layers className="size-4" aria-hidden="true" />
+          <SlidersHorizontal className="size-4" aria-hidden="true" />
         </TopBarButton>
         <span className="mx-1 h-5 w-px bg-folio-border" aria-hidden="true" />
         <DropdownMenu>

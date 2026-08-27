@@ -95,7 +95,9 @@ export function ContinuousSlider({
   };
   const handleRangeKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
     if (event.key === "Escape") {
-      event.preventDefault();
+      // The edit is cancelled here, but Escape is deliberately left unconsumed
+      // so the surrounding surface still closes on the same press, as it always
+      // has. A range input has no native Escape behaviour to suppress.
       cancelInteraction("range-keyboard");
       event.currentTarget.blur();
       return;
@@ -125,8 +127,19 @@ export function ContinuousSlider({
       event.currentTarget.blur();
     }
   };
+  /**
+   * Wheel adjusts only a focused slider.
+   *
+   * Hovering is not intent: an unfocused wheel belongs to the viewport or to a
+   * scrollable panel, and Ctrl/Meta always belongs to viewport zoom.
+   */
   const handleWheel = (event: WheelEvent<HTMLDivElement>): void => {
-    if (event.deltaY === 0) return;
+    if (event.deltaY === 0 || event.ctrlKey || event.metaKey) return;
+    const active = document.activeElement;
+    if (active === null || !event.currentTarget.contains(active)) return;
+    // React registers wheel listeners passively, so the event is never
+    // cancelled here. The viewport listens on the canvas, not on this panel, so
+    // letting it continue costs nothing.
     beginInteraction("wheel");
     adjust(event.deltaY < 0 ? 1 : -1, event.shiftKey ? largeStep : step);
     commitInteraction("wheel");
@@ -151,11 +164,12 @@ export function ContinuousSlider({
 
   return (
     <div
-      className="group/slider min-w-[166px] rounded-xl px-2 py-1.5 transition-colors duration-100 ease-out hover:bg-folio-hover"
+      className="group/slider min-w-[166px] rounded-lg px-1 py-0.5 transition-colors duration-100 ease-out hover:bg-folio-hover"
       data-tool-option={descriptor.key}
+      data-slider-wheel-policy="focus-required"
       onWheel={handleWheel}
     >
-      <div className="mb-0.5 flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2">
         <label
           className="text-[10px] font-semibold uppercase tracking-[0.08em] text-folio-muted"
           htmlFor={`tool-option-${descriptor.key}`}

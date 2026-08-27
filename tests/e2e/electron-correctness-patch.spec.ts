@@ -135,17 +135,22 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
       opacity: 1,
     });
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
-    const duplicateShape = shapeToolbar.getByRole("button", { name: "Duplicate shape" });
+    const duplicateShape = shapeToolbar.getByRole("button", { name: "Duplicate" });
     await duplicateShape.hover();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");
     expect(await stackingLevel(tooltipLayer)).toBeGreaterThan(await stackingLevel(shapeToolbar));
 
     const historyBeforeShapeStyle = await attributeNumber(surface, "data-history-undo-depth");
-    await shapeToolbar.getByLabel("Shape stroke color").click();
+    await shapeToolbar.getByLabel("Stroke color").click();
     await window.getByRole("textbox", { name: "Hex color" }).fill("#dc2626");
-    await shapeToolbar.getByRole("button", { name: "Shape stroke width" }).click();
+    // On a landscape page the picker can overlay the selection toolbar, so it
+    // is committed and dismissed from empty workspace before the toolbar is
+    // used. Picker/toolbar placement is tracked separately as UX-034.
+    await window.mouse.click(4, 60);
+    await expect(window.getByTestId("full-color-picker")).toHaveCount(0);
+    await shapeToolbar.getByRole("button", { name: "Stroke width" }).click();
     await shapeToolbar.getByRole("group", { name: "Width options" }).getByRole("slider").fill("6");
-    await shapeToolbar.getByRole("button", { name: "Shape stroke opacity" }).click();
+    await shapeToolbar.getByRole("button", { name: "Stroke opacity" }).click();
     await shapeToolbar
       .getByRole("group", { name: "Opacity options" })
       .getByRole("slider")
