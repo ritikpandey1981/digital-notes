@@ -30,7 +30,10 @@ and after finishing (implementation/QA/frozen).
 `not started` · `implementing` · `implemented` · `deferred`
 
 **Manual QA column:**
-`n/a` · `QA pending` · `QA passed` · `NO-GO`
+`n/a` · `not started` · `QA pending` · `QA passed` · `NO-GO`
+
+`not started` means the approved redesign has not been implemented yet, so there is
+nothing to QA. `QA pending` means shipped UI exists that has never had a manual pass.
 
 **Frozen column:**
 `no` · `yes` — `yes` requires explicit user approval after manual QA.
@@ -50,19 +53,22 @@ and after finishing (implementation/QA/frozen).
 
 ### Drawing
 
-| Component               | Reference     | Folio design  | Core support | Implementation | Manual QA  | Frozen | Notes                                                                 |
-| ----------------------- | ------------- | ------------- | ------------ | -------------- | ---------- | ------ | --------------------------------------------------------------------- |
-| Drawing Tool System     | not collected | not collected | exists       | implemented    | QA pending | no     | Tool dock + registry exist; Concepts-style spatial redesign pending.   |
-| Tool Parameter Controls | not collected | not collected | exists       | implemented    | QA pending | no     | High-frequency parameter proximity is the main redesign goal.          |
-| Brush Preset UI         | not collected | not collected | core partial | implemented    | QA pending | no     | Pen presets exist; user-defined preset management does not.            |
-| Eraser Controls         | not collected | not collected | exists       | implemented    | QA pending | no     |                                                                       |
-| Shape Controls          | not collected | not collected | exists       | implemented    | QA pending | no     | Shapes widget and shape editing toolbar exist.                         |
+| Component               | Reference          | Folio design                    | Core support | Implementation | Manual QA   | Frozen | Notes                                                                 |
+| ----------------------- | ------------------ | ------------------------------- | ------------ | -------------- | ----------- | ------ | --------------------------------------------------------------------- |
+| Drawing Tool System     | reference collected | approved (awaiting Claude Design) | core partial | not started    | not started | no     | `docs/design/drawing-tool-system.md`. 5 preset slots + 3 utilities. **Final UX designed independently of current implementation support.** Current dock ships; the redesign has not begun. Slot model needs a slot-keyed layer above the family-keyed brush store. |
+| Tool Parameter Controls | reference collected | approved (awaiting Claude Design) | core partial | not started    | not started | no     | `docs/design/drawing-tool-system.md` §9–§11. Width/Opacity/Smoothness/Color, contextual per tool. Direct manipulation, not generic sliders. **Final UX designed independently of current implementation support.** |
+| Brush Preset UI         | reference collected | approved (awaiting Claude Design) | core partial | not started    | not started | no     | `docs/design/drawing-tool-system.md` §4–§7. Stroke-preview slot identity; per-preset colour. Preference persistence does not exist yet. |
+| Brush Library           | reference collected | approved (awaiting Claude Design) | core missing | not started    | not started | no     | `docs/design/drawing-tool-system.md` §8. Pencil / Pen / Colour Brush + large preview. Catalog exists; browsing surface does not. **Final UX designed independently of current implementation support.** |
+| Utility Subtype Tray    | reference collected | approved (awaiting Claude Design) | core partial | not started    | not started | no     | `docs/design/drawing-tool-system.md` §16. Bottom-centre tray framework. Shapes subtypes exist; Select and Eraser modes are PLACEHOLDER CAPABILITY. |
+| Dock Handedness         | reference collected | approved (awaiting Claude Design) | core missing | not started    | not started | no     | `docs/design/drawing-tool-system.md` §3. Left default, right mirror. Needs preference persistence to be remembered. |
+| Eraser Controls         | reference collected | approved (awaiting Claude Design) | core partial | not started    | not started | no     | Tray placement fixed in `drawing-tool-system.md` §16.2; modes are PLACEHOLDER CAPABILITY pending a dedicated Eraser UX spec. Current controls ship. |
+| Shape Controls          | reference collected | approved (awaiting Claude Design) | core partial | not started    | not started | no     | Tray placement fixed in `drawing-tool-system.md` §16.3. Line/Rectangle/Ellipse exist; Polygon and fill do not. Current widget and toolbar ship. |
 
 ### Color
 
 | Component                        | Reference     | Folio design  | Core support | Implementation | Manual QA  | Frozen | Notes                                                                       |
 | -------------------------------- | ------------- | ------------- | ------------ | -------------- | ---------- | ------ | --------------------------------------------------------------------------- |
-| Color System                     | not collected | not collected | exists       | implemented    | QA pending | no     | Quick color rail, recents, favorites, palettes. Ownership must not change.   |
+| Color System                     | not collected | not collected | exists       | implemented    | QA pending | no     | Quick color rail, recents, favorites, palettes. Ownership must not change. The collapsed ~6-swatch stack moves into the left property strip (`drawing-tool-system.md` §13); the right-side rail becomes TEMPORARY at that point. |
 | Full Color Picker                | not collected | not collected | exists       | implemented    | QA pending | no     | Transaction semantics (begin/preview/commit/cancel) are protected.           |
 | Precision RGB / other controls   | not collected | not collected | core partial | implemented    | QA pending | no     | Must route through existing color targets; no second current-color store.    |
 | Spectrum palette model (1A)      | n/a           | n/a           | exists       | n/a            | n/a        | n/a    | Infrastructure only — data and lookup. Not a UI. 1B is **rejected**.         |
@@ -82,7 +88,7 @@ and after finishing (implementation/QA/frozen).
 
 | Component                      | Reference     | Folio design  | Core support | Implementation | Manual QA  | Frozen | Notes                                                        |
 | ------------------------------ | ------------- | ------------- | ------------ | -------------- | ---------- | ------ | ------------------------------------------------------------ |
-| Selection UI                   | not collected | not collected | exists       | implemented    | QA pending | no     | Phase 20 selection system is protected.                       |
+| Selection UI                   | not collected | not collected | exists       | implemented    | QA pending | no     | Phase 20 selection system is protected. Select-mode tray placement is fixed in `drawing-tool-system.md` §16.1; Lasso/Partial/Ignore/All are PLACEHOLDER CAPABILITY pending a dedicated Selection UX spec. |
 | Transform UI                   | not collected | not collected | exists       | implemented    | QA pending | no     | Manipulation framework is protected.                          |
 | Contextual Selection Controls  | not collected | not collected | exists       | implemented    | QA pending | no     | Shape editing toolbar; placement uses occupied zones.         |
 
