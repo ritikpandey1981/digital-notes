@@ -155,6 +155,34 @@ export function normalizeDegrees(degrees: number): number {
 /** Floating-point slack, so a cell that fits exactly is not rejected. */
 const ANGLE_EPSILON = 1e-9;
 
+/**
+ * Pointer travel, in CSS px, before a press becomes a rotation drag.
+ *
+ * Matches the editor's existing convention (`LAYER_DRAG_THRESHOLD`, and the
+ * selection controller's click threshold) so a steady hand never rotates the
+ * wheel by accident.
+ */
+export const RADIAL_ROTATION_DRAG_THRESHOLD = 4;
+
+/**
+ * The angle from the axle to a point, in the same screen space the geometry
+ * uses: 0 degrees points right and positive angles turn downward.
+ */
+export function pointerAngleDegrees(center: RadialCenter, x: number, y: number): number {
+  return radiansToDegrees(Math.atan2(y - center.y, x - center.x));
+}
+
+/**
+ * The shortest signed way round from one angle to another, in (-180, 180].
+ *
+ * This is what stops the wheel snapping through a whole turn when atan2 wraps
+ * between +180 and -180: 179 degrees to -179 degrees is a 2 degree nudge
+ * forward, not a 358 degree lurch backward.
+ */
+export function shortestAngularDelta(fromDegrees: number, toDegrees: number): number {
+  return normalizeDegrees(toDegrees - fromDegrees + 180) - 180;
+}
+
 function rotateInterval(source: AngularInterval, offsetDegrees: number): AngularInterval {
   return Object.freeze({
     startDegrees: normalizeDegrees(source.startDegrees + offsetDegrees),

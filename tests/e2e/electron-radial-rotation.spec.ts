@@ -1,0 +1,245 @@
+import path from "node:path";
+import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+
+test("rotates the radial brush library as one rigid instrument", async () => {
+  test.setTimeout(120_000);
+  const repositoryRoot = process.cwd();
+  const electronApp = await electron.launch({
+    args: [path.join(repositoryRoot, "apps/desktop/dist-electron/main.js")],
+    executablePath: path.join(
+      repositoryRoot,
+      "apps/desktop/node_modules/electron/dist/electron.exe",
+    ),
+  });
+
+  try {
+    const window = await electronApp.firstWindow();
+    const consoleErrors: string[] = [];
+    window.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await window.setViewportSize({ width: 1440, height: 900 });
+
+    const dock = window.getByRole("toolbar", { name: "Notebook tool dock" });
+    const library = window.getByTestId("radial-brush-library");
+    const surface = window.getByTestId("canvas-surface");
+    const rail = window.getByTestId("drawing-property-rail");
+    const slot = (name: string): Locator => dock.getByRole("button", { name, exact: true });
+
+    // 1. Shift+Click opens the QA library, unrotated.
+    await slot("Brush Pen").click();
+    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await expect(library).toBeVisible();
+    await expect(library).toHaveAttribute("data-library-rotation", "0.000");
+
+    const axle = await libraryAxle(window);
+
+    // 2. A clockwise drag turns the wheel, roughly one to one.
+    await rotateWheel(window, axle, 55, 12);
+    const clockwise = await rotation(library);
+    expect(clockwise, "clockwise drag rotates forward").toBeGreaterThan(45);
+    expect(clockwise, "roughly one to one").toBeLessThan(65);
+
+    // 3. Release stops it dead: no momentum carries the wheel on.
+    await window.waitForTimeout(400);
+    expect(await rotation(library), "no momentum after release").toBeCloseTo(clockwise, 3);
+
+    // 4. A second drag continues from the current rotation.
+    await rotateWheel(window, axle, 40, 8);
+    const continued = await rotation(library);
+    expect(continued, "second drag continues").toBeGreaterThan(clockwise);
+
+    // 5. A counter-clockwise drag turns it back.
+    await rotateWheel(window, axle, -50, 10);
+    expect(await rotation(library), "counter-clockwise reverses").toBeLessThan(continued);
+
+    // 6. Every ring moves by the same amount: one rigid object.
+    const before = await ringAngles(window);
+    await rotateWheel(window, axle, 35, 8);
+    const after = await ringAngles(window);
+    const deltas = after.map((angle, index) => angle - before[index]!);
+    for (const delta of deltas) {
+      expect(delta, "every ring turns together").toBeCloseTo(deltas[0]!, 1);
+    }
+
+    // 7. Propagated channels stay radially aligned through rotation.
+    const channels = await window.evaluate(() => {
+      const parse = (value: string | null) =>
+        (value ?? "")
+          .split(" ")
+          .filter((entry) => entry.length > 0)
+          .map((entry) => Number(entry.split(":")[0]));
+      const tracks = [...document.querySelectorAll("[data-library-track]")];
+      return {
+        innermostGap: parse(tracks[0]!.getAttribute("data-track-blocked"))[0],
+        outerBlocked: tracks.map((track) => parse(track.getAttribute("data-track-blocked"))),
+      };
+    });
+    for (const blocked of channels.outerBlocked.slice(1)) {
+      const carried = blocked.some((start) => Math.abs(start - channels.innermostGap!) < 0.05);
+      expect(carried, "ring 1's channel survives rotation on every outer ring").toBe(true);
+    }
+
+    // 8. Icons stay upright: the glyphs are only translated, never rotated.
+    const iconTransforms = await window.evaluate(() =>
+      [...document.querySelectorAll("[data-brush-item] > g")].map(
+        (group) => group.getAttribute("transform") ?? "",
+      ),
+    );
+    expect(iconTransforms.length).toBeGreaterThan(0);
+    for (const transform of iconTransforms) {
+      expect(transform, "icon is positioned, never rotated").not.toMatch(/rotate/u);
+    }
+
+    // 9. Crossing the +/-180 seam must not lurch a whole turn.
+    // Grab a cell first, then sweep straight through the +/-180 seam.
+    const beforeSeam = await rotation(library);
+    // A 200 degree sweep from the right-hand side passes straight through the
+    // +/-180 seam where atan2 flips sign.
+    await rotateWheel(window, axle, 200, 20);
+    const afterSeam = await rotation(library);
+    expect(Math.abs(afterSeam - beforeSeam - 200), "seam crossing is smooth").toBeLessThan(15);
+
+    // 10. More than a full turn accumulates without corrupting geometry.
+    await rotateWheel(window, axle, 400, 40);
+    expect(Math.abs(await rotation(library)), "past a full turn").toBeGreaterThan(300);
+    await expect(library.locator("[data-brush-item]")).toHaveCount(45);
+    await expect(library).toHaveAttribute("data-library-track-count", "4");
+    const finite = await window.evaluate(() =>
+      [...document.querySelectorAll("[data-brush-cell]")].every(
+        (cell) => !(cell.getAttribute("d") ?? "").match(/NaN|Infinity/u),
+      ),
+    );
+    expect(finite, "geometry stays finite past a full turn").toBe(true);
+
+    // 11. None of this touches the document.
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
+    await expect(surface).toHaveAttribute("data-document-object-count", "0");
+
+    // 12. The approved dock and rail are untouched and still above the library.
+    await expect(dock.locator("button[data-dock-slot]")).toHaveCount(8);
+    await expect(rail.locator("button[data-property-key]")).toHaveCount(4);
+
+    // 13. Each utility still closes the library.
+    for (const utility of ["Select", "Eraser", "Shapes"] as const) {
+      await slot("Brush Pen").click();
+      await slot("Brush Pen").click({ modifiers: ["Shift"] });
+      await expect(library, `${utility} setup`).toBeVisible();
+      await slot(utility).click();
+      await expect(library, `${utility} closes the library`).toHaveCount(0);
+    }
+
+    // 14. Reopening starts from the configured orientation again.
+    await slot("Brush Pen").click();
+    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await expect(library).toHaveAttribute("data-library-rotation", "0.000");
+
+    // 15. The normal Tool Options gesture is unaffected by any of it.
+    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await expect(library).toHaveCount(0);
+    await slot("Brush Pen").click();
+    await expect(window.getByTestId("context-tool-palette")).toBeVisible();
+    await window.keyboard.press("Escape");
+
+    // 16. And the canvas still draws once the library is closed.
+    const inkCanvas = window.locator('canvas[data-folio-layer="ink"]');
+    const bounds = (await inkCanvas.boundingBox())!;
+    await window.mouse.move(bounds.x + 900, bounds.y + 320);
+    await window.mouse.down();
+    await window.mouse.move(bounds.x + 1040, bounds.y + 380, { steps: 8 });
+    await window.mouse.up();
+    await expect(surface).toHaveAttribute("data-document-object-count", "1");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
+
+    expect(consoleErrors).toEqual([]);
+  } finally {
+    await electronApp.close();
+  }
+});
+
+async function rotation(library: Locator): Promise<number> {
+  return Number(await library.getAttribute("data-library-rotation"));
+}
+
+/** The axle in client coordinates, from the library's reported centre. */
+async function libraryAxle(window: Page): Promise<Readonly<{ x: number; y: number }>> {
+  return window.evaluate(() => {
+    const library = document.querySelector('[data-testid="radial-brush-library"]')!;
+    const rect = library.getBoundingClientRect();
+    return {
+      x: rect.left + Number(library.getAttribute("data-library-center-x")),
+      y: rect.top + Number(library.getAttribute("data-library-center-y")),
+    };
+  });
+}
+
+/**
+ * Grabs a live brush cell on the right-hand side of the wheel.
+ *
+ * Queried fresh every time because rotation moves the cells: a hard-coded angle
+ * that started on a cell can end up inside a rotated channel. The right-hand
+ * side is chosen so the press lands on the wheel rather than on the Tool Dock
+ * or Property Rail, which sit above the library.
+ */
+async function grabPointOnWheel(
+  window: Page,
+): Promise<Readonly<{ angleDegrees: number; radius: number }>> {
+  const grab = await window.evaluate(() => {
+    const normalize = (value: number) => ((value % 360) + 360) % 360;
+    for (const cell of document.querySelectorAll("[data-brush-item]")) {
+      const start = Number(cell.getAttribute("data-brush-start-angle"));
+      const span = Number(cell.getAttribute("data-brush-cell-angle"));
+      const inner = Number(cell.getAttribute("data-brush-inner-radius"));
+      const outer = Number(cell.getAttribute("data-brush-outer-radius"));
+      const mid = normalize(start + span / 2);
+      if (mid < 40 || mid > 320) {
+        return { angleDegrees: mid > 180 ? mid - 360 : mid, radius: (inner + outer) / 2 };
+      }
+    }
+    return null;
+  });
+  if (grab === null) throw new Error("No brush cell is reachable on the wheel's open side.");
+  return grab;
+}
+
+/**
+ * Presses a real brush cell and sweeps around the axle by a signed amount.
+ *
+ * Once the pointer is captured the sweep drops to a small radius: the axle sits
+ * close to the window's left edge, so a wide sweep would have to travel
+ * off-screen to reach the +/-180 seam. Dropping the radius is a purely radial
+ * move, which contributes no rotation of its own.
+ */
+async function rotateWheel(
+  window: Page,
+  axle: Readonly<{ x: number; y: number }>,
+  deltaDegrees: number,
+  steps: number,
+  sweepRadius = 34,
+): Promise<void> {
+  const grab = await grabPointOnWheel(window);
+  const at = (degrees: number, radius: number) => ({
+    x: axle.x + radius * Math.cos((degrees * Math.PI) / 180),
+    y: axle.y + radius * Math.sin((degrees * Math.PI) / 180),
+  });
+  const start = at(grab.angleDegrees, grab.radius);
+  await window.mouse.move(start.x, start.y);
+  await window.mouse.down();
+  // Same angle, smaller radius: no angular delta, so no rotation yet.
+  const pivot = at(grab.angleDegrees, sweepRadius);
+  await window.mouse.move(pivot.x, pivot.y);
+  for (let step = 1; step <= steps; step += 1) {
+    const point = at(grab.angleDegrees + (deltaDegrees * step) / steps, sweepRadius);
+    await window.mouse.move(point.x, point.y);
+  }
+  await window.mouse.up();
+}
+
+/** The first cell's start angle on each ring, for rigid-body comparison. */
+async function ringAngles(window: Page): Promise<readonly number[]> {
+  return window.evaluate(() =>
+    [...document.querySelectorAll("[data-library-track]")].map((track) =>
+      Number(track.querySelector("[data-brush-item]")?.getAttribute("data-brush-start-angle")),
+    ),
+  );
+}

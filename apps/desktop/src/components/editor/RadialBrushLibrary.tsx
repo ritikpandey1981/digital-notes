@@ -1,11 +1,14 @@
 import { Paintbrush, Pencil, PenTool, type LucideIcon } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { BrushFixtureFamily } from "./brush-library-fixtures";
 import {
+  RADIAL_ROTATION_DRAG_THRESHOLD,
   annularSectorPath,
   buildRadialLibraryLayout,
   normalizeDegrees,
+  pointerAngleDegrees,
   polarPoint,
+  shortestAngularDelta,
   type RadialCell,
   type RadialCenter,
 } from "./radial-brush-library-model";
@@ -67,9 +70,25 @@ export function RadialBrushLibrary({ open, anchorSlotId }: RadialBrushLibraryPro
   return <RadialLibrarySurface anchorSlotId={anchorSlotId} />;
 }
 
+/** One in-flight rotation gesture. */
+interface RotationDrag {
+  readonly pointerId: number;
+  /** Where the press landed, for the movement threshold. */
+  readonly originX: number;
+  readonly originY: number;
+  /** Angle around the axle at the previous move, in the geometry's space. */
+  previousAngleDegrees: number;
+  /** False until the pointer has travelled far enough to mean rotation. */
+  rotating: boolean;
+}
+
 function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [center, setCenter] = useState<RadialCenter | null>(null);
+  // One shared offset for the entire instrument. Transient UI state: it lives
+  // and dies with this component, so closing the library discards it.
+  const [rotationOffsetDegrees, setRotationOffsetDegrees] = useState(0);
+  const dragRef = useRef<RotationDrag | null>(null);
 
   /**
    * The origin is measured from the selected slot itself, never assumed.
@@ -104,7 +123,73 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
     return () => observer.disconnect();
   }, [anchorSlotId]);
 
-  const layout = center === null ? null : buildRadialLibraryLayout(center);
+  /**
+   * Pointer position in the same space the geometry uses.
+   *
+   * The root element covers the workspace exactly, so its own rect converts
+   * client coordinates into the workspace coordinates the axle was measured in.
+   */
+  const workspacePoint = (event: ReactPointerEvent): Readonly<{ x: number; y: number }> | null => {
+    const root = rootRef.current;
+    if (root === null) return null;
+    const rect = root.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<SVGGElement>): void => {
+    if (center === null || dragRef.current !== null) return;
+    const point = workspacePoint(event);
+    if (point === null) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      originY: event.clientY,
+      previousAngleDegrees: pointerAngleDegrees(center, point.x, point.y),
+      rotating: false,
+    };
+    // Capture on the rotating group, so the drag survives leaving the cell it
+    // started on and continues over the dock, the rail, or empty workspace.
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<SVGGElement>): void => {
+    const drag = dragRef.current;
+    if (drag === null || drag.pointerId !== event.pointerId || center === null) return;
+    const point = workspacePoint(event);
+    if (point === null) return;
+    const angle = pointerAngleDegrees(center, point.x, point.y);
+    if (!drag.rotating) {
+      const travelled = Math.hypot(event.clientX - drag.originX, event.clientY - drag.originY);
+      if (travelled < RADIAL_ROTATION_DRAG_THRESHOLD) {
+        // Still a possible press. Keep tracking the angle so the first rotation
+        // step measures from here rather than from the original touchdown.
+        drag.previousAngleDegrees = angle;
+        return;
+      }
+      drag.rotating = true;
+    }
+    // Shortest signed step, so crossing the +/-180 seam never lurches a turn.
+    const delta = shortestAngularDelta(drag.previousAngleDegrees, angle);
+    drag.previousAngleDegrees = angle;
+    // Accumulated without clamping: the wheel may be turned past a full turn in
+    // either direction and keeps going.
+    setRotationOffsetDegrees((current) => current + delta);
+  };
+
+  const endDrag = (event: ReactPointerEvent<SVGGElement>): void => {
+    const drag = dragRef.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    // Rotation stops dead on release. Momentum is a later, separate decision.
+  };
+
+  const layout =
+    center === null
+      ? null
+      : buildRadialLibraryLayout(center, undefined, undefined, rotationOffsetDegrees);
   return (
     <div
       ref={rootRef}
@@ -114,6 +199,7 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
       data-library-track-count={layout?.tracks.length ?? 0}
       data-library-center-x={layout === null ? "" : String(Math.round(layout.centerX))}
       data-library-center-y={layout === null ? "" : String(Math.round(layout.centerY))}
+      data-library-rotation={rotationOffsetDegrees.toFixed(3)}
     >
       {layout === null ? null : (
         <svg
@@ -122,34 +208,49 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
           aria-label="Brush library layout preview"
           focusable="false"
         >
-          {layout.tracks.map((track) => (
-            <g
-              key={track.index}
-              data-library-track={track.index}
-              data-track-cell-angle={track.cellAngleDegrees.toFixed(3)}
-              data-track-capacity={track.capacity}
-              data-track-direct-gap={
-                track.directGap === null
-                  ? ""
-                  : `${track.directGap.startDegrees.toFixed(2)}:${track.directGap.widthDegrees.toFixed(2)}`
-              }
-              data-track-blocked={track.blockedIntervals
-                .map((gap) => `${gap.startDegrees.toFixed(2)}:${gap.widthDegrees.toFixed(2)}`)
-                .join(" ")}
-              data-track-allowed={track.allowedArcs
-                .map((arc) => `${arc.startDegrees.toFixed(2)}:${arc.widthDegrees.toFixed(2)}`)
-                .join(" ")}
-            >
-              {track.cells.map((cell) => (
-                <BrushCell
-                  key={cell.fixture.id}
-                  center={{ x: layout.centerX, y: layout.centerY }}
-                  cell={cell}
-                  tone={TRACK_TONES[track.index % TRACK_TONES.length] ?? TRACK_TONES[0]!}
-                />
-              ))}
-            </g>
-          ))}
+          {/*
+            One rotating group for the whole instrument. Pointer events bubble
+            here from the cells themselves, so the wheel is grabbed by its
+            brushes: no invisible rectangle is laid over the canvas, and nothing
+            outside the library intercepts input.
+          */}
+          <g
+            data-testid="radial-brush-library-rotator"
+            style={{ touchAction: "none" }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+          >
+            {layout.tracks.map((track) => (
+              <g
+                key={track.index}
+                data-library-track={track.index}
+                data-track-cell-angle={track.cellAngleDegrees.toFixed(3)}
+                data-track-capacity={track.capacity}
+                data-track-direct-gap={
+                  track.directGap === null
+                    ? ""
+                    : `${track.directGap.startDegrees.toFixed(2)}:${track.directGap.widthDegrees.toFixed(2)}`
+                }
+                data-track-blocked={track.blockedIntervals
+                  .map((gap) => `${gap.startDegrees.toFixed(2)}:${gap.widthDegrees.toFixed(2)}`)
+                  .join(" ")}
+                data-track-allowed={track.allowedArcs
+                  .map((arc) => `${arc.startDegrees.toFixed(2)}:${arc.widthDegrees.toFixed(2)}`)
+                  .join(" ")}
+              >
+                {track.cells.map((cell) => (
+                  <BrushCell
+                    key={cell.fixture.id}
+                    center={{ x: layout.centerX, y: layout.centerY }}
+                    cell={cell}
+                    tone={TRACK_TONES[track.index % TRACK_TONES.length] ?? TRACK_TONES[0]!}
+                  />
+                ))}
+              </g>
+            ))}
+          </g>
         </svg>
       )}
     </div>
@@ -169,7 +270,9 @@ function BrushCell({
   const Icon = FAMILY_ICONS[cell.fixture.family];
   return (
     <g
-      className="pointer-events-auto cursor-pointer focus:outline-none"
+      // grab/grabbing communicates the affordance on fine pointers; touch and
+      // stylus rely on the physical radial form instead.
+      className="pointer-events-auto cursor-grab focus:outline-none active:cursor-grabbing"
       data-brush-item={cell.fixture.id}
       data-brush-family={cell.fixture.family}
       data-brush-track={cell.trackIndex}
