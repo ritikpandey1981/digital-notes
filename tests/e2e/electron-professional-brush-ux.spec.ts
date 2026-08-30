@@ -43,12 +43,22 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     const cursor = window.getByTestId("brush-cursor");
 
     await expect(toolDock).toBeVisible();
-    await expect(toolDock.locator("button[aria-label]")).toHaveCount(7);
+    // Five drawing preset slots, then the three permanent utilities.
+    await expect(toolDock.locator("button[aria-label]")).toHaveCount(8);
     expect(
       await toolDock
         .locator("button[aria-label]")
         .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
-    ).toEqual(["Select", "Pencil", "Pen", "Marker", "Highlighter", "Eraser", "Shapes"]);
+    ).toEqual([
+      "Pencil",
+      "Pen",
+      "Brush Pen",
+      "Marker",
+      "Highlighter",
+      "Select",
+      "Eraser",
+      "Shapes",
+    ]);
 
     await selectInactiveBrush(window, "Pencil");
     await expect(palette).toHaveCount(0);

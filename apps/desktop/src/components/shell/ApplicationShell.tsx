@@ -105,6 +105,8 @@ function ApplicationShellContent() {
           onOpenPageSettings={openPageSettings}
           onDismissPageSettings={dismissPageSettings}
           activeTool={editorWorkspace.activeTool}
+          activeDrawingSlotId={editorWorkspace.activeDrawingSlotId}
+          onSelectDrawingSlot={editorWorkspace.selectDrawingSlot}
           activeShape={editorWorkspace.activeShape}
           armedShape={editorWorkspace.armedShape}
           activeFloatingWidget={editorWorkspace.activeFloatingWidget}

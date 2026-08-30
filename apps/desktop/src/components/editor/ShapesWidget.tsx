@@ -28,7 +28,11 @@ export function ShapesWidget({ open, activeShape, onSelectShape, onDismiss }: Sh
   const boundaryRef = useRef<HTMLElement | null>(null);
   const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef);
   return (
-    <div className="pointer-events-none absolute left-[76px] top-[calc(50%+125px)] z-20 -translate-y-1/2">
+    // Vertically centred on the dock's Shapes button, and therefore coupled to
+    // the dock's geometry: the 206px drawing capsule, the 12px gap between the
+    // capsules, and Shapes sitting third in the 126px utility capsule put its
+    // centre 149px below the dock centre, which is itself the workspace centre.
+    <div className="pointer-events-none absolute left-[76px] top-[calc(50%+149px)] z-20 -translate-y-1/2">
       <AnimatePresence initial={false}>
         {open ? (
           <motion.section

@@ -85,7 +85,11 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
     expect(
       await lineTooltip.evaluate((element) => getComputedStyle(element, "::before").content),
     ).not.toBe("none");
-    const floatingStyle = await floatingSurfaceStyle(toolDock);
+    // The dock renders as two capsules; a capsule is the surface that carries
+    // the shared floating treatment, not the toolbar element spanning both.
+    const floatingStyle = await floatingSurfaceStyle(
+      window.locator('[data-tool-dock-group="utility"]'),
+    );
     expect(await floatingSurfaceStyle(shapesWidget)).toEqual(floatingStyle);
     expect(await floatingSurfaceStyle(lineTooltip)).not.toEqual(floatingStyle);
     await expect(lineTooltip).toHaveAttribute("data-tooltip-surface", "auxiliary-soft");

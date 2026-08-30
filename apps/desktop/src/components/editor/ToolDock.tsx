@@ -7,15 +7,27 @@ import {
   Paintbrush,
   Pencil,
   PenLine,
+  PenTool,
   Shapes,
   type LucideIcon,
 } from "lucide-react";
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import type { EditorTool } from "./editor-types";
+import {
+  DRAWING_SLOTS,
+  UTILITY_SLOTS,
+  resolveActiveDockSlotId,
+  resolveDockKeyboardTarget,
+  resolveTabbableDockSlotId,
+  type DockSlotDefinition,
+  type DrawingSlotDefinition,
+} from "./tool-dock-model";
 import { ToolTooltip } from "./ToolTooltip";
 
 interface ToolDockProps {
   readonly activeTool: EditorTool;
+  readonly activeDrawingSlotId: string | null;
+  readonly onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
   readonly onSelectTool: (tool: EditorTool) => void;
   /** True when the active tool owns a settings or chooser widget. */
   readonly activeToolHasOptions: boolean;
@@ -23,37 +35,42 @@ interface ToolDockProps {
   readonly onToggleToolOptions: () => void;
 }
 
-interface ToolDefinition {
-  readonly label: EditorTool;
-  readonly icon: LucideIcon;
-  readonly opticalOffset?: string;
-}
+/**
+ * Per-slot iconography.
+ *
+ * Utilities are semantic icons because they are stable categories. Drawing
+ * slots use the closest honest tool glyph as a deliberately temporary stand-in:
+ * `docs/design/drawing-tool-system.md` §5 makes a representative stroke the
+ * slot's real identity, and that preview is its own piece of work. A
+ * hand-drawn approximation here would imply brush behaviour the engine does not
+ * have yet.
+ */
+const SLOT_ICONS: Readonly<Record<string, LucideIcon>> = Object.freeze({
+  pencil: Pencil,
+  pen: PenLine,
+  "brush-pen": PenTool,
+  marker: Paintbrush,
+  highlighter: Highlighter,
+  select: MousePointer2,
+  eraser: Eraser,
+  shapes: Shapes,
+});
 
-const selectionTools = [
-  { label: "Select", icon: MousePointer2, opticalOffset: "translate-x-px translate-y-px" },
-] satisfies readonly ToolDefinition[];
-
-const drawingTools = [
-  { label: "Pencil", icon: Pencil },
-  { label: "Pen", icon: PenLine },
-  { label: "Marker", icon: Paintbrush },
-  { label: "Highlighter", icon: Highlighter },
-  { label: "Eraser", icon: Eraser },
-] satisfies readonly ToolDefinition[];
-
-const objectTools = [{ label: "Shapes", icon: Shapes }] satisfies readonly ToolDefinition[];
+/** Optical nudges for glyphs whose ink sits off-centre in their box. */
+const SLOT_OPTICAL_OFFSETS: Readonly<Record<string, string>> = Object.freeze({
+  select: "translate-x-px translate-y-px",
+});
 
 const dockButtonClassName =
   "group relative flex size-9 shrink-0 items-center justify-center rounded-[9px] text-[var(--folio-icon-neutral)] transition-[background-color,color,box-shadow] duration-100 ease-out hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent disabled:pointer-events-none disabled:opacity-40";
 
-const ORDERED_TOOLS: readonly EditorTool[] = Object.freeze([
-  ...selectionTools.map(({ label }) => label),
-  ...drawingTools.map(({ label }) => label),
-  ...objectTools.map(({ label }) => label),
-]);
+const dockCapsuleClassName =
+  "folio-floating-surface pointer-events-auto flex w-12 flex-col items-center gap-1 p-1";
 
 export function ToolDock({
   activeTool,
+  activeDrawingSlotId,
+  onSelectDrawingSlot,
   onSelectTool,
   activeToolHasOptions,
   toolOptionsOpen,
@@ -68,132 +85,111 @@ export function ToolDock({
     }
   });
 
+  const activeSlotId = resolveActiveDockSlotId(activeTool, activeDrawingSlotId);
+  const tabbableSlotId = resolveTabbableDockSlotId(activeSlotId);
+
+  const activateSlotId = (slotId: string): void => {
+    const drawingSlot = DRAWING_SLOTS.find((slot) => slot.id === slotId);
+    if (drawingSlot !== undefined) {
+      onSelectDrawingSlot(drawingSlot);
+      return;
+    }
+    const utilitySlot = UTILITY_SLOTS.find((slot) => slot.id === slotId);
+    if (utilitySlot !== undefined) onSelectTool(utilitySlot.tool);
+  };
+
   /**
-   * Roving-tabindex toolbar navigation, matching the Quick Color Rail.
+   * Roving-tabindex navigation across BOTH capsules.
    *
-   * The dock is one tab stop; arrows move between tools and activate them, so
-   * keyboard and pointer users reach the same state.
+   * The two surfaces are one logical toolbar and one tab stop; arrows move
+   * between all eight slots and activate them, so keyboard and pointer users
+   * reach the same state. The visual gap is grouping, not a boundary.
    */
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    const index = ORDERED_TOOLS.indexOf(activeTool);
-    if (index < 0) return;
-    const last = ORDERED_TOOLS.length - 1;
-    const next =
-      event.key === "ArrowDown" || event.key === "ArrowRight"
-        ? Math.min(index + 1, last)
-        : event.key === "ArrowUp" || event.key === "ArrowLeft"
-          ? Math.max(index - 1, 0)
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? last
-              : null;
-    if (next === null) return;
+    const target = resolveDockKeyboardTarget(activeSlotId, event.key);
+    if (target === null) return;
     event.preventDefault();
-    const tool = ORDERED_TOOLS[next];
-    if (tool === undefined || tool === activeTool) return;
-    onSelectTool(tool);
+    activateSlotId(target);
     dockRef.current
-      ?.querySelector<HTMLButtonElement>(`button[data-tool-name="${tool}"]`)
+      ?.querySelector<HTMLButtonElement>(`button[data-dock-slot="${target}"]`)
       ?.focus({ preventScroll: true });
   };
 
   return (
-    <div className="pointer-events-none absolute left-4 top-1/2 z-20 -translate-y-1/2">
+    // One logical dock: `data-tool-dock-layout` stays on the element that spans
+    // both capsules, so occupied-zone measurement, picker placement and
+    // dismissal all keep treating the dock as a single region.
+    <div
+      ref={dockRef}
+      className="pointer-events-none absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-3"
+      role="toolbar"
+      aria-label="Notebook tool dock"
+      aria-orientation="vertical"
+      data-tool-dock-layout="content-vertical"
+      data-tool-dock-keyboard="roving-tabindex"
+      data-tool-dock-groups="drawing-utility"
+      data-elevation="permanent"
+      onKeyDown={handleKeyDown}
+    >
       <div
-        ref={dockRef}
-        className="folio-floating-surface pointer-events-auto flex w-12 flex-col items-center p-1"
-        role="toolbar"
-        aria-label="Notebook tool dock"
-        aria-orientation="vertical"
-        data-tool-dock-layout="content-vertical"
-        data-tool-dock-keyboard="roving-tabindex"
-        data-elevation="permanent"
+        className={dockCapsuleClassName}
+        data-tool-dock-group="drawing"
         data-floating-surface="folio"
-        onKeyDown={handleKeyDown}
       >
-        <ToolGroup
-          tools={selectionTools}
-          activeTool={activeTool}
-          onSelectTool={onSelectTool}
-          activeToolHasOptions={activeToolHasOptions}
-          toolOptionsOpen={toolOptionsOpen}
-          onToggleToolOptions={onToggleToolOptions}
-        />
-        <DockSeparator />
-        <ToolGroup
-          tools={drawingTools}
-          activeTool={activeTool}
-          onSelectTool={onSelectTool}
-          activeToolHasOptions={activeToolHasOptions}
-          toolOptionsOpen={toolOptionsOpen}
-          onToggleToolOptions={onToggleToolOptions}
-        />
-        <DockSeparator />
-        <ToolGroup
-          tools={objectTools}
-          activeTool={activeTool}
-          onSelectTool={onSelectTool}
-          activeToolHasOptions={activeToolHasOptions}
-          toolOptionsOpen={toolOptionsOpen}
-          onToggleToolOptions={onToggleToolOptions}
-        />
+        {DRAWING_SLOTS.map((slot) => (
+          <DockButton
+            key={slot.id}
+            slot={slot}
+            active={activeSlotId === slot.id}
+            tabbable={tabbableSlotId === slot.id}
+            showOptionsAffordance={activeSlotId === slot.id && activeToolHasOptions}
+            optionsOpen={activeSlotId === slot.id && toolOptionsOpen}
+            onActivate={activateSlotId}
+            onToggleOptions={onToggleToolOptions}
+          />
+        ))}
+      </div>
+      <div
+        className={dockCapsuleClassName}
+        data-tool-dock-group="utility"
+        data-floating-surface="folio"
+      >
+        {UTILITY_SLOTS.map((slot) => (
+          <DockButton
+            key={slot.id}
+            slot={slot}
+            active={activeSlotId === slot.id}
+            tabbable={tabbableSlotId === slot.id}
+            showOptionsAffordance={activeSlotId === slot.id && activeToolHasOptions}
+            optionsOpen={activeSlotId === slot.id && toolOptionsOpen}
+            onActivate={activateSlotId}
+            onToggleOptions={onToggleToolOptions}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
-function ToolGroup({
-  tools,
-  activeTool,
-  onSelectTool,
-  activeToolHasOptions,
-  toolOptionsOpen,
-  onToggleToolOptions,
-}: {
-  readonly tools: readonly ToolDefinition[];
-  readonly activeTool: EditorTool;
-  readonly onSelectTool: (tool: EditorTool) => void;
-  readonly activeToolHasOptions: boolean;
-  readonly toolOptionsOpen: boolean;
-  readonly onToggleToolOptions: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      {tools.map((tool) => {
-        const active = activeTool === tool.label;
-        return (
-          <ToolButton
-            key={tool.label}
-            tool={tool}
-            active={active}
-            showOptionsAffordance={active && activeToolHasOptions}
-            optionsOpen={active && toolOptionsOpen}
-            onSelect={onSelectTool}
-            onToggleOptions={onToggleToolOptions}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function ToolButton({
-  tool,
+function DockButton({
+  slot,
   active,
+  tabbable,
   showOptionsAffordance,
   optionsOpen,
-  onSelect,
+  onActivate,
   onToggleOptions,
 }: {
-  readonly tool: ToolDefinition;
+  readonly slot: DockSlotDefinition;
   readonly active: boolean;
+  readonly tabbable: boolean;
   readonly showOptionsAffordance: boolean;
   readonly optionsOpen: boolean;
-  readonly onSelect: (tool: EditorTool) => void;
+  readonly onActivate: (slotId: string) => void;
   readonly onToggleOptions: () => void;
 }) {
-  const Icon = tool.icon;
+  const Icon = SLOT_ICONS[slot.id] ?? Pencil;
+  const opticalOffset = SLOT_OPTICAL_OFFSETS[slot.id];
   return (
     <div className="relative">
       <button
@@ -202,27 +198,28 @@ function ToolButton({
           dockButtonClassName,
           active && "bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft",
         )}
-        aria-label={tool.label}
+        aria-label={slot.label}
         aria-pressed={active}
-        tabIndex={active ? 0 : -1}
+        tabIndex={tabbable ? 0 : -1}
         data-tool-active={active}
-        data-tool-name={tool.label}
+        data-tool-name={slot.label}
+        data-dock-slot={slot.id}
         data-interaction-motion="selection-140ms"
-        onClick={() => onSelect(tool.label)}
+        onClick={() => onActivate(slot.id)}
       >
         <Icon
-          className={cn("size-[17px]", tool.opticalOffset)}
+          className={cn("size-[17px]", opticalOffset)}
           aria-hidden="true"
-          data-optical-alignment={tool.opticalOffset === undefined ? "centered" : "down-right-1px"}
+          data-optical-alignment={opticalOffset === undefined ? "centered" : "down-right-1px"}
         />
-        <ToolTooltip label={tool.label} />
+        <ToolTooltip label={slot.label} />
       </button>
       {showOptionsAffordance ? (
         // The one discoverable entry point into the active tool's settings.
         <button
           type="button"
           className="absolute -right-0.5 bottom-0 grid size-3.5 place-items-center rounded-[4px] text-folio-accent transition-transform duration-100 hover:bg-folio-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-          aria-label={`${tool.label} options`}
+          aria-label={`${slot.label} options`}
           aria-expanded={optionsOpen}
           tabIndex={-1}
           data-testid="tool-options-affordance"
@@ -240,8 +237,4 @@ function ToolButton({
       ) : null}
     </div>
   );
-}
-
-function DockSeparator() {
-  return <span className="my-1 h-px w-7 shrink-0 bg-folio-border" aria-hidden="true" />;
 }

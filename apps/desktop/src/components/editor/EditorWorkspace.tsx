@@ -33,6 +33,7 @@ import { WorkspaceUtilityRail } from "./WorkspaceUtilityRail";
 import { createContinuousColorTarget } from "./color-target-adapters";
 import { registerCanvasEscape } from "./floating-dismissal-stack";
 import { useColorPickerSession } from "./useColorPickerSession";
+import type { DrawingSlotDefinition } from "./tool-dock-model";
 import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
@@ -46,6 +47,8 @@ interface EditorWorkspaceProps {
   onOpenPageSettings: () => void;
   onDismissPageSettings: () => void;
   activeTool: EditorTool;
+  activeDrawingSlotId: string | null;
+  onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
   activeShape: ShapeToolKind;
   armedShape: ShapeToolKind | null;
   activeFloatingWidget: FloatingToolWidgetId | null;
@@ -83,6 +86,8 @@ export function EditorWorkspace({
   onOpenPageSettings,
   onDismissPageSettings,
   activeTool,
+  activeDrawingSlotId,
+  onSelectDrawingSlot,
   activeShape,
   armedShape,
   activeFloatingWidget,
@@ -367,6 +372,8 @@ export function EditorWorkspace({
       />
       <ToolDock
         activeTool={activeTool}
+        activeDrawingSlotId={activeDrawingSlotId}
+        onSelectDrawingSlot={onSelectDrawingSlot}
         onSelectTool={onSelectTool}
         activeToolHasOptions={activeToolHasOptions}
         toolOptionsOpen={activeFloatingWidget !== null}

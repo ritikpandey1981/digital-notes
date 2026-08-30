@@ -17,6 +17,7 @@ import {
   type FloatingToolWidgetId,
 } from "./floating-tool-widget-registry";
 import { createShapeToolState } from "./shape-tool-state";
+import type { DrawingSlotDefinition } from "./tool-dock-model";
 import {
   createDefaultToolOptionsDescriptorRegistry,
   DEFAULT_ERASER_SIZE,
@@ -25,6 +26,9 @@ import {
 
 export function useEditorWorkspaceState() {
   const [activeTool, setActiveTool] = React.useState<EditorTool>("Select");
+  // Which drawing slot the user last chose. Editor session state: it separates
+  // two slots that share one brush family and never reaches the document.
+  const [activeDrawingSlotId, setActiveDrawingSlotId] = React.useState<string | null>(null);
   const [armedShape, setArmedShape] = React.useState<ShapeToolKind>("rectangle");
   const [activeFloatingWidget, setActiveFloatingWidget] =
     React.useState<FloatingToolWidgetId | null>(null);
@@ -113,6 +117,24 @@ export function useEditorWorkspaceState() {
     setActiveFloatingWidget((current) => (current === activeToolWidget ? null : activeToolWidget));
   }, [activeToolWidget]);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
+  /**
+   * Activating one drawing preset slot.
+   *
+   * The slot pins its catalog preset against the slot's own family rather than
+   * the family derived from the outgoing tool, so pinning cannot land on the
+   * previous brush. Slots whose family hosts no sibling carry no preset and
+   * leave the family's current choice alone, keeping Tool Options' preset
+   * selection behaving exactly as it does today.
+   */
+  const selectDrawingSlot = React.useCallback(
+    (slot: DrawingSlotDefinition): void => {
+      if (slot.presetId !== null) brushStore.selectPreset(slot.family, slot.presetId);
+      setActiveDrawingSlotId(slot.id);
+      selectTool(slot.tool);
+      refresh();
+    },
+    [brushStore, refresh, selectTool],
+  );
   const selectShape = React.useCallback(
     (shape: ShapeToolKind): void => {
       shapeToolState.selectShape(shape);
@@ -237,6 +259,8 @@ export function useEditorWorkspaceState() {
 
   return {
     activeTool,
+    activeDrawingSlotId,
+    selectDrawingSlot,
     activeShape: shapeState.activeShape,
     armedShape,
     activeFloatingWidget,

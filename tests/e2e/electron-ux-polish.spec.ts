@@ -45,8 +45,10 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
 
     const initialDock = await dockMetrics(toolDock);
     expect(initialDock.width).toBe(48);
-    expect(initialDock.height).toBeLessThan(310);
-    expect(initialDock.height).toBeGreaterThan(280);
+    // Two capsules — five drawing preset slots, then three utilities — plus the
+    // exterior gap that groups them. Still one compact vertical dock.
+    expect(initialDock.height).toBeLessThan(360);
+    expect(initialDock.height).toBeGreaterThan(320);
     expect(initialDock.contentTopGap).toBeCloseTo(initialDock.contentBottomGap, 0);
     expect(initialDock.scrollHeight).toBeLessThanOrEqual(initialDock.clientHeight);
     expect(initialDock.overflowY).not.toBe("auto");
@@ -86,7 +88,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await selectButton.focus();
     await expect(selectTooltip).toBeVisible();
     expect(await toolDock.locator("button[title]").count()).toBe(0);
-    expect(await toolDock.locator("svg[data-optical-alignment]").count()).toBe(7);
+    expect(await toolDock.locator("svg[data-optical-alignment]").count()).toBe(8);
     await expect(selectButton.locator("svg")).toHaveAttribute(
       "data-optical-alignment",
       "down-right-1px",
