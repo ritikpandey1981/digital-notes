@@ -17,7 +17,7 @@ import {
   type FloatingToolWidgetId,
 } from "./floating-tool-widget-registry";
 import { createShapeToolState } from "./shape-tool-state";
-import type { DrawingSlotDefinition } from "./tool-dock-model";
+import { resolveActiveDockSlotId, type DrawingSlotDefinition } from "./tool-dock-model";
 import {
   createDefaultToolOptionsDescriptorRegistry,
   DEFAULT_ERASER_SIZE,
@@ -29,6 +29,9 @@ export function useEditorWorkspaceState() {
   // Which drawing slot the user last chose. Editor session state: it separates
   // two slots that share one brush family and never reaches the document.
   const [activeDrawingSlotId, setActiveDrawingSlotId] = React.useState<string | null>(null);
+  // Transient workspace UI state for the radial Brush Library. It never reaches
+  // the document and never creates History.
+  const [brushLibraryOpen, setBrushLibraryOpen] = React.useState(false);
   const [armedShape, setArmedShape] = React.useState<ShapeToolKind>("rectangle");
   const [activeFloatingWidget, setActiveFloatingWidget] =
     React.useState<FloatingToolWidgetId | null>(null);
@@ -105,6 +108,9 @@ export function useEditorWorkspaceState() {
       if (tool === "Shapes") {
         setArmedShape(shapeToolState.snapshot().activeShape);
       }
+      // Any major-tool change closes the library: it is anchored to one drawing
+      // slot and must never be left hanging off a slot that is no longer active.
+      setBrushLibraryOpen(false);
       setActiveTool(tool);
     },
     [activeTool, floatingWidgetRegistry, shapeToolState],
@@ -136,15 +142,33 @@ export function useEditorWorkspaceState() {
    * previous brush. Slots whose family hosts no sibling carry no preset and
    * leave the family's current choice alone, keeping Tool Options' preset
    * selection behaving exactly as it does today.
+   *
+   * A normal press keeps its established behaviour exactly: activating a slot
+   * that is already active falls through to `selectTool`, which is what opens
+   * Tool Options. `docs/design/drawing-tool-system.md` §6 eventually gives that
+   * second press to the Brush Library, but that gesture migration is its own
+   * task and is deliberately not made here.
+   *
+   * `inspectBrushLibrary` is the TEMPORARY Shift+Click development trigger
+   * described below. It exists only so the radial geometry can be evaluated in
+   * the real window, and adds no visible affordance for normal users.
    */
   const selectDrawingSlot = React.useCallback(
-    (slot: DrawingSlotDefinition): void => {
+    (slot: DrawingSlotDefinition, inspectBrushLibrary = false): void => {
+      if (
+        inspectBrushLibrary &&
+        slot.id === resolveActiveDockSlotId(activeTool, activeDrawingSlotId)
+      ) {
+        setBrushLibraryOpen((open) => !open);
+        setActiveFloatingWidget(null);
+        return;
+      }
       if (slot.presetId !== null) brushStore.selectPreset(slot.family, slot.presetId);
       setActiveDrawingSlotId(slot.id);
       selectTool(slot.tool);
       refresh();
     },
-    [brushStore, refresh, selectTool],
+    [activeDrawingSlotId, activeTool, brushStore, refresh, selectTool],
   );
   const selectShape = React.useCallback(
     (shape: ShapeToolKind): void => {
@@ -271,6 +295,8 @@ export function useEditorWorkspaceState() {
   return {
     activeTool,
     activeDrawingSlotId,
+    activeDockSlotId: resolveActiveDockSlotId(activeTool, activeDrawingSlotId),
+    brushLibraryOpen,
     selectDrawingSlot,
     activeShape: shapeState.activeShape,
     armedShape,

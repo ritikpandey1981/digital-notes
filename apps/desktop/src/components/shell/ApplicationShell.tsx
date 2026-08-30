@@ -106,6 +106,8 @@ function ApplicationShellContent() {
           onDismissPageSettings={dismissPageSettings}
           activeTool={editorWorkspace.activeTool}
           activeDrawingSlotId={editorWorkspace.activeDrawingSlotId}
+          activeDockSlotId={editorWorkspace.activeDockSlotId}
+          brushLibraryOpen={editorWorkspace.brushLibraryOpen}
           onSelectDrawingSlot={editorWorkspace.selectDrawingSlot}
           activeShape={editorWorkspace.activeShape}
           armedShape={editorWorkspace.armedShape}

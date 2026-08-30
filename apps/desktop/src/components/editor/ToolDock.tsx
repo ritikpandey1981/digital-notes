@@ -27,7 +27,14 @@ import { ToolTooltip } from "./ToolTooltip";
 interface ToolDockProps {
   readonly activeTool: EditorTool;
   readonly activeDrawingSlotId: string | null;
-  readonly onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
+  /**
+   * `inspectBrushLibrary` carries the TEMPORARY Shift+Click geometry-evaluation
+   * trigger. Normal presses pass false and behave exactly as before.
+   */
+  readonly onSelectDrawingSlot: (
+    slot: DrawingSlotDefinition,
+    inspectBrushLibrary?: boolean,
+  ) => void;
   readonly onSelectTool: (tool: EditorTool) => void;
   /** True when the active tool owns a settings or chooser widget. */
   readonly activeToolHasOptions: boolean;
@@ -88,10 +95,10 @@ export function ToolDock({
   const activeSlotId = resolveActiveDockSlotId(activeTool, activeDrawingSlotId);
   const tabbableSlotId = resolveTabbableDockSlotId(activeSlotId);
 
-  const activateSlotId = (slotId: string): void => {
+  const activateSlotId = (slotId: string, inspectBrushLibrary = false): void => {
     const drawingSlot = DRAWING_SLOTS.find((slot) => slot.id === slotId);
     if (drawingSlot !== undefined) {
-      onSelectDrawingSlot(drawingSlot);
+      onSelectDrawingSlot(drawingSlot, inspectBrushLibrary);
       return;
     }
     const utilitySlot = UTILITY_SLOTS.find((slot) => slot.id === slotId);
@@ -185,7 +192,7 @@ function DockButton({
   readonly tabbable: boolean;
   readonly showOptionsAffordance: boolean;
   readonly optionsOpen: boolean;
-  readonly onActivate: (slotId: string) => void;
+  readonly onActivate: (slotId: string, inspectBrushLibrary?: boolean) => void;
   readonly onToggleOptions: () => void;
 }) {
   const Icon = SLOT_ICONS[slot.id] ?? Pencil;
@@ -205,7 +212,9 @@ function DockButton({
         data-tool-name={slot.label}
         data-dock-slot={slot.id}
         data-interaction-motion="selection-140ms"
-        onClick={() => onActivate(slot.id)}
+        // Shift is the temporary Brush Library geometry trigger; a plain press
+        // is untouched production behaviour.
+        onClick={(event) => onActivate(slot.id, event.shiftKey)}
       >
         <Icon
           className={cn("size-[17px]", opticalOffset)}

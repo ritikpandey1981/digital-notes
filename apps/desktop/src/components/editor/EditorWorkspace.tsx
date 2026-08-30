@@ -20,6 +20,7 @@ import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
 import { DrawingPropertyRail } from "./DrawingPropertyRail";
+import { RadialBrushLibrary } from "./RadialBrushLibrary";
 import { resolveDrawingPropertyRail } from "./drawing-property-rail-model";
 import { LayersPanel } from "./LayersPanel";
 import { PageNavigator } from "./PageNavigator";
@@ -50,6 +51,8 @@ interface EditorWorkspaceProps {
   onDismissPageSettings: () => void;
   activeTool: EditorTool;
   activeDrawingSlotId: string | null;
+  activeDockSlotId: string | null;
+  brushLibraryOpen: boolean;
   onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
   activeShape: ShapeToolKind;
   armedShape: ShapeToolKind | null;
@@ -90,6 +93,8 @@ export function EditorWorkspace({
   onDismissPageSettings,
   activeTool,
   activeDrawingSlotId,
+  activeDockSlotId,
+  brushLibraryOpen,
   onSelectDrawingSlot,
   activeShape,
   armedShape,
@@ -381,6 +386,7 @@ export function EditorWorkspace({
         onViewportChange={onViewportChange}
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
+      <RadialBrushLibrary open={brushLibraryOpen} anchorSlotId={activeDockSlotId} />
       <ToolDock
         activeTool={activeTool}
         activeDrawingSlotId={activeDrawingSlotId}
