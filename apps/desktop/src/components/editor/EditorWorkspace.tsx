@@ -19,6 +19,8 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
+import { DrawingPropertyRail } from "./DrawingPropertyRail";
+import { resolveDrawingPropertyRail } from "./drawing-property-rail-model";
 import { LayersPanel } from "./LayersPanel";
 import { PageNavigator } from "./PageNavigator";
 import { PageSettingsPanel } from "./PageSettingsPanel";
@@ -54,6 +56,7 @@ interface EditorWorkspaceProps {
   activeFloatingWidget: FloatingToolWidgetId | null;
   activeToolHasOptions: boolean;
   onToggleToolOptions: () => void;
+  onOpenToolOptions: () => void;
   onSelectTool: (tool: EditorTool) => void;
   onSelectShape: (shape: ShapeToolKind) => void;
   drawingStyle: CanvasDrawingStyle;
@@ -93,6 +96,7 @@ export function EditorWorkspace({
   activeFloatingWidget,
   activeToolHasOptions,
   onToggleToolOptions,
+  onOpenToolOptions,
   onSelectTool,
   onSelectShape,
   drawingStyle,
@@ -308,6 +312,13 @@ export function EditorWorkspace({
     },
     [clearEyedropperState, colorTarget, openPickerSession],
   );
+  // Derived on every render from the brush the editor already resolved, so the
+  // rail cannot drift from the active preset and owns no state of its own.
+  const propertyRailModel = resolveDrawingPropertyRail({
+    tool: activeTool,
+    brush: drawingStyle.brush,
+    color: colorTarget?.getCurrentColor() ?? null,
+  });
   const openSelectedVectorPicker = useCallback(
     (anchor: HTMLElement): void => {
       if (shapeEditingSnapshot === null) return;
@@ -419,6 +430,11 @@ export function EditorWorkspace({
         onDelete={deleteSelection}
         layers={layersSnapshot.layers}
         onMoveToLayer={handleMoveSelectionToLayer}
+      />
+      <DrawingPropertyRail
+        model={propertyRailModel}
+        onOpenToolOptions={onOpenToolOptions}
+        onOpenColorPicker={(anchor) => openCreationPicker(anchor, "tool-settings")}
       />
       <ToolOptionsWidget
         descriptor={toolOptions}

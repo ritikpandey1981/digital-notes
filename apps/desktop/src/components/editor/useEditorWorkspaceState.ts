@@ -116,6 +116,17 @@ export function useEditorWorkspaceState() {
     if (activeToolWidget === null) return;
     setActiveFloatingWidget((current) => (current === activeToolWidget ? null : activeToolWidget));
   }, [activeToolWidget]);
+  /**
+   * Opens the active tool's settings without toggling.
+   *
+   * The dock's chevron toggles, because it is the one control that also has to
+   * close the panel. The property rail has four entry points into the same
+   * panel, so pressing a second one must not close what the first opened.
+   */
+  const openToolOptions = React.useCallback((): void => {
+    if (activeToolWidget === null) return;
+    setActiveFloatingWidget(activeToolWidget);
+  }, [activeToolWidget]);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
   /**
    * Activating one drawing preset slot.
@@ -266,6 +277,7 @@ export function useEditorWorkspaceState() {
     activeFloatingWidget,
     activeToolHasOptions: activeToolWidget !== null,
     toggleToolOptions,
+    openToolOptions,
     selectTool,
     selectShape,
     drawingStyle,

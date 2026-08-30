@@ -94,6 +94,10 @@ export function ToolOptionsWidget({
   };
 
   return (
+    // Deliberately the same inward slot the compact property rail occupies. The
+    // palette is the expanded form of those same properties, so it covers the
+    // rail while open rather than being pushed further across the page: at this
+    // width, moving it inward would put it on top of the artwork.
     <div className="pointer-events-none absolute left-[76px] top-1/2 z-20 -translate-y-1/2">
       <AnimatePresence initial={false}>
         {descriptor === null ? null : (

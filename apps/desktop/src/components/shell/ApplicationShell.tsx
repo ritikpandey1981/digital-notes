@@ -112,6 +112,7 @@ function ApplicationShellContent() {
           activeFloatingWidget={editorWorkspace.activeFloatingWidget}
           activeToolHasOptions={editorWorkspace.activeToolHasOptions}
           onToggleToolOptions={editorWorkspace.toggleToolOptions}
+          onOpenToolOptions={editorWorkspace.openToolOptions}
           onSelectTool={editorWorkspace.selectTool}
           onSelectShape={editorWorkspace.selectShape}
           drawingStyle={editorWorkspace.drawingStyle}
