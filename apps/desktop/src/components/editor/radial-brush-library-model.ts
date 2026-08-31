@@ -183,6 +183,84 @@ export function shortestAngularDelta(fromDegrees: number, toDegrees: number): nu
   return normalizeDegrees(toDegrees - fromDegrees + 180) - 180;
 }
 
+/**
+ * Which way the wheel disappears: straight back through the dock.
+ *
+ * Parameterised rather than hard-coded so a future right-hand dock mirrors the
+ * aperture by changing one value instead of rewriting the fade.
+ */
+export type DockSide = "left" | "right";
+
+export function hiddenDirectionDegrees(dockSide: DockSide): number {
+  // 0 degrees points right, into the canvas; 180 points back through a
+  // left-hand dock.
+  return dockSide === "left" ? 180 : 0;
+}
+
+export interface RadialApertureConfiguration {
+  readonly dockSide: DockSide;
+  /** Half-width of the fully hidden wedge, measured from the hidden direction. */
+  readonly hiddenCoreDegrees: number;
+  /** How far beyond the core opacity climbs back to full. */
+  readonly transitionDegrees: number;
+}
+
+/** Starting aperture for visual evaluation, not a settled constant. */
+export const RADIAL_APERTURE: RadialApertureConfiguration = Object.freeze({
+  dockSide: "left",
+  hiddenCoreDegrees: 15,
+  transitionDegrees: 30,
+});
+
+/** Below this a cell is treated as absent: invisible, and not interactive. */
+export const RADIAL_VISIBILITY_EPSILON = 0.02;
+
+/**
+ * Spatial visibility of one angle, from the dock-side aperture outward.
+ *
+ * Purely positional: nothing here knows about time, rotation history, or how
+ * the library was opened. A cell's opacity is a function of where it currently
+ * is, which is what makes the wheel read as passing under the dock rather than
+ * animating.
+ */
+export function computeAngularVisibility(
+  angleDegrees: number,
+  aperture: RadialApertureConfiguration = RADIAL_APERTURE,
+): number {
+  const separation = Math.abs(
+    shortestAngularDelta(hiddenDirectionDegrees(aperture.dockSide), angleDegrees),
+  );
+  if (!Number.isFinite(separation)) return 1;
+  if (separation <= aperture.hiddenCoreDegrees) return 0;
+  const edge = aperture.hiddenCoreDegrees + aperture.transitionDegrees;
+  if (separation >= edge) return 1;
+  const t = (separation - aperture.hiddenCoreDegrees) / aperture.transitionDegrees;
+  // Smoothstep, so the band has no visible kink at either boundary.
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Visibility of a whole cell, sampled across its arc.
+ *
+ * The centre alone is not enough: an inner-ring cell spans nearly 34 degrees,
+ * more than the hidden core, so a centre-only rule would blink it out while a
+ * third of it was still in clear view. Averaging the two edges with the centre
+ * lets a wide cell fade in proportion to how much of it has actually entered
+ * the aperture, and costs one extra evaluation per edge.
+ */
+export function computeCellVisibility(
+  cell: Readonly<{ startAngleDegrees: number; endAngleDegrees: number }>,
+  aperture: RadialApertureConfiguration = RADIAL_APERTURE,
+): number {
+  const samples = [
+    cell.startAngleDegrees,
+    (cell.startAngleDegrees + cell.endAngleDegrees) / 2,
+    cell.endAngleDegrees,
+  ];
+  const total = samples.reduce((sum, angle) => sum + computeAngularVisibility(angle, aperture), 0);
+  return total / samples.length;
+}
+
 function rotateInterval(source: AngularInterval, offsetDegrees: number): AngularInterval {
   return Object.freeze({
     startDegrees: normalizeDegrees(source.startDegrees + offsetDegrees),

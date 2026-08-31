@@ -3,6 +3,8 @@ import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEve
 import type { BrushFixtureFamily } from "./brush-library-fixtures";
 import {
   RADIAL_ROTATION_DRAG_THRESHOLD,
+  RADIAL_VISIBILITY_EPSILON,
+  computeCellVisibility,
   annularSectorPath,
   buildRadialLibraryLayout,
   normalizeDegrees,
@@ -268,11 +270,27 @@ function BrushCell({
 }) {
   const iconMid = polarPoint(center, cell.midRadius, cell.midAngleDegrees);
   const Icon = FAMILY_ICONS[cell.fixture.family];
+  // Opacity on the group, so surface, seam, icon and hover tint all fade as one
+  // object rather than the glyph floating at full strength over a ghost cell.
+  const visibility = computeCellVisibility(cell);
+  // A cell hidden behind the dock must not quietly collect presses.
+  const hidden = visibility <= RADIAL_VISIBILITY_EPSILON;
   return (
     <g
+      // Spatial opacity, recomputed from the cell's current angle on every
+      // render. Deliberately no CSS transition: the fade has to stay locked to
+      // the pointer rather than trailing it, and the smoothstep band already
+      // supplies the softness.
+      opacity={visibility}
       // grab/grabbing communicates the affordance on fine pointers; touch and
-      // stylus rely on the physical radial form instead.
-      className="pointer-events-auto cursor-grab focus:outline-none active:cursor-grabbing"
+      // stylus rely on the physical radial form instead. A cell hidden behind
+      // the dock stops taking input rather than collecting presses invisibly.
+      className={
+        hidden
+          ? "pointer-events-none"
+          : "pointer-events-auto cursor-grab focus:outline-none active:cursor-grabbing"
+      }
+      data-brush-visibility={visibility.toFixed(3)}
       data-brush-item={cell.fixture.id}
       data-brush-family={cell.fixture.family}
       data-brush-track={cell.trackIndex}

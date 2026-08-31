@@ -112,6 +112,100 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     );
     expect(finite, "geometry stays finite past a full turn").toBe(true);
 
+    // 10b. Spatial fade: the wheel passes under the dock rather than being
+    //      clipped by it. Opacity is a function of where a cell currently is.
+    const visibility = await window.evaluate(() => {
+      const normalize = (value: number) => ((value % 360) + 360) % 360;
+      const cells = [...document.querySelectorAll("[data-brush-item]")].map((cell) => {
+        const start = Number(cell.getAttribute("data-brush-start-angle"));
+        const span = Number(cell.getAttribute("data-brush-cell-angle"));
+        return {
+          bearing: normalize(start + span / 2),
+          span,
+          opacity: Number(cell.getAttribute("data-brush-visibility")),
+          interactive: getComputedStyle(cell).pointerEvents !== "none",
+          track: Number(cell.getAttribute("data-brush-track")),
+        };
+      });
+      // Distance from the hidden direction, which is 180 for a left-hand dock.
+      const separation = (bearing: number) => Math.abs(normalize(bearing) - 180);
+      return {
+        // Well clear of the band, edges included.
+        canvasFacing: cells.filter((cell) => separation(cell.bearing) > 90),
+        // Entirely inside the hidden core, edges included.
+        hidden: cells.filter(
+          (cell) =>
+            separation(cell.bearing - cell.span / 2) <= 15 &&
+            separation(cell.bearing + cell.span / 2) <= 15,
+        ),
+        band: cells.filter(
+          (cell) => separation(cell.bearing) > 22 && separation(cell.bearing) < 38,
+        ),
+        anyInteractiveWhileInvisible: cells.some(
+          (cell) => cell.opacity <= 0.02 && cell.interactive,
+        ),
+        allInRange: cells.every((cell) => cell.opacity >= 0 && cell.opacity <= 1),
+      };
+    });
+    expect(visibility.allInRange, "opacity stays in range").toBe(true);
+    expect(visibility.canvasFacing.length).toBeGreaterThan(0);
+    for (const cell of visibility.canvasFacing) {
+      expect(cell.opacity, "canvas-facing cells are fully visible").toBe(1);
+    }
+    // A cell wholly inside the core is gone entirely.
+    for (const cell of visibility.hidden) {
+      expect(cell.opacity, "cells behind the dock reach zero").toBe(0);
+    }
+    for (const cell of visibility.band) {
+      expect(cell.opacity, "band cells are partly visible").toBeGreaterThan(0);
+      expect(cell.opacity, "band cells are not yet full").toBeLessThan(1);
+    }
+    // A fully faded cell must not quietly collect presses through the dock.
+    expect(visibility.anyInteractiveWhileInvisible, "hidden cells are inert").toBe(false);
+
+    // 10c. The dock and rail themselves never fade: they are the foreground.
+    const chromeOpacity = await window.evaluate(() => ({
+      dock: getComputedStyle(document.querySelector("[data-tool-dock-layout]")!).opacity,
+      rail: getComputedStyle(document.querySelector('[data-testid="drawing-property-rail"]')!)
+        .opacity,
+    }));
+    expect(chromeOpacity.dock).toBe("1");
+    expect(chromeOpacity.rail).toBe("1");
+
+    // 10d. Fade is spatial, not temporal: no CSS transition may make opacity
+    //      trail the pointer during a drag.
+    const transitions = await window.evaluate(() =>
+      [...document.querySelectorAll("[data-brush-item]")].map((cell) => {
+        const style = getComputedStyle(cell);
+        return { property: style.transitionProperty, duration: style.transitionDuration };
+      }),
+    );
+    for (const { property, duration } of transitions) {
+      // Tailwind's base leaves transition-property: all with a zero duration,
+      // which animates nothing. What matters is that opacity never eases: a
+      // faded cell must track the pointer exactly, not trail behind it.
+      if (/opacity|all/u.test(property)) {
+        expect(duration, "opacity is never eased").toBe("0s");
+      }
+    }
+
+    // 10e. Rotating moves a given cell through the band and out the far side.
+    const trackCell = async (): Promise<number> =>
+      window.evaluate(() =>
+        Number(
+          document
+            .querySelector('[data-brush-item="watercolor"]')
+            ?.getAttribute("data-brush-visibility") ?? -1,
+        ),
+      );
+    const opacities: number[] = [await trackCell()];
+    for (let step = 0; step < 8; step += 1) {
+      await rotateWheel(window, axle, 45, 6);
+      opacities.push(await trackCell());
+    }
+    expect(Math.min(...opacities), "the cell passes behind the dock").toBeLessThan(0.15);
+    expect(Math.max(...opacities), "and comes back out").toBeGreaterThan(0.85);
+
     // 11. None of this touches the document.
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
