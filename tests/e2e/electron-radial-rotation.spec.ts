@@ -40,9 +40,13 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     expect(clockwise, "clockwise drag rotates forward").toBeGreaterThan(45);
     expect(clockwise, "roughly one to one").toBeLessThan(65);
 
-    // 3. Release stops it dead: no momentum carries the wheel on.
+    // 3. A deliberate drag that comes to rest before release stops dead.
+    await expect(library).toHaveAttribute("data-library-coasting", "false");
     await window.waitForTimeout(400);
-    expect(await rotation(library), "no momentum after release").toBeCloseTo(clockwise, 3);
+    expect(await rotation(library), "no momentum after a settled release").toBeCloseTo(
+      clockwise,
+      3,
+    );
 
     // 4. A second drag continues from the current rotation.
     await rotateWheel(window, axle, 40, 8);
@@ -206,6 +210,183 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     expect(Math.min(...opacities), "the cell passes behind the dock").toBeLessThan(0.15);
     expect(Math.max(...opacities), "and comes back out").toBeGreaterThan(0.85);
 
+    // 10f. Inertia: a flick keeps the wheel turning after the pointer is gone.
+    await waitForStillness(window);
+    const beforeFlick = await rotation(library);
+    await flickWheel(window, axle, 70, 6);
+    const atRelease = await rotation(library);
+    // Sampled while the wheel is still coasting, so this is momentum rather
+    // than anything the pointer is still doing.
+    await expect(library).toHaveAttribute("data-library-coasting", "true");
+    const coastingFrom = await rotation(library);
+    await window.waitForTimeout(60);
+    const midCoast = await rotation(library);
+    expect(midCoast, "momentum carries the wheel past the release").toBeGreaterThan(coastingFrom);
+    expect(midCoast - beforeFlick, "and continues the direction of the flick").toBeGreaterThan(0);
+
+    // 10g. It slows down rather than running at a constant speed.
+    const firstStep = midCoast - coastingFrom;
+    await window.waitForTimeout(60);
+    const laterStep = (await rotation(library)) - midCoast;
+    expect(laterStep, "the coast decelerates").toBeLessThan(firstStep);
+
+    // 10h. And it stops on its own, well short of a runaway spin.
+    await waitForStillness(window);
+    const settled = await rotation(library);
+    await window.waitForTimeout(200);
+    expect(await rotation(library), "the coast ends").toBeCloseTo(settled, 3);
+    // A flick coasts, but a professional selector never spins: the release cap
+    // keeps even the fastest gesture well under a full turn of momentum.
+    expect(Math.abs(settled - atRelease), "momentum is restrained").toBeLessThan(180);
+    expect(Math.abs(settled - atRelease), "but is real").toBeGreaterThan(1);
+
+    // 10i. A fast flick is capped: far more pointer speed does not buy a spin.
+    await waitForStillness(window);
+    const beforeFast = await rotation(library);
+    await flickWheel(window, axle, 150, 3);
+    await waitForStillness(window);
+    const fastCoast = Math.abs((await rotation(library)) - beforeFast - 150);
+    expect(fastCoast, "even a hard flick stays under a half turn").toBeLessThan(180);
+
+    // 10j. Momentum yields to the hand at once: no tug of war.
+    await waitForStillness(window);
+    await flickWheel(window, axle, 80, 5);
+    await expect(library).toHaveAttribute("data-library-coasting", "true");
+    // Press the wheel mid-coast and simply hold: the wheel must stop under the
+    // finger rather than continuing to drift beneath it.
+    const grab = await grabPointOnWheel(window);
+    const grabPoint = {
+      x: axle.x + grab.radius * Math.cos((grab.angleDegrees * Math.PI) / 180),
+      y: axle.y + grab.radius * Math.sin((grab.angleDegrees * Math.PI) / 180),
+    };
+    await window.mouse.move(grabPoint.x, grabPoint.y);
+    await window.mouse.down();
+    await expect(library, "the grab stops the coast at once").toHaveAttribute(
+      "data-library-coasting",
+      "false",
+    );
+    const caught = await rotation(library);
+    await window.waitForTimeout(150);
+    expect(await rotation(library), "and nothing drifts under the finger").toBeCloseTo(caught, 3);
+    await window.mouse.up();
+
+    // 10k. Fade keeps working during a coast, and gaps stay radially aligned.
+    await waitForStillness(window);
+    await flickWheel(window, axle, 90, 5);
+    const duringCoast = await window.evaluate(() => {
+      const parse = (value: string | null) =>
+        (value ?? "")
+          .split(" ")
+          .filter((entry) => entry.length > 0)
+          .map((entry) => Number(entry.split(":")[0]));
+      const cells = [...document.querySelectorAll("[data-brush-item]")];
+      const tracks = [...document.querySelectorAll("[data-library-track]")];
+      return {
+        coasting:
+          document
+            .querySelector('[data-testid="radial-brush-library"]')
+            ?.getAttribute("data-library-coasting") === "true",
+        opacities: cells.map((cell) => Number(cell.getAttribute("data-brush-visibility"))),
+        anyInteractiveWhileInvisible: cells.some(
+          (cell) =>
+            Number(cell.getAttribute("data-brush-visibility")) <= 0.02 &&
+            getComputedStyle(cell).pointerEvents !== "none",
+        ),
+        // Icons are translated only, exactly as during a manual drag.
+        rotatedIcons: [...document.querySelectorAll("[data-brush-item] > g")].filter((group) =>
+          /rotate/u.test(group.getAttribute("transform") ?? ""),
+        ).length,
+        innermostGap: parse(tracks[0]!.getAttribute("data-track-blocked"))[0],
+        outerBlocked: tracks
+          .slice(1)
+          .map((track) => parse(track.getAttribute("data-track-blocked"))),
+        // No temporal easing may creep in for the coast.
+        easedOpacity: cells.filter((cell) => {
+          const style = getComputedStyle(cell);
+          return /opacity|all/u.test(style.transitionProperty) && style.transitionDuration !== "0s";
+        }).length,
+      };
+    });
+    expect(duringCoast.coasting, "sampled mid-coast").toBe(true);
+    expect(duringCoast.opacities.every((value) => value >= 0 && value <= 1)).toBe(true);
+    expect(
+      duringCoast.opacities.some((value) => value < 0.999),
+      "cells fade while coasting",
+    ).toBe(true);
+    expect(duringCoast.anyInteractiveWhileInvisible, "hidden cells stay inert").toBe(false);
+    expect(duringCoast.rotatedIcons, "icons stay upright while coasting").toBe(0);
+    expect(duringCoast.easedOpacity, "fade stays spatial during momentum").toBe(0);
+    for (const blocked of duringCoast.outerBlocked) {
+      const carried = blocked.some((start) => Math.abs(start - duringCoast.innermostGap!) < 0.05);
+      expect(carried, "channels stay aligned through momentum").toBe(true);
+    }
+    await waitForStillness(window);
+
+    // 10l. Closing mid-coast cancels the momentum: reopening starts at rest.
+    await flickWheel(window, axle, 90, 5);
+    await expect(library).toHaveAttribute("data-library-coasting", "true");
+    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await expect(library, "closing during a coast tears the library down").toHaveCount(0);
+    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await expect(library).toHaveAttribute("data-library-rotation", "0.000");
+    await expect(library, "and it reopens at rest").toHaveAttribute(
+      "data-library-coasting",
+      "false",
+    );
+
+    // 10m. Each utility cancels a coast in flight rather than leaving it running.
+    for (const utility of ["Select", "Eraser", "Shapes"] as const) {
+      await slot("Brush Pen").click();
+      await slot("Brush Pen").click({ modifiers: ["Shift"] });
+      await expect(library, `${utility} setup`).toBeVisible();
+      const utilityAxle = await libraryAxle(window);
+      await flickWheel(window, utilityAxle, 90, 5);
+      await expect(library, `${utility} coast started`).toHaveAttribute(
+        "data-library-coasting",
+        "true",
+      );
+      await slot(utility).click();
+      await expect(library, `${utility} cancels the coast`).toHaveCount(0);
+      // Nothing may keep rotating in the background once the wheel is gone.
+      await window.waitForTimeout(150);
+      await expect(library, `${utility} leaves no library behind`).toHaveCount(0);
+    }
+    await slot("Brush Pen").click();
+    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    const reopenedAxle = await libraryAxle(window);
+
+    // 10n. Momentum accumulates past a full turn without corrupting geometry.
+    await rotateWheel(window, reopenedAxle, 330, 30);
+    await flickWheel(window, reopenedAxle, 90, 5);
+    await waitForStillness(window);
+    expect(Math.abs(await rotation(library)), "past a full turn under momentum").toBeGreaterThan(
+      360,
+    );
+    await expect(library.locator("[data-brush-item]")).toHaveCount(45);
+    const finiteAfterCoast = await window.evaluate(() =>
+      [...document.querySelectorAll("[data-brush-cell]")].every(
+        (cell) => !(cell.getAttribute("d") ?? "").match(/NaN|Infinity/u),
+      ),
+    );
+    expect(finiteAfterCoast, "geometry survives momentum past a turn").toBe(true);
+
+    // 10o. A sub-threshold press is a click, never a tiny fling.
+    await waitForStillness(window);
+    const beforeClick = await rotation(library);
+    const clickTarget = await grabPointOnWheel(window);
+    const clickPoint = {
+      x: axle.x + clickTarget.radius * Math.cos((clickTarget.angleDegrees * Math.PI) / 180),
+      y: axle.y + clickTarget.radius * Math.sin((clickTarget.angleDegrees * Math.PI) / 180),
+    };
+    await window.mouse.move(clickPoint.x, clickPoint.y);
+    await window.mouse.down();
+    // Inside the 4px threshold, so this never becomes a rotation.
+    await window.mouse.move(clickPoint.x + 2, clickPoint.y + 1);
+    await window.mouse.up();
+    await window.waitForTimeout(200);
+    expect(await rotation(library), "a click never flings the wheel").toBeCloseTo(beforeClick, 3);
+    await expect(library).toHaveAttribute("data-library-coasting", "false");
+
     // 11. None of this touches the document.
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
@@ -311,6 +492,34 @@ async function rotateWheel(
   steps: number,
   sweepRadius = 34,
 ): Promise<void> {
+  await sweepWheel(window, axle, deltaDegrees, steps, sweepRadius, "settle");
+}
+
+/**
+ * Sweeps and releases the instant the sweep ends, so the release carries speed.
+ *
+ * The difference from `rotateWheel` is only what happens at the end of the
+ * gesture: the sweep itself is identical, because inertia must never change how
+ * the wheel behaves while the pointer is down.
+ */
+async function flickWheel(
+  window: Page,
+  axle: Readonly<{ x: number; y: number }>,
+  deltaDegrees: number,
+  steps: number,
+  sweepRadius = 34,
+): Promise<void> {
+  await sweepWheel(window, axle, deltaDegrees, steps, sweepRadius, "fling");
+}
+
+async function sweepWheel(
+  window: Page,
+  axle: Readonly<{ x: number; y: number }>,
+  deltaDegrees: number,
+  steps: number,
+  sweepRadius: number,
+  ending: "settle" | "fling",
+): Promise<void> {
   const grab = await grabPointOnWheel(window);
   const at = (degrees: number, radius: number) => ({
     x: axle.x + radius * Math.cos((degrees * Math.PI) / 180),
@@ -326,7 +535,21 @@ async function rotateWheel(
     const point = at(grab.angleDegrees + (deltaDegrees * step) / steps, sweepRadius);
     await window.mouse.move(point.x, point.y);
   }
+  if (ending === "settle") {
+    // Come to rest before letting go, the way a deliberate drag ends. The
+    // sample window ages out, so the release carries no speed at all.
+    await window.waitForTimeout(160);
+  }
   await window.mouse.up();
+  if (ending === "settle") await waitForStillness(window);
+}
+
+/** Waits for any coast to finish, so a measurement is taken at rest. */
+async function waitForStillness(window: Page): Promise<void> {
+  await expect(window.getByTestId("radial-brush-library")).toHaveAttribute(
+    "data-library-coasting",
+    "false",
+  );
 }
 
 /** The first cell's start angle on each ring, for rigid-body comparison. */

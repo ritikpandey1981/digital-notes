@@ -65,12 +65,18 @@ const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
  * never reaches the surfaces.
  */
 export function useFloatingSurfaceMotion(): FloatingSurfaceMotionResolution {
-  const reducedMotion = useSyncExternalStore(
-    subscribeToReducedMotion,
-    readReducedMotion,
-    () => false,
-  );
-  return resolveFloatingSurfaceMotion(reducedMotion);
+  return resolveFloatingSurfaceMotion(useReducedMotionPreference());
+}
+
+/**
+ * The live `prefers-reduced-motion` preference.
+ *
+ * Shared by surfaces that are not Framer-animated — the radial library's
+ * inertia among them — so there is one subscription mechanism rather than a
+ * second motion store with its own drift.
+ */
+export function useReducedMotionPreference(): boolean {
+  return useSyncExternalStore(subscribeToReducedMotion, readReducedMotion, () => false);
 }
 
 function subscribeToReducedMotion(onChange: () => void): () => void {

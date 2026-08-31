@@ -1,5 +1,13 @@
 import { Paintbrush, Pencil, PenTool, type LucideIcon } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import { useReducedMotionPreference } from "../../motion/floating-surface-motion";
 import type { BrushFixtureFamily } from "./brush-library-fixtures";
 import {
   RADIAL_ROTATION_DRAG_THRESHOLD,
@@ -7,12 +15,19 @@ import {
   computeCellVisibility,
   annularSectorPath,
   buildRadialLibraryLayout,
+  decayAngularVelocity,
+  hasSettled,
+  integrateAngularMotion,
   normalizeDegrees,
   pointerAngleDegrees,
   polarPoint,
+  releaseVelocityDegreesPerSecond,
   shortestAngularDelta,
+  shouldStartInertia,
+  trimRotationSamples,
   type RadialCell,
   type RadialCenter,
+  type RotationSample,
 } from "./radial-brush-library-model";
 
 interface RadialBrushLibraryProps {
@@ -82,6 +97,17 @@ interface RotationDrag {
   previousAngleDegrees: number;
   /** False until the pointer has travelled far enough to mean rotation. */
   rotating: boolean;
+  /** Unwrapped rotation reached so far, tracked for the release speed. */
+  travelledDegrees: number;
+  /** Recent movement, trimmed to the sample window on every move. */
+  samples: readonly RotationSample[];
+}
+
+/** The single coast in flight, if any. */
+interface InertiaState {
+  frameHandle: number | null;
+  velocityDegreesPerSecond: number;
+  lastFrameMs: number;
 }
 
 function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string }) {
@@ -91,6 +117,78 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
   // and dies with this component, so closing the library discards it.
   const [rotationOffsetDegrees, setRotationOffsetDegrees] = useState(0);
   const dragRef = useRef<RotationDrag | null>(null);
+  // One velocity for one wheel. Rings never carry momentum of their own.
+  const inertiaRef = useRef<InertiaState>({
+    frameHandle: null,
+    velocityDegreesPerSecond: 0,
+    lastFrameMs: 0,
+  });
+  // Observable only so the coast can be asserted and reasoned about; the
+  // rotation itself lives in the offset, exactly as it did before inertia.
+  const [coasting, setCoasting] = useState(false);
+  // The speed the last gesture released at. Reported so the physics can be
+  // observed in the real window rather than inferred from where the wheel
+  // happened to stop.
+  const [releaseVelocity, setReleaseVelocity] = useState(0);
+  const reducedMotion = useReducedMotionPreference();
+
+  /**
+   * Ends any coast immediately and discards its momentum.
+   *
+   * Called on release-into-a-new-drag, on unmount, and whenever the wheel has
+   * slowed to a stop. There is never more than one frame handle to cancel
+   * because nothing starts a second loop while this one is live.
+   */
+  const stopInertia = useCallback((): void => {
+    const inertia = inertiaRef.current;
+    if (inertia.frameHandle !== null) {
+      cancelAnimationFrame(inertia.frameHandle);
+      inertia.frameHandle = null;
+    }
+    inertia.velocityDegreesPerSecond = 0;
+    setCoasting(false);
+  }, []);
+
+  /**
+   * Coasts the wheel from a release speed until friction settles it.
+   *
+   * The loop exists only while the wheel is actually moving: it is started by a
+   * release and cancels itself the moment the speed falls below the stop
+   * threshold, so an open library at rest runs no animation at all.
+   */
+  const startInertia = useCallback((velocityDegreesPerSecond: number): void => {
+    const inertia = inertiaRef.current;
+    inertia.velocityDegreesPerSecond = velocityDegreesPerSecond;
+    inertia.lastFrameMs = performance.now();
+    setCoasting(true);
+    const step = (frameMs: number): void => {
+      const current = inertiaRef.current;
+      const elapsedMs = Math.max(0, frameMs - current.lastFrameMs);
+      current.lastFrameMs = frameMs;
+      const advance = integrateAngularMotion(current.velocityDegreesPerSecond, elapsedMs);
+      current.velocityDegreesPerSecond = decayAngularVelocity(
+        current.velocityDegreesPerSecond,
+        elapsedMs,
+      );
+      if (advance !== 0) {
+        // The same shared offset the drag writes to, so the existing spatial
+        // fade and every gap recompute from the coast with no special case.
+        setRotationOffsetDegrees((offset) => offset + advance);
+      }
+      if (hasSettled(current.velocityDegreesPerSecond)) {
+        current.frameHandle = null;
+        current.velocityDegreesPerSecond = 0;
+        setCoasting(false);
+        return;
+      }
+      current.frameHandle = requestAnimationFrame(step);
+    };
+    inertia.frameHandle = requestAnimationFrame(step);
+  }, []);
+
+  // No orphan frame loops: closing the library, switching tool, or reanchoring
+  // all unmount this surface, and each drops any coast still in flight.
+  useEffect(() => stopInertia, [stopInertia]);
 
   /**
    * The origin is measured from the selected slot itself, never assumed.
@@ -142,12 +240,17 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
     if (center === null || dragRef.current !== null) return;
     const point = workspacePoint(event);
     if (point === null) return;
+    // The pointer always wins. Grabbing a coasting wheel stops it dead on this
+    // frame, so there is never a tug-of-war between momentum and the hand.
+    stopInertia();
     dragRef.current = {
       pointerId: event.pointerId,
       originX: event.clientX,
       originY: event.clientY,
       previousAngleDegrees: pointerAngleDegrees(center, point.x, point.y),
       rotating: false,
+      travelledDegrees: 0,
+      samples: [],
     };
     // Capture on the rotating group, so the drag survives leaving the cell it
     // started on and continues over the dock, the rail, or empty workspace.
@@ -169,12 +272,23 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
         return;
       }
       drag.rotating = true;
+      // The gesture only starts being measured once it is a rotation, so the
+      // still moments before the threshold cannot dilute the release speed.
+      drag.samples = [{ timeMs: event.timeStamp, rotationDegrees: drag.travelledDegrees }];
     }
     // Shortest signed step, so crossing the +/-180 seam never lurches a turn.
+    // The same unwrapped delta feeds the velocity samples, which is what keeps
+    // a flick through +179 -> -179 reading as a small step rather than a turn.
     const delta = shortestAngularDelta(drag.previousAngleDegrees, angle);
     drag.previousAngleDegrees = angle;
+    drag.travelledDegrees += delta;
+    drag.samples = trimRotationSamples(
+      [...drag.samples, { timeMs: event.timeStamp, rotationDegrees: drag.travelledDegrees }],
+      event.timeStamp,
+    );
     // Accumulated without clamping: the wheel may be turned past a full turn in
-    // either direction and keeps going.
+    // either direction and keeps going. Direct manipulation stays exactly 1:1 —
+    // nothing here smooths, lags, or scales the pointer's own movement.
     setRotationOffsetDegrees((current) => current + delta);
   };
 
@@ -185,7 +299,24 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    // Rotation stops dead on release. Momentum is a later, separate decision.
+    // A press that never became a drag is a click, not a tiny fling. It stays
+    // available for the later brush selection and starts nothing here.
+    if (!drag.rotating || event.type === "pointercancel") {
+      setReleaseVelocity(0);
+      return;
+    }
+    // Reduced motion keeps the wheel fully usable and simply stops it on
+    // release, matching how the floating surfaces drop their travel.
+    if (reducedMotion) {
+      setReleaseVelocity(0);
+      return;
+    }
+    const velocity = releaseVelocityDegreesPerSecond(
+      trimRotationSamples(drag.samples, event.timeStamp),
+    );
+    setReleaseVelocity(velocity);
+    if (!shouldStartInertia(velocity)) return;
+    startInertia(velocity);
   };
 
   const layout =
@@ -202,6 +333,9 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
       data-library-center-x={layout === null ? "" : String(Math.round(layout.centerX))}
       data-library-center-y={layout === null ? "" : String(Math.round(layout.centerY))}
       data-library-rotation={rotationOffsetDegrees.toFixed(3)}
+      data-library-coasting={coasting ? "true" : "false"}
+      data-library-release-velocity={releaseVelocity.toFixed(1)}
+      data-library-motion-preset={reducedMotion ? "reduced" : "standard"}
     >
       {layout === null ? null : (
         <svg

@@ -261,6 +261,171 @@ export function computeCellVisibility(
   return total / samples.length;
 }
 
+/**
+ * Tunable inertia for the wheel's coast after a genuine rotation drag.
+ *
+ * Grouped here rather than scattered through the pointer handlers so the feel
+ * can be adjusted in one place, and so the physics stays testable without a
+ * window. Every value is an explicit unit: this is the one place where the
+ * radial model deals in time as well as angle.
+ */
+export interface RadialInertiaConfiguration {
+  /** Below this a release is treated as a stop, not a fling. */
+  readonly minimumReleaseVelocityDegreesPerSecond: number;
+  /** Ceiling on release speed, so a flick cannot become a spin. */
+  readonly maximumReleaseVelocityDegreesPerSecond: number;
+  /** Exponential decay rate, per second. Larger settles sooner. */
+  readonly frictionPerSecond: number;
+  /** Coasting ends once speed falls below this. */
+  readonly stopVelocityDegreesPerSecond: number;
+  /** How much of the end of the gesture the release speed is measured over. */
+  readonly sampleWindowMilliseconds: number;
+}
+
+export const RADIAL_INERTIA: RadialInertiaConfiguration = Object.freeze({
+  // Measured in the real window: a deliberate drag that ends by stopping
+  // settles under this, while an intentional flick clears it comfortably.
+  minimumReleaseVelocityDegreesPerSecond: 18,
+  // A quarter turn or so of coast at most. This is a selector, not a wheel of
+  // fortune, and near-axle drags can otherwise report absurd angular speed.
+  maximumReleaseVelocityDegreesPerSecond: 420,
+  // Measured: at 5.5 a capped flick still ran 720ms, past the intended settle.
+  // 6.5 brings every gesture from a slow scrub to a hard flick inside roughly
+  // 130-610ms, and holds the longest coast to about 65 degrees.
+  frictionPerSecond: 6.5,
+  stopVelocityDegreesPerSecond: 8,
+  sampleWindowMilliseconds: 80,
+});
+
+/** One timestamped point on the accumulated rotation, taken during a drag. */
+export interface RotationSample {
+  readonly timeMs: number;
+  /**
+   * Accumulated offset, already unwrapped through `shortestAngularDelta`.
+   *
+   * Unwrapped rather than raw, so measuring across the +/-180 seam reports the
+   * small step the user actually made instead of a near-full turn backward.
+   */
+  readonly rotationDegrees: number;
+}
+
+/**
+ * Drops samples the release speed should no longer be influenced by.
+ *
+ * The end of the gesture is what the user means: averaging a whole slow drag
+ * that finished with a flick would throw most of the flick away.
+ *
+ * A gesture that has gone quiet has come to rest, whatever it was doing before.
+ * Holding the wheel still and then letting go must stop it, so a buffer whose
+ * newest sample has itself aged out reports nothing rather than reviving the
+ * speed the hand had already given up.
+ */
+export function trimRotationSamples(
+  samples: readonly RotationSample[],
+  nowMs: number,
+  configuration: RadialInertiaConfiguration = RADIAL_INERTIA,
+): readonly RotationSample[] {
+  const newest = samples[samples.length - 1];
+  if (newest === undefined) return [];
+  if (nowMs - newest.timeMs > configuration.sampleWindowMilliseconds) return [];
+  const oldest = nowMs - configuration.sampleWindowMilliseconds;
+  const recent = samples.filter((sample) => sample.timeMs >= oldest);
+  // One anchor from just outside the window, so a sparse but live drag can
+  // still be measured instead of reading as a single point.
+  if (recent.length >= 2) return recent;
+  return samples.slice(-2);
+}
+
+/**
+ * Signed angular speed at release, in degrees per second.
+ *
+ * Zero whenever there is nothing meaningful to measure — one sample, or two
+ * that share a timestamp — so a degenerate event stream can never produce a
+ * NaN or an infinite velocity that would be clamped into a real fling.
+ */
+export function releaseVelocityDegreesPerSecond(
+  samples: readonly RotationSample[],
+  configuration: RadialInertiaConfiguration = RADIAL_INERTIA,
+): number {
+  if (samples.length < 2) return 0;
+  const first = samples[0]!;
+  const last = samples[samples.length - 1]!;
+  const elapsedMs = last.timeMs - first.timeMs;
+  if (!(elapsedMs > 0)) return 0;
+  const velocity = ((last.rotationDegrees - first.rotationDegrees) / elapsedMs) * 1_000;
+  if (!Number.isFinite(velocity)) return 0;
+  return clampAngularVelocity(velocity, configuration);
+}
+
+/** Limits speed while keeping direction. */
+export function clampAngularVelocity(
+  velocityDegreesPerSecond: number,
+  configuration: RadialInertiaConfiguration = RADIAL_INERTIA,
+): number {
+  if (!Number.isFinite(velocityDegreesPerSecond)) return 0;
+  const limit = configuration.maximumReleaseVelocityDegreesPerSecond;
+  const magnitude = Math.min(Math.abs(velocityDegreesPerSecond), limit);
+  return Math.sign(velocityDegreesPerSecond) * magnitude;
+}
+
+/** Whether a release was decisive enough to coast rather than stop dead. */
+export function shouldStartInertia(
+  velocityDegreesPerSecond: number,
+  configuration: RadialInertiaConfiguration = RADIAL_INERTIA,
+): boolean {
+  if (!Number.isFinite(velocityDegreesPerSecond)) return false;
+  return Math.abs(velocityDegreesPerSecond) >= configuration.minimumReleaseVelocityDegreesPerSecond;
+}
+
+/**
+ * Speed after coasting for one frame.
+ *
+ * Exponential in elapsed time rather than a per-frame multiplier, so the wheel
+ * decelerates identically at 60Hz and 120Hz and a dropped frame costs no extra
+ * momentum. Splitting a step in two is exactly equivalent to taking it whole.
+ */
+export function decayAngularVelocity(
+  velocityDegreesPerSecond: number,
+  frameMilliseconds: number,
+  configuration: RadialInertiaConfiguration = RADIAL_INERTIA,
+): number {
+  if (!Number.isFinite(velocityDegreesPerSecond) || !Number.isFinite(frameMilliseconds)) return 0;
+  if (frameMilliseconds <= 0) return velocityDegreesPerSecond;
+  return (
+    velocityDegreesPerSecond *
+    Math.exp((-configuration.frictionPerSecond * frameMilliseconds) / 1_000)
+  );
+}
+
+/**
+ * Degrees travelled during one coasting frame.
+ *
+ * The exact integral of the decaying speed over the frame, not `velocity * dt`.
+ * A rectangular step overshoots on a long frame and would make the coast depend
+ * on frame rate even though the decay does not.
+ */
+export function integrateAngularMotion(
+  velocityDegreesPerSecond: number,
+  frameMilliseconds: number,
+  configuration: RadialInertiaConfiguration = RADIAL_INERTIA,
+): number {
+  if (!Number.isFinite(velocityDegreesPerSecond) || !Number.isFinite(frameMilliseconds)) return 0;
+  if (frameMilliseconds <= 0) return 0;
+  const seconds = frameMilliseconds / 1_000;
+  const friction = configuration.frictionPerSecond;
+  if (friction <= 0) return velocityDegreesPerSecond * seconds;
+  return (velocityDegreesPerSecond * (1 - Math.exp(-friction * seconds))) / friction;
+}
+
+/** Whether the coast has slowed enough to stop and release the frame loop. */
+export function hasSettled(
+  velocityDegreesPerSecond: number,
+  configuration: RadialInertiaConfiguration = RADIAL_INERTIA,
+): boolean {
+  if (!Number.isFinite(velocityDegreesPerSecond)) return true;
+  return Math.abs(velocityDegreesPerSecond) < configuration.stopVelocityDegreesPerSecond;
+}
+
 function rotateInterval(source: AngularInterval, offsetDegrees: number): AngularInterval {
   return Object.freeze({
     startDegrees: normalizeDegrees(source.startDegrees + offsetDegrees),
