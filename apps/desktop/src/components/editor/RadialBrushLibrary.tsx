@@ -10,14 +10,24 @@ import {
 import { useReducedMotionPreference } from "../../motion/floating-surface-motion";
 import type { BrushFixtureFamily } from "./brush-library-fixtures";
 import {
+  RADIAL_OPEN_MOTION,
   RADIAL_ROTATION_DRAG_THRESHOLD,
   RADIAL_VISIBILITY_EPSILON,
+  cellCircumferentialReveal,
+  combineRevealFactors,
   computeCellVisibility,
   annularSectorPath,
   buildRadialLibraryLayout,
   decayAngularVelocity,
+  expandCell,
   hasSettled,
   integrateAngularMotion,
+  revealFrontDegrees,
+  ringAngularRevealProgress,
+  ringLocalProgress,
+  ringRadialExpansion,
+  ringRevealOpacity,
+  type RadialPresentationPhase,
   normalizeDegrees,
   pointerAngleDegrees,
   polarPoint,
@@ -81,10 +91,102 @@ const TRACK_TONES: readonly string[] = Object.freeze([
  * dock is expected rather than a defect: the future rotation brings them round.
  */
 export function RadialBrushLibrary({ open, anchorSlotId }: RadialBrushLibraryProps) {
-  // The surface mounts only while the library is open, so its measured centre
-  // resets by unmounting rather than by an effect.
-  if (!open || anchorSlotId === null) return null;
-  return <RadialLibrarySurface anchorSlotId={anchorSlotId} />;
+  const requested = open && anchorSlotId !== null;
+  const presentation = useRadialPresentation(requested);
+  // The axle is latched while the library is wanted, because a tool switch
+  // moves the active slot in the same commit that closes the library: without
+  // this the collapse would resolve into whichever slot just became active
+  // rather than the one the instrument actually unfolded from.
+  const [latchedSlotId, setLatchedSlotId] = useState<string | null>(null);
+  if (requested && anchorSlotId !== null && anchorSlotId !== latchedSlotId) {
+    setLatchedSlotId(anchorSlotId);
+  }
+  const slotId = requested ? anchorSlotId : latchedSlotId;
+  // Presentation mount, not logical open: the surface has to outlive the
+  // request long enough to collapse. It still unmounts the moment it is closed,
+  // so nothing hidden is left mounted, and the rotation, velocity and measured
+  // centre all reset by unmounting exactly as they did before.
+  if (presentation.phase === "closed" || slotId === null) return null;
+  return (
+    <RadialLibrarySurface
+      anchorSlotId={slotId}
+      phase={presentation.phase}
+      openProgress={presentation.progress}
+    />
+  );
+}
+
+interface RadialPresentation {
+  readonly phase: RadialPresentationPhase;
+  /** Linear position of the unfolding, 0 collapsed to 1 fully open. */
+  readonly progress: number;
+}
+
+/**
+ * Drives one linear progress value between collapsed and open.
+ *
+ * Deliberately linear: easing is applied per ring at render time. Reversing a
+ * half-finished gesture then simply changes the direction of travel from
+ * wherever it had got to, which is what makes a rapid toggle continuous — there
+ * is no second clock to restart and no eased value to invert.
+ *
+ * The frame loop exists only while the value is actually travelling.
+ */
+function useRadialPresentation(requested: boolean): RadialPresentation {
+  const reducedMotion = useReducedMotionPreference();
+  const [state, setState] = useState<RadialPresentation>(() => ({
+    phase: requested ? "open" : "closed",
+    progress: requested ? 1 : 0,
+  }));
+  const frameRef = useRef<number | null>(null);
+  const progressRef = useRef(state.progress);
+
+  useEffect(() => {
+    const cancel = (): void => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    };
+    cancel();
+    // Reduced motion gets the instrument, not the performance: it arrives and
+    // leaves at its final geometry with no unfolding at all.
+    if (reducedMotion) {
+      progressRef.current = requested ? 1 : 0;
+      setState({ phase: requested ? "open" : "closed", progress: progressRef.current });
+      return cancel;
+    }
+    const settled = requested ? 1 : 0;
+    if (progressRef.current === settled) {
+      setState({ phase: requested ? "open" : "closed", progress: settled });
+      return cancel;
+    }
+    const durationMs = requested
+      ? RADIAL_OPEN_MOTION.openMilliseconds
+      : RADIAL_OPEN_MOTION.closeMilliseconds;
+    setState({ phase: requested ? "opening" : "closing", progress: progressRef.current });
+    let lastFrameMs = performance.now();
+    const step = (frameMs: number): void => {
+      const elapsedMs = Math.max(0, frameMs - lastFrameMs);
+      lastFrameMs = frameMs;
+      const travel = durationMs > 0 ? elapsedMs / durationMs : 1;
+      const next = requested
+        ? Math.min(1, progressRef.current + travel)
+        : Math.max(0, progressRef.current - travel);
+      progressRef.current = next;
+      if (next === settled) {
+        frameRef.current = null;
+        setState({ phase: requested ? "open" : "closed", progress: settled });
+        return;
+      }
+      setState({ phase: requested ? "opening" : "closing", progress: next });
+      frameRef.current = requestAnimationFrame(step);
+    };
+    frameRef.current = requestAnimationFrame(step);
+    return cancel;
+  }, [reducedMotion, requested]);
+
+  return state;
 }
 
 /** One in-flight rotation gesture. */
@@ -110,7 +212,15 @@ interface InertiaState {
   lastFrameMs: number;
 }
 
-function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string }) {
+function RadialLibrarySurface({
+  anchorSlotId,
+  phase,
+  openProgress,
+}: {
+  readonly anchorSlotId: string;
+  readonly phase: RadialPresentationPhase;
+  readonly openProgress: number;
+}) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [center, setCenter] = useState<RadialCenter | null>(null);
   // One shared offset for the entire instrument. Transient UI state: it lives
@@ -139,15 +249,26 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
    * slowed to a stop. There is never more than one frame handle to cancel
    * because nothing starts a second loop while this one is live.
    */
-  const stopInertia = useCallback((): void => {
+  /**
+   * Drops the coast itself, touching no React state.
+   *
+   * Separated so effects can shut the frame loop down — which is exactly the
+   * external system an effect exists to manage — without a synchronous state
+   * update cascading another render on the way.
+   */
+  const cancelInertiaFrame = useCallback((): void => {
     const inertia = inertiaRef.current;
     if (inertia.frameHandle !== null) {
       cancelAnimationFrame(inertia.frameHandle);
       inertia.frameHandle = null;
     }
     inertia.velocityDegreesPerSecond = 0;
-    setCoasting(false);
   }, []);
+
+  const stopInertia = useCallback((): void => {
+    cancelInertiaFrame();
+    setCoasting(false);
+  }, [cancelInertiaFrame]);
 
   /**
    * Coasts the wheel from a release speed until friction settles it.
@@ -188,7 +309,15 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
 
   // No orphan frame loops: closing the library, switching tool, or reanchoring
   // all unmount this surface, and each drops any coast still in flight.
-  useEffect(() => stopInertia, [stopInertia]);
+  //
+  // Momentum must not keep turning the wheel while it is collapsing either. The
+  // rotation it had reached is kept rather than snapped back to zero, so the
+  // instrument folds away from where the artist actually left it; a completed
+  // close unmounts the surface, which is what resets rotation for next time.
+  useEffect(() => {
+    if (phase === "closing") cancelInertiaFrame();
+    return cancelInertiaFrame;
+  }, [cancelInertiaFrame, phase]);
 
   /**
    * The origin is measured from the selected slot itself, never assumed.
@@ -333,9 +462,14 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
       data-library-center-x={layout === null ? "" : String(Math.round(layout.centerX))}
       data-library-center-y={layout === null ? "" : String(Math.round(layout.centerY))}
       data-library-rotation={rotationOffsetDegrees.toFixed(3)}
-      data-library-coasting={coasting ? "true" : "false"}
+      // A wheel that is still unfolding, or already folding away, is not
+      // coasting: inertia can only ever be started by releasing a drag on an
+      // open instrument, and the collapse drops it on its first frame.
+      data-library-coasting={phase === "open" && coasting ? "true" : "false"}
       data-library-release-velocity={releaseVelocity.toFixed(1)}
       data-library-motion-preset={reducedMotion ? "reduced" : "standard"}
+      data-library-phase={phase}
+      data-library-open-progress={openProgress.toFixed(3)}
     >
       {layout === null ? null : (
         <svg
@@ -358,34 +492,53 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           >
-            {layout.tracks.map((track) => (
-              <g
-                key={track.index}
-                data-library-track={track.index}
-                data-track-cell-angle={track.cellAngleDegrees.toFixed(3)}
-                data-track-capacity={track.capacity}
-                data-track-direct-gap={
-                  track.directGap === null
-                    ? ""
-                    : `${track.directGap.startDegrees.toFixed(2)}:${track.directGap.widthDegrees.toFixed(2)}`
-                }
-                data-track-blocked={track.blockedIntervals
-                  .map((gap) => `${gap.startDegrees.toFixed(2)}:${gap.widthDegrees.toFixed(2)}`)
-                  .join(" ")}
-                data-track-allowed={track.allowedArcs
-                  .map((arc) => `${arc.startDegrees.toFixed(2)}:${arc.widthDegrees.toFixed(2)}`)
-                  .join(" ")}
-              >
-                {track.cells.map((cell) => (
-                  <BrushCell
-                    key={cell.fixture.id}
-                    center={{ x: layout.centerX, y: layout.centerY }}
-                    cell={cell}
-                    tone={TRACK_TONES[track.index % TRACK_TONES.length] ?? TRACK_TONES[0]!}
-                  />
-                ))}
-              </g>
-            ))}
+            {layout.tracks.map((track) => {
+              // Two presentation dimensions per ring, both from the one shared
+              // progress: how far out the ring has grown, and how far a front
+              // has swept round uncovering its cells. Staging is per ring, so
+              // the eye reads four rings propagating outward rather than
+              // forty-five brushes being dealt.
+              const local = ringLocalProgress(openProgress, track.index, layout.tracks.length);
+              const expansion = ringRadialExpansion(local);
+              const reveal = ringRevealOpacity(expansion);
+              const angularProgress = ringAngularRevealProgress(local);
+              return (
+                <g
+                  key={track.index}
+                  data-library-track={track.index}
+                  data-track-expansion={expansion.toFixed(3)}
+                  data-track-reveal={reveal.toFixed(3)}
+                  data-track-angular={angularProgress.toFixed(3)}
+                  data-track-front={revealFrontDegrees(angularProgress).toFixed(2)}
+                  data-track-cell-angle={track.cellAngleDegrees.toFixed(3)}
+                  data-track-capacity={track.capacity}
+                  data-track-direct-gap={
+                    track.directGap === null
+                      ? ""
+                      : `${track.directGap.startDegrees.toFixed(2)}:${track.directGap.widthDegrees.toFixed(2)}`
+                  }
+                  data-track-blocked={track.blockedIntervals
+                    .map((gap) => `${gap.startDegrees.toFixed(2)}:${gap.widthDegrees.toFixed(2)}`)
+                    .join(" ")}
+                  data-track-allowed={track.allowedArcs
+                    .map((arc) => `${arc.startDegrees.toFixed(2)}:${arc.widthDegrees.toFixed(2)}`)
+                    .join(" ")}
+                >
+                  {track.cells.map((cell) => (
+                    <BrushCell
+                      key={cell.fixture.id}
+                      center={{ x: layout.centerX, y: layout.centerY }}
+                      cell={cell}
+                      expansion={expansion}
+                      reveal={reveal}
+                      angularProgress={angularProgress}
+                      interactive={phase === "open"}
+                      tone={TRACK_TONES[track.index % TRACK_TONES.length] ?? TRACK_TONES[0]!}
+                    />
+                  ))}
+                </g>
+              );
+            })}
           </g>
         </svg>
       )}
@@ -396,26 +549,49 @@ function RadialLibrarySurface({ anchorSlotId }: { readonly anchorSlotId: string 
 function BrushCell({
   center,
   cell,
+  expansion,
+  reveal,
+  angularProgress,
+  interactive,
   tone,
 }: {
   readonly center: RadialCenter;
   readonly cell: RadialCell;
+  /** How far this cell's ring has unfolded, 0 at the hub to 1 in place. */
+  readonly expansion: number;
+  /** Secondary reveal opacity supporting the ring's arrival. */
+  readonly reveal: number;
+  /** How far the ring's reveal front has swept, 0 to 1. */
+  readonly angularProgress: number;
+  readonly interactive: boolean;
   readonly tone: string;
 }) {
-  const iconMid = polarPoint(center, cell.midRadius, cell.midAngleDegrees);
+  // One animated geometry drives the surface, the seam and the glyph together,
+  // so nothing detaches from its cell while the ring travels.
+  const drawn = expandCell(cell, expansion);
+  const iconMid = polarPoint(center, drawn.midRadius, drawn.midAngleDegrees);
   const Icon = FAMILY_ICONS[cell.fixture.family];
   // Opacity on the group, so surface, seam, icon and hover tint all fade as one
   // object rather than the glyph floating at full strength over a ghost cell.
+  //
+  // Three independent ideas, multiplied rather than merged: where the cell is
+  // relative to the dock aperture, how established its ring currently is, and
+  // how far the sweep has uncovered this particular cell. The spatial term
+  // knows nothing about time, the ring term nothing about angle, and the
+  // circumferential term nothing about radius.
   const visibility = computeCellVisibility(cell);
-  // A cell hidden behind the dock must not quietly collect presses.
-  const hidden = visibility <= RADIAL_VISIBILITY_EPSILON;
+  const circumferential = cellCircumferentialReveal(cell.midAngleDegrees, angularProgress);
+  const opacity = combineRevealFactors(visibility, reveal, circumferential);
+  // A cell hidden behind the dock must not quietly collect presses, and a wheel
+  // still unfolding is not yet an instrument to grab.
+  const hidden = visibility <= RADIAL_VISIBILITY_EPSILON || !interactive;
   return (
     <g
       // Spatial opacity, recomputed from the cell's current angle on every
       // render. Deliberately no CSS transition: the fade has to stay locked to
       // the pointer rather than trailing it, and the smoothstep band already
       // supplies the softness.
-      opacity={visibility}
+      opacity={opacity}
       // grab/grabbing communicates the affordance on fine pointers; touch and
       // stylus rely on the physical radial form instead. A cell hidden behind
       // the dock stops taking input rather than collecting presses invisibly.
@@ -425,13 +601,15 @@ function BrushCell({
           : "pointer-events-auto cursor-grab focus:outline-none active:cursor-grabbing"
       }
       data-brush-visibility={visibility.toFixed(3)}
+      data-brush-circumferential={circumferential.toFixed(3)}
+      data-brush-opacity={opacity.toFixed(3)}
       data-brush-item={cell.fixture.id}
       data-brush-family={cell.fixture.family}
       data-brush-track={cell.trackIndex}
       data-brush-index={cell.catalogueIndex}
       data-brush-arc-length={cell.arcLength.toFixed(2)}
-      data-brush-inner-radius={cell.innerRadius}
-      data-brush-outer-radius={cell.outerRadius}
+      data-brush-inner-radius={drawn.innerRadius.toFixed(2)}
+      data-brush-outer-radius={drawn.outerRadius.toFixed(2)}
       data-brush-cell-angle={cell.cellAngleDegrees.toFixed(3)}
       data-brush-start-angle={normalizeDegrees(cell.startAngleDegrees).toFixed(3)}
       data-brush-end-angle={cell.endAngleDegrees.toFixed(3)}
@@ -439,7 +617,7 @@ function BrushCell({
     >
       <title>{cell.fixture.name}</title>
       <path
-        d={annularSectorPath(center, cell)}
+        d={annularSectorPath(center, drawn)}
         data-brush-cell={cell.fixture.id}
         fill={tone}
         // A hairline seam rather than a grid line: the instruments should read

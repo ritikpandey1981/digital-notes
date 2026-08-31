@@ -30,6 +30,7 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     await slot("Brush Pen").click();
     await slot("Brush Pen").click({ modifiers: ["Shift"] });
     await expect(library).toBeVisible();
+    await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-rotation", "0.000");
 
     const axle = await libraryAxle(window);
@@ -328,6 +329,7 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     await slot("Brush Pen").click({ modifiers: ["Shift"] });
     await expect(library, "closing during a coast tears the library down").toHaveCount(0);
     await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-rotation", "0.000");
     await expect(library, "and it reopens at rest").toHaveAttribute(
       "data-library-coasting",
@@ -339,6 +341,7 @@ test("rotates the radial brush library as one rigid instrument", async () => {
       await slot("Brush Pen").click();
       await slot("Brush Pen").click({ modifiers: ["Shift"] });
       await expect(library, `${utility} setup`).toBeVisible();
+      await waitForOpen(window);
       const utilityAxle = await libraryAxle(window);
       await flickWheel(window, utilityAxle, 90, 5);
       await expect(library, `${utility} coast started`).toHaveAttribute(
@@ -353,6 +356,7 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     }
     await slot("Brush Pen").click();
     await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await waitForOpen(window);
     const reopenedAxle = await libraryAxle(window);
 
     // 10n. Momentum accumulates past a full turn without corrupting geometry.
@@ -400,6 +404,7 @@ test("rotates the radial brush library as one rigid instrument", async () => {
       await slot("Brush Pen").click();
       await slot("Brush Pen").click({ modifiers: ["Shift"] });
       await expect(library, `${utility} setup`).toBeVisible();
+      await waitForOpen(window);
       await slot(utility).click();
       await expect(library, `${utility} closes the library`).toHaveCount(0);
     }
@@ -542,6 +547,14 @@ async function sweepWheel(
   }
   await window.mouse.up();
   if (ending === "settle") await waitForStillness(window);
+}
+
+/** Waits for the instrument to finish unfolding, so it can be grabbed. */
+async function waitForOpen(window: Page): Promise<void> {
+  await expect(window.getByTestId("radial-brush-library")).toHaveAttribute(
+    "data-library-phase",
+    "open",
+  );
 }
 
 /** Waits for any coast to finish, so a measurement is taken at rest. */

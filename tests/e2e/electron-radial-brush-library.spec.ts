@@ -46,6 +46,7 @@ test("opens a static radial brush library around the active drawing slot", async
     // 3. Shift+Click on the active slot is the temporary geometry trigger.
     await slot("Pencil").click({ modifiers: ["Shift"] });
     await expect(library).toBeVisible();
+    await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-anchor-slot", "pencil");
     await expect(palette).toHaveCount(0);
 
@@ -54,6 +55,7 @@ test("opens a static radial brush library around the active drawing slot", async
     await expect(library).toHaveCount(0);
     await slot("Pencil").click({ modifiers: ["Shift"] });
     await expect(library).toBeVisible();
+    await waitForOpen(window);
 
     // 4. The centre is the selected slot's centre, not the dock's.
     await expectCenteredOnSlot(window, "pencil");
@@ -201,6 +203,7 @@ test("opens a static radial brush library around the active drawing slot", async
     await slot("Marker").click();
     await expect(library).toHaveCount(0);
     await slot("Marker").click({ modifiers: ["Shift"] });
+    await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-anchor-slot", "marker");
     await expectCenteredOnSlot(window, "marker");
     const pencilCenter = await slotCenterY(window, "pencil");
@@ -212,6 +215,7 @@ test("opens a static radial brush library around the active drawing slot", async
       await slot("Pencil").click();
       await slot("Pencil").click({ modifiers: ["Shift"] });
       await expect(library, `${utility} setup`).toBeVisible();
+      await waitForOpen(window);
       await slot(utility).click();
       await expect(library, `${utility} closes the library`).toHaveCount(0);
     }
@@ -225,6 +229,7 @@ test("opens a static radial brush library around the active drawing slot", async
     await slot("Pencil").click();
     await slot("Pencil").click({ modifiers: ["Shift"] });
     await expect(library).toBeVisible();
+    await waitForOpen(window);
     await expect(library.locator('[data-brush-item="watercolor"]')).toHaveAttribute(
       "aria-label",
       "Watercolor",
@@ -292,4 +297,12 @@ async function expectCenteredOnSlot(window: Page, slotId: string): Promise<void>
   }, slotId);
   expect(measured.reportedX, `${slotId} centre x`).toBeCloseTo(measured.expectedX, 0);
   expect(measured.reportedY, `${slotId} centre y`).toBeCloseTo(measured.expectedY, 0);
+}
+
+/** Waits for the instrument to finish unfolding, so geometry is measurable. */
+async function waitForOpen(window: Page): Promise<void> {
+  await expect(window.getByTestId("radial-brush-library")).toHaveAttribute(
+    "data-library-phase",
+    "open",
+  );
 }

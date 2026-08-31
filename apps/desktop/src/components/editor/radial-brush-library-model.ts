@@ -426,6 +426,349 @@ export function hasSettled(
   return Math.abs(velocityDegreesPerSecond) < configuration.stopVelocityDegreesPerSecond;
 }
 
+/**
+ * Timing for the instrument unfolding from, and collapsing back into, its slot.
+ *
+ * Opening is deliberate; closing gets out of the artist's way. The stagger is
+ * per ring rather than per cell: forty-five brushes dealt out one at a time
+ * would read as a card trick, while four rings arriving a beat apart reads as
+ * depth.
+ */
+export interface RadialOpenMotionConfiguration {
+  readonly openMilliseconds: number;
+  readonly closeMilliseconds: number;
+  /**
+   * Delay added per ring along the open timeline.
+   *
+   * The close inherits the same *fraction* of its own shorter timeline, which
+   * works out at about 14ms per ring, so nothing needs to be configured twice.
+   */
+  readonly ringStaggerMilliseconds: number;
+  /** Fraction of a ring's expansion by which its reveal opacity is complete. */
+  readonly revealCompleteAt: number;
+  /**
+   * Ring-local progress by which the circumferential sweep has finished.
+   *
+   * Short of 1 on purpose: the ring should be legible as a whole ring while it
+   * makes its last, smallest movement into place, rather than still missing
+   * cells at the final frame.
+   */
+  readonly angularCompleteAt: number;
+}
+
+export const RADIAL_OPEN_MOTION: RadialOpenMotionConfiguration = Object.freeze({
+  openMilliseconds: 320,
+  closeMilliseconds: 210,
+  ringStaggerMilliseconds: 26,
+  // Opacity finishes before the radius does, so what the eye reads is the
+  // structure being built outward rather than a panel fading up. Set from the
+  // real window: the glyphs are a fixed size while the radii are not, so a
+  // ring near the hub crowds its own icons. Holding the ramp until 70% keeps
+  // those crowded frames faint, and still leaves the last third of the travel
+  // at full strength where the structure is what carries the motion.
+  revealCompleteAt: 0.7,
+  angularCompleteAt: 0.8,
+});
+
+/**
+ * This instrument's own presentation curve.
+ *
+ * Deliberately *not* `PROFESSIONAL_EASE`, and deliberately not a change to it:
+ * the shared token stays exactly as every other Folio surface uses it. Folio's
+ * curve puts 40% of the travel into the first 10% of the time and is settled
+ * to within 5% by 47% of the duration, which is right for a small panel
+ * arriving but hides the middle of a four-ring unfolding — the very part this
+ * choreography exists to show. This one reaches the same 95% at 58% of the
+ * duration instead, keeping an immediate response while leaving a readable
+ * middle, and still settling calmly with no overshoot.
+ *
+ * There is deliberately no second curve for closing. The collapse is this same
+ * choreography traversed backwards, and an ease-out played in reverse *is* an
+ * ease-in: the instrument leaves its final position gently and accelerates into
+ * the slot, which is both the sharper closing character the design calls for
+ * and the correct physical reading for something falling back into its socket.
+ *
+ * Sharing one curve is what makes a reversal continuous. Two curves disagree
+ * about how much of the travel a given progress represents, so interrupting an
+ * opening would snap the rings to a different size on the first closing frame.
+ */
+export const RADIAL_OPEN_EASE: readonly [number, number, number, number] = Object.freeze([
+  0.2, 0.75, 0.3, 1,
+]);
+
+/** Holds a progress value inside [0, 1], treating a broken input as 0. */
+export function clampProgress(progress: number): number {
+  if (!Number.isFinite(progress)) return 0;
+  if (progress <= 0) return 0;
+  if (progress >= 1) return 1;
+  return progress;
+}
+
+/**
+ * Evaluates a CSS-style cubic Bezier easing at `progress`.
+ *
+ * The curve is defined by its two control points with the endpoints pinned at
+ * (0,0) and (1,1), so this is the same curve a `cubic-bezier()` declaration
+ * would produce — the animation is driven per frame in script rather than by
+ * CSS, and reusing the declared curve keeps the two identical.
+ */
+export function easeWithBezier(
+  progress: number,
+  curve: readonly [number, number, number, number],
+): number {
+  const clamped = clampProgress(progress);
+  if (clamped === 0 || clamped === 1) return clamped;
+  const [x1, y1, x2, y2] = curve;
+  // Solve x(t) = progress for t, then read y(t). Newton converges in a few
+  // steps for these curves; bisection is the guard for a flat gradient.
+  let t = clamped;
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    const x = bezierAxis(t, x1, x2) - clamped;
+    if (Math.abs(x) < 1e-6) return bezierAxis(t, y1, y2);
+    const gradient = bezierAxisGradient(t, x1, x2);
+    if (Math.abs(gradient) < 1e-6) break;
+    t -= x / gradient;
+  }
+  let low = 0;
+  let high = 1;
+  t = clamped;
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    const x = bezierAxis(t, x1, x2);
+    if (Math.abs(x - clamped) < 1e-6) break;
+    if (x < clamped) low = t;
+    else high = t;
+    t = (low + high) / 2;
+  }
+  return bezierAxis(t, y1, y2);
+}
+
+function bezierAxis(t: number, a1: number, a2: number): number {
+  const inverse = 1 - t;
+  return 3 * inverse * inverse * t * a1 + 3 * inverse * t * t * a2 + t * t * t;
+}
+
+function bezierAxisGradient(t: number, a1: number, a2: number): number {
+  const inverse = 1 - t;
+  return 3 * inverse * inverse * a1 + 6 * inverse * t * (a2 - a1) + 3 * t * t * (1 - a2);
+}
+
+export function easeOpenProgress(progress: number): number {
+  return easeWithBezier(progress, RADIAL_OPEN_EASE);
+}
+
+/** Which way the presentation is currently running. */
+export type RadialPresentationPhase = "closed" | "opening" | "open" | "closing";
+
+/**
+ * How far along its own share of the timeline one ring is, before easing.
+ *
+ * The stagger is a fraction of the whole unfolding rather than a fixed number
+ * of milliseconds, so the same choreography plays over either duration: 22ms
+ * per ring while opening becomes about 14ms per ring over the shorter close.
+ *
+ * Ring 0 leads, so opening propagates outward. Running the same timeline
+ * backwards makes the outermost ring the first to start retracting and the
+ * innermost the last to vanish, which is the reversed depth a collapse wants —
+ * no second, oppositely-staggered timeline is needed to produce it.
+ */
+export function ringLocalProgress(
+  globalProgress: number,
+  ringIndex: number,
+  ringCount: number,
+  timing: RadialOpenMotionConfiguration = RADIAL_OPEN_MOTION,
+): number {
+  const staggerFraction =
+    timing.openMilliseconds > 0 ? timing.ringStaggerMilliseconds / timing.openMilliseconds : 0;
+  const start = ringIndex * staggerFraction;
+  // Whatever is left of the timeline once the outermost ring has waited its
+  // turn, so that ring still lands exactly on the end.
+  const span = 1 - Math.max(0, ringCount - 1) * staggerFraction;
+  if (!(span > 0)) return clampProgress(globalProgress);
+  return clampProgress((clampProgress(globalProgress) - start) / span);
+}
+
+/**
+ * The eased expansion of one ring at one point in the unfolding.
+ *
+ * Purely a function of progress: opening and closing traverse this same shape
+ * in opposite directions, which is what makes interrupting either one
+ * continuous. Nothing here knows which way the presentation is currently going.
+ */
+export function ringExpansion(
+  globalProgress: number,
+  ringIndex: number,
+  ringCount: number,
+  timing: RadialOpenMotionConfiguration = RADIAL_OPEN_MOTION,
+): number {
+  return ringRadialExpansion(ringLocalProgress(globalProgress, ringIndex, ringCount, timing));
+}
+
+/** How far out a ring has grown, from its own local progress. */
+export function ringRadialExpansion(localProgress: number): number {
+  return easeOpenProgress(localProgress);
+}
+
+/**
+ * Which way the reveal front travels, and where it starts.
+ *
+ * The origin is the dock-side hidden direction, so cells are uncovered from
+ * behind the Tool Dock and swept out into the canvas: the toolbar reads as the
+ * place the instrument is kept rather than as an edge the wheel happens to be
+ * clipped by. It is the same bearing the spatial fade hides through, which is
+ * why the two read as one idea — a cell is uncovered exactly where it would
+ * otherwise be hidden.
+ *
+ * One direction for every ring. Alternating them would look decorative and
+ * mechanical rather than like a single object being wound out.
+ */
+export type RadialSweepDirection = "clockwise" | "counter-clockwise";
+
+export interface RadialSweepConfiguration {
+  readonly direction: RadialSweepDirection;
+  /**
+   * Angular width of the soft edge at the front, in degrees.
+   *
+   * Wide enough that a cell fades in rather than popping — about one inner-ring
+   * cell, or two outer-ring cells — and narrow enough that the front still
+   * reads as a travelling edge rather than a general brightening.
+   */
+  readonly featherDegrees: number;
+}
+
+export const RADIAL_SWEEP: RadialSweepConfiguration = Object.freeze({
+  // Screen space here has 0 to the right and angles increasing downward, so
+  // increasing bearings run clockwise on screen. Starting at the left-hand dock
+  // and increasing takes the front up over the top of the axle and down the
+  // canvas-facing side, which is the direction that reads as the instrument
+  // being drawn out of the toolbar rather than swung in front of it.
+  direction: "clockwise",
+  featherDegrees: 28,
+});
+
+/**
+ * Where the reveal front has reached, in degrees travelled from the origin.
+ *
+ * Linear in the ring's own progress, unlike the radius. The two are doing
+ * different jobs: the radius is a body settling into place and wants an
+ * ease-out, while the front is a construction edge and reads best at a steady
+ * angular speed. Easing it too would make the sweep lurch and then crawl,
+ * which is exactly the "settles too early" problem this revision exists to fix.
+ *
+ * It travels a whole turn plus one feather, so the last cell reached is fully
+ * uncovered rather than left mid-fade.
+ */
+export function ringAngularRevealProgress(
+  localProgress: number,
+  timing: RadialOpenMotionConfiguration = RADIAL_OPEN_MOTION,
+): number {
+  if (timing.angularCompleteAt <= 0) return 1;
+  return clampProgress(clampProgress(localProgress) / timing.angularCompleteAt);
+}
+
+export function revealFrontDegrees(
+  angularProgress: number,
+  sweep: RadialSweepConfiguration = RADIAL_SWEEP,
+): number {
+  return clampProgress(angularProgress) * (360 + sweep.featherDegrees);
+}
+
+/**
+ * How far one cell has been uncovered by the passing front, in [0, 1].
+ *
+ * Measured against the cell's *current on-screen* bearing, so a wheel that was
+ * left rotated still reels back into the dock rather than into wherever the
+ * catalogue happens to have been turned to. Gaps need no handling at all: a gap
+ * holds no cell, so there is nothing there for the front to uncover, and the
+ * channel stays empty at every frame by construction.
+ */
+export function cellCircumferentialReveal(
+  cellMidAngleDegrees: number,
+  angularProgress: number,
+  originDegrees: number = hiddenDirectionDegrees(RADIAL_APERTURE.dockSide),
+  sweep: RadialSweepConfiguration = RADIAL_SWEEP,
+): number {
+  if (!Number.isFinite(cellMidAngleDegrees)) return 0;
+  const front = revealFrontDegrees(angularProgress, sweep);
+  // Distance from the origin measured the way the front travels, so both sweep
+  // directions use one comparison.
+  const travelled =
+    sweep.direction === "clockwise"
+      ? normalizeDegrees(cellMidAngleDegrees - originDegrees)
+      : normalizeDegrees(originDegrees - cellMidAngleDegrees);
+  if (sweep.featherDegrees <= 0) return front >= travelled ? 1 : 0;
+  const uncovered = (front - travelled) / sweep.featherDegrees;
+  if (uncovered <= 0) return 0;
+  if (uncovered >= 1) return 1;
+  // Smoothstep, so the leading edge has no visible seam either side.
+  return uncovered * uncovered * (3 - 2 * uncovered);
+}
+
+/**
+ * The three independent presentation factors, multiplied.
+ *
+ * Kept as one named step rather than an expression buried in the view, and
+ * kept as three separate inputs rather than one blended number: where a cell
+ * is relative to the dock, how established its ring is, and how far the sweep
+ * has uncovered it are different ideas that happen to compose.
+ */
+export function combineRevealFactors(
+  spatialVisibility: number,
+  ringEstablishment: number,
+  circumferential: number,
+): number {
+  const product = spatialVisibility * ringEstablishment * circumferential;
+  if (!Number.isFinite(product)) return 0;
+  if (product <= 0) return 0;
+  return product >= 1 ? 1 : product;
+}
+
+/**
+ * Opacity supporting one ring's arrival.
+ *
+ * Deliberately secondary: it completes early so the motion the eye follows is
+ * the radius growing outward, not a fade. Multiplied with the dock-side spatial
+ * visibility rather than replacing it.
+ */
+export function ringRevealOpacity(
+  expansion: number,
+  timing: RadialOpenMotionConfiguration = RADIAL_OPEN_MOTION,
+): number {
+  const clamped = clampProgress(expansion);
+  if (clamped >= timing.revealCompleteAt) return 1;
+  if (timing.revealCompleteAt <= 0) return 1;
+  return clamped / timing.revealCompleteAt;
+}
+
+/**
+ * The same cell, with its radii interpolated between the hub and their final
+ * values.
+ *
+ * Only the radii move. Every angle a cell owns is already final at the first
+ * frame, which is what keeps the catalogue order fixed, stops the wheel
+ * appearing to spin as it opens, and leaves the propagated gap channels exactly
+ * where the frozen geometry put them at every intermediate frame.
+ *
+ * Presentation-time only: the approved static model is never mutated, and at
+ * full expansion the original cell is returned untouched rather than rebuilt,
+ * so the final geometry is exactly the frozen geometry.
+ */
+export function expandCell(
+  cell: RadialCell,
+  expansion: number,
+  hubRadius: number = RADIAL_LIBRARY_CONFIGURATION.hubRadius,
+): RadialCell {
+  const clamped = clampProgress(expansion);
+  if (clamped >= 1) return cell;
+  const innerRadius = hubRadius + (cell.innerRadius - hubRadius) * clamped;
+  const outerRadius = hubRadius + (cell.outerRadius - hubRadius) * clamped;
+  return Object.freeze({
+    ...cell,
+    innerRadius,
+    outerRadius,
+    midRadius: (innerRadius + outerRadius) / 2,
+  });
+}
+
 function rotateInterval(source: AngularInterval, offsetDegrees: number): AngularInterval {
   return Object.freeze({
     startDegrees: normalizeDegrees(source.startDegrees + offsetDegrees),
