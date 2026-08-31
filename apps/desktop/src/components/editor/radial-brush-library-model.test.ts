@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BRUSH_LIBRARY_FIXTURES } from "./brush-library-fixtures";
+import { BRUSH_LIBRARY_CATALOGUE } from "./brush-library-catalogue";
 import {
   RADIAL_LIBRARY_CONFIGURATION,
   annularSectorPath,
@@ -68,7 +68,7 @@ describe("radial library configuration", () => {
       .slice(0, 3)
       .reduce((total, track) => total + track.capacity, 0);
     expect(threeRingCapacity).toBe(38);
-    expect(threeRingCapacity).toBeLessThan(BRUSH_LIBRARY_FIXTURES.length);
+    expect(threeRingCapacity).toBeLessThan(BRUSH_LIBRARY_CATALOGUE.length);
     expect(tracks).toHaveLength(4);
     // The fourth ring carries only the overflow, well under its own capacity.
     expect(tracks[3]?.cells).toHaveLength(7);
@@ -202,7 +202,7 @@ describe("gaps propagate outward", () => {
               blocked.startDegrees,
               blocked.widthDegrees,
             ),
-            `${cell.fixture.id} vs blocked ${blocked.startDegrees.toFixed(2)}`,
+            `${cell.brush.id} vs blocked ${blocked.startDegrees.toFixed(2)}`,
           ).toBe(false);
         }
       }
@@ -264,7 +264,7 @@ describe("gaps propagate outward", () => {
       for (const cell of track.cells) {
         expect(
           hostArcIndex(track, cell),
-          `${cell.fixture.id} sits inside an allowed arc`,
+          `${cell.brush.id} sits inside an allowed arc`,
         ).toBeGreaterThanOrEqual(0);
       }
     }
@@ -296,7 +296,7 @@ describe("shared rotation readiness", () => {
     const turned = buildRadialLibraryLayout(
       CENTER,
       RADIAL_LIBRARY_CONFIGURATION,
-      BRUSH_LIBRARY_FIXTURES,
+      BRUSH_LIBRARY_CATALOGUE,
       33,
     );
     expect(turned.cells).toHaveLength(base.cells.length);
@@ -315,7 +315,7 @@ describe("shared rotation readiness", () => {
     const turned = buildRadialLibraryLayout(
       CENTER,
       RADIAL_LIBRARY_CONFIGURATION,
-      BRUSH_LIBRARY_FIXTURES,
+      BRUSH_LIBRARY_CATALOGUE,
       33,
     );
     for (const [index, track] of base.tracks.entries()) {
@@ -346,7 +346,7 @@ describe("shared rotation readiness", () => {
 
 describe("catalogue assignment", () => {
   it("assigns exactly forty-five fixtures, each exactly once", () => {
-    expect(BRUSH_LIBRARY_FIXTURES).toHaveLength(45);
+    expect(BRUSH_LIBRARY_CATALOGUE).toHaveLength(45);
     expect(layout().cells).toHaveLength(45);
   });
 
@@ -354,7 +354,7 @@ describe("catalogue assignment", () => {
     const result = layout();
     expect(result.tracks.map((track) => track.cells.length)).toEqual([10, 13, 15, 7]);
     expect(result.cells.map((cell) => cell.catalogueIndex)).toEqual(
-      BRUSH_LIBRARY_FIXTURES.map((_, index) => index),
+      BRUSH_LIBRARY_CATALOGUE.map((_, index) => index),
     );
     expect(result.tracks[0]?.cells[0]?.catalogueIndex).toBe(0);
     expect(result.tracks[1]?.cells[0]?.catalogueIndex).toBe(10);
@@ -363,39 +363,30 @@ describe("catalogue assignment", () => {
   });
 
   it("loses and repeats nothing", () => {
-    const ids = layout().cells.map((cell) => cell.fixture.id);
+    const ids = layout().cells.map((cell) => cell.brush.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect([...ids].sort()).toEqual([...BRUSH_LIBRARY_FIXTURES.map(({ id }) => id)].sort());
+    expect([...ids].sort()).toEqual([...BRUSH_LIBRARY_CATALOGUE.map(({ id }) => id)].sort());
   });
 
-  it("keeps the catalogue ordered pencils, pens, then colour brushes", () => {
-    const order = ["pencil", "pen", "color-brush"];
-    let seen = 0;
-    for (const fixture of BRUSH_LIBRARY_FIXTURES) {
-      const position = order.indexOf(fixture.family);
-      expect(position).toBeGreaterThanOrEqual(seen);
-      seen = position;
-    }
+  it("pours one fixed sequence through the rings, in catalogue order", () => {
+    // The catalogue order is authored and the rings fill straight down it, so
+    // the same brush occupies the same cell on every launch.
+    expect(layout().cells.map((cell) => cell.brush.id)).toEqual(
+      BRUSH_LIBRARY_CATALOGUE.map((item) => item.id),
+    );
   });
 
-  it("lets families straddle ring boundaries instead of owning a ring", () => {
-    const tracks = layout().tracks;
-    expect(
-      tracks.some((track) => new Set(track.cells.map((cell) => cell.fixture.family)).size > 1),
-    ).toBe(true);
-    // A family ring would be a ring that is one family AND all of it. Ring 1
-    // holds every pencil but also two pens; ring 3 is one family but only part
-    // of it. Neither is a ring dedicated to a family.
-    for (const track of tracks) {
-      const families = new Set(track.cells.map((cell) => cell.fixture.family));
-      if (families.size > 1) continue;
-      const [only] = [...families];
-      const total = BRUSH_LIBRARY_FIXTURES.filter((f) => f.family === only).length;
-      expect(track.cells.length, `track ${track.index} is not a whole family`).toBeLessThan(total);
+  it("gives every ring a mix of families rather than one family a ring", () => {
+    // The families are interleaved in the catalogue precisely so this holds. A
+    // strict pencils-then-pens-then-markers order would hand ring 1 to the
+    // pencils outright, and the wheel would read as a taxonomy diagram rather
+    // than as one instrument.
+    for (const track of layout().tracks) {
+      const families = new Set(track.cells.map((cell) => cell.brush.family));
+      expect(families.size, `ring ${track.index} mixes families`).toBeGreaterThan(1);
+      const total = BRUSH_LIBRARY_CATALOGUE.filter((item) => families.has(item.family)).length;
+      expect(track.cells.length, `ring ${track.index} is not a whole family`).toBeLessThan(total);
     }
-    // At least one ring boundary genuinely falls mid-family: ring 1 runs from
-    // pencils into pens, so rings are not carved along the taxonomy.
-    expect(new Set(tracks[0]!.cells.map((cell) => cell.fixture.family)).size).toBe(2);
   });
 });
 

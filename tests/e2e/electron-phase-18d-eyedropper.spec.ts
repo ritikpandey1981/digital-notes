@@ -42,15 +42,15 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     const pageCanvas = host.locator('canvas[data-folio-layer="page"]');
 
     // Build deterministic committed sources: opaque Ink, overlapping Highlighter, and a vector.
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pen"]').click();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "ink");
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pen"]').click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "24");
     await rail.getByRole("button", { name: "Use color #dc2626" }).click();
     await drawPageGesture(window, surface, inkCanvas, { x: 160, y: 200 }, { x: 380, y: 200 });
     await rail.getByRole("button", { name: "Use color #2563eb" }).click();
     await drawPageGesture(window, surface, inkCanvas, { x: 160, y: 260 }, { x: 380, y: 260 });
-    await toolDock.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "highlighter");
     await drawPageGesture(window, surface, inkCanvas, { x: 180, y: 140 }, { x: 180, y: 320 });
     await chooseRectangle(window);
@@ -71,7 +71,7 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     expect(overlapPixel).not.toBe(redPixel);
     expect(rectanglePixelBeforeSelection).not.toBe("#fffdf8");
 
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await rail.getByRole("button", { name: "Use color #4f46e5" }).click();
     const originalPencilColor = "#4f46e5";
     const baselineHistory = await historyDepth(surface);
@@ -273,7 +273,7 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     await expect(surface).toHaveAttribute("data-drawing-color", shapeDefault);
 
     // Paper sampling follows the base compositor in both appearance themes.
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     const initialTheme = await currentTheme(window);
     await rail.getByTestId("quick-color-more").click();
     await eyedropper.click();

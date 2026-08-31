@@ -25,7 +25,7 @@ test("provides manipulation cursors and grouped move, scale, and rotate interact
     const selectionCanvas = host.locator("canvas[data-folio-layer='selection']");
     const coordinates = await canvasCoordinates(baseCanvas, inkCanvas, surface);
 
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await drawStroke(window, coordinates.pageToScreen(160, 220), { x: 90, y: 0 });
     await drawStroke(window, coordinates.pageToScreen(430, 390), { x: 70, y: 0 });
     await expect(surface).toHaveAttribute("data-document-object-count", "2");

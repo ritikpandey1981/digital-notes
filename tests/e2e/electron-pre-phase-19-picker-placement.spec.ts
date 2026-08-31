@@ -39,7 +39,7 @@ test("keeps the responsive color picker clear of minimum-window chrome and selec
     const rail = window.getByTestId("quick-color-rail");
     const picker = window.getByTestId("full-color-picker");
 
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await rail.getByTestId("quick-color-more").click();
     await expect(picker).toHaveAttribute("data-picker-source", "quick-rail");
     await expectMinimumWindowPlacement(picker, workspace, topBar, viewportControls, rail);

@@ -1,9 +1,9 @@
 import {
-  createBrushToolStateStore,
+  DEFAULT_BRUSH_PRESETS,
+  createDrawingSlotStore,
   createEditorColorSystem,
   type ActiveToolStatePatch,
   type CanvasDrawingStyle,
-  type ColorTargetAdapter,
   type DrawingToolKind,
   type ShapeStylePatch,
 } from "@folio/editor";
@@ -17,7 +17,17 @@ import {
   type FloatingToolWidgetId,
 } from "./floating-tool-widget-registry";
 import { createShapeToolState } from "./shape-tool-state";
-import { resolveActiveDockSlotId, type DrawingSlotDefinition } from "./tool-dock-model";
+import {
+  assignmentForBrush,
+  brushLibraryEntryById,
+  DEFAULT_SLOT_BRUSH_IDS,
+} from "./brush-library-catalogue";
+import {
+  DRAWING_SLOTS,
+  resolveActiveDockSlotId,
+  toolForDrawingFamily,
+  type DrawingSlotDefinition,
+} from "./tool-dock-model";
 import {
   createDefaultToolOptionsDescriptorRegistry,
   DEFAULT_ERASER_SIZE,
@@ -37,7 +47,18 @@ export function useEditorWorkspaceState() {
     React.useState<FloatingToolWidgetId | null>(null);
   const [, setFoundationVersion] = React.useState(0);
   const [colorSystem] = React.useState(() => createEditorColorSystem());
-  const [brushStore] = React.useState(() => createBrushToolStateStore());
+  // Five independent slot states. Each dock slot owns its own brush identity
+  // and working values, so activating one can never overwrite another.
+  const [slotStore] = React.useState(() =>
+    createDrawingSlotStore(
+      DRAWING_SLOTS.map((slot) => ({
+        id: slot.id,
+        family: slot.family,
+        presetId: slot.presetId,
+        brushId: DEFAULT_SLOT_BRUSH_IDS[slot.id] ?? null,
+      })),
+    ),
+  );
   // The Eraser owns its runtime size outright. It shares nothing with the pen
   // family, so changing a brush can never move the eraser silently.
   const [eraserSize, setEraserSize] = React.useState(DEFAULT_ERASER_SIZE);
@@ -46,11 +67,43 @@ export function useEditorWorkspaceState() {
   const [floatingWidgetRegistry] = React.useState(() => createFloatingToolWidgetRegistry());
 
   const drawingKind = drawingKindForTool(activeTool);
-  const resolvedBrush = brushStore.resolvedBrush(drawingKind);
+  // The one slot every drawing read resolves through. When the active tool is
+  // not a drawing tool the dock still names a drawing slot, so the rail and the
+  // options panel keep reading a real slot rather than a family default.
+  const slotFamilies = Object.freeze(
+    Object.fromEntries(DRAWING_SLOTS.map((slot) => [slot.id, slotStore.stateFor(slot.id).family])),
+  );
+  // What each slot currently holds, for the dock's name and tooltip. The
+  // library identity is the truth where there is one; a slot that holds no
+  // catalogue brush falls back to the name of the preset actually backing it,
+  // which is still what it draws with.
+  const slotBrushIds = Object.freeze(
+    Object.fromEntries(
+      DRAWING_SLOTS.map((slot) => [slot.id, slotStore.stateFor(slot.id).brushId ?? ""]),
+    ),
+  );
+  const slotBrushNames = Object.freeze(
+    Object.fromEntries(
+      DRAWING_SLOTS.map((slot) => {
+        const state = slotStore.stateFor(slot.id);
+        const identity = brushLibraryEntryById(state.brushId);
+        const preset = DEFAULT_BRUSH_PRESETS.find(({ id }) => id === state.presetId);
+        return [slot.id, identity?.name ?? preset?.name ?? slot.label];
+      }),
+    ),
+  );
+  const drawingSlotId = resolveDrawingSlotId(
+    activeTool,
+    activeDrawingSlotId,
+    drawingKind,
+    slotFamilies,
+  );
+  const slotState = slotStore.stateFor(drawingSlotId);
+  const resolvedBrush = slotStore.resolvedBrush(drawingSlotId);
   const presetSelection = Object.freeze({
-    activeId: brushStore.activeState(drawingKind).presetId,
+    activeId: slotState.presetId,
     options: Object.freeze(
-      brushStore.presetsFor(drawingKind).map((preset) =>
+      slotStore.presetsFor(drawingSlotId).map((preset) =>
         Object.freeze({
           id: preset.id,
           name: preset.name,
@@ -157,18 +210,47 @@ export function useEditorWorkspaceState() {
     (slot: DrawingSlotDefinition, inspectBrushLibrary = false): void => {
       if (
         inspectBrushLibrary &&
-        slot.id === resolveActiveDockSlotId(activeTool, activeDrawingSlotId)
+        slot.id === resolveActiveDockSlotId(activeTool, activeDrawingSlotId, slotFamilies)
       ) {
         setBrushLibraryOpen((open) => !open);
         setActiveFloatingWidget(null);
         return;
       }
-      if (slot.presetId !== null) brushStore.selectPreset(slot.family, slot.presetId);
+      // No re-pinning. The slot already holds its own brush identity and
+      // values, and activating it simply makes that state current again. The
+      // tool follows whatever family the slot currently holds, so a slot given
+      // a pencil activates the Pencil tool even if it started as a pen.
       setActiveDrawingSlotId(slot.id);
-      selectTool(slot.tool);
+      selectTool(toolForDrawingFamily(slotStore.stateFor(slot.id).family));
       refresh();
     },
-    [activeDrawingSlotId, activeTool, brushStore, refresh, selectTool],
+    [activeDrawingSlotId, activeTool, refresh, selectTool, slotFamilies, slotStore],
+  );
+
+  /**
+   * Replaces the brush identity held by the currently active drawing slot.
+   *
+   * Editor preference state: it changes what the next stroke will look like and
+   * touches nothing already drawn, so it creates no History whatsoever.
+   */
+  const selectLibraryBrush = React.useCallback(
+    (brushId: string): void => {
+      const assignment = assignmentForBrush(brushId);
+      if (assignment === null) return;
+      const targetSlotId = resolveActiveDockSlotId(activeTool, activeDrawingSlotId, slotFamilies);
+      if (targetSlotId === null) return;
+      // Any brush may go in any slot; the slot's family, backing preset and
+      // tool all follow the brush that was chosen.
+      if (!DRAWING_SLOTS.some((candidate) => candidate.id === targetSlotId)) return;
+      slotStore.assignBrush(targetSlotId, assignment);
+      selectTool(toolForDrawingFamily(assignment.family));
+      setActiveDrawingSlotId(targetSlotId);
+      // Choosing a brush returns the artist to drawing: the library folds away
+      // through the approved close choreography, from wherever it was rotated.
+      setBrushLibraryOpen(false);
+      refresh();
+    },
+    [activeDrawingSlotId, activeTool, refresh, selectTool, slotFamilies, slotStore],
   );
   const selectShape = React.useCallback(
     (shape: ShapeToolKind): void => {
@@ -189,10 +271,10 @@ export function useEditorWorkspaceState() {
   );
   const updatePreset = React.useCallback(
     (patch: ActiveToolStatePatch): void => {
-      brushStore.updateActiveToolState(drawingKind, patch);
+      slotStore.updateProperties(drawingSlotId, patch);
       refresh();
     },
-    [brushStore, drawingKind, refresh],
+    [drawingSlotId, refresh, slotStore],
   );
   const setDrawingColor = React.useCallback(
     (color: string): void => updatePreset({ color }),
@@ -200,10 +282,10 @@ export function useEditorWorkspaceState() {
   );
   const selectDrawingPreset = React.useCallback(
     (presetId: string): void => {
-      brushStore.selectPreset(drawingKind, presetId);
+      slotStore.selectPreset(drawingSlotId, presetId);
       refresh();
     },
-    [brushStore, drawingKind, refresh],
+    [drawingSlotId, refresh, slotStore],
   );
   const setDrawingWidth = React.useCallback(
     (strokeWidth: number): void => {
@@ -232,30 +314,20 @@ export function useEditorWorkspaceState() {
     },
     [colorSystem, refresh],
   );
-  const brushColorTargets = React.useMemo(
+  const brushColorTarget = React.useMemo(
     () =>
-      new Map<EditorTool, ColorTargetAdapter>(
-        (
-          [
-            ["Pencil", "pencil"],
-            ["Pen", "pen"],
-            ["Marker", "marker"],
-            ["Highlighter", "highlighter"],
-          ] as const
-        ).map(([tool, kind]) => [
-          tool,
-          createHistoryFreeColorTarget({
-            id: `creation-${kind}`,
-            label: `${tool} Color`,
-            getColor: () => brushStore.resolvedBrush(kind).color,
-            setColor: (color) => {
-              brushStore.updateActiveToolState(kind, { color });
-              refresh();
-            },
-          }),
-        ]),
-      ),
-    [brushStore, refresh],
+      createHistoryFreeColorTarget({
+        // Identity follows the slot, so switching slots is a new colour target
+        // rather than one target quietly changing what it points at.
+        id: `creation-${drawingSlotId}`,
+        label: `${slotLabel(drawingSlotId)} Color`,
+        getColor: () => slotStore.resolvedBrush(drawingSlotId).color,
+        setColor: (color) => {
+          slotStore.updateProperties(drawingSlotId, { color });
+          refresh();
+        },
+      }),
+    [drawingSlotId, refresh, slotStore],
   );
   const shapeColorTarget = React.useMemo(
     () =>
@@ -271,7 +343,11 @@ export function useEditorWorkspaceState() {
     [refresh, shapeState.activeShape, shapeToolState],
   );
   const colorTarget =
-    activeTool === "Shapes" ? shapeColorTarget : (brushColorTargets.get(activeTool) ?? null);
+    activeTool === "Shapes"
+      ? shapeColorTarget
+      : isDrawingTool(activeTool)
+        ? brushColorTarget
+        : null;
   const selectColorPalette = React.useCallback(
     (paletteId: string): void => {
       colorSystem.setActivePalette(paletteId);
@@ -295,9 +371,14 @@ export function useEditorWorkspaceState() {
   return {
     activeTool,
     activeDrawingSlotId,
-    activeDockSlotId: resolveActiveDockSlotId(activeTool, activeDrawingSlotId),
+    activeDockSlotId: resolveActiveDockSlotId(activeTool, activeDrawingSlotId, slotFamilies),
+    slotFamilies,
+    slotBrushIds,
+    slotBrushNames,
     brushLibraryOpen,
+    activeSlotBrushId: slotState.brushId,
     selectDrawingSlot,
+    selectLibraryBrush,
     activeShape: shapeState.activeShape,
     armedShape,
     activeFloatingWidget,
@@ -325,6 +406,39 @@ export function useEditorWorkspaceState() {
 
 function shapeLabel(shape: ShapeToolKind): string {
   return shape.charAt(0).toUpperCase() + shape.slice(1);
+}
+
+function slotLabel(slotId: string): string {
+  return DRAWING_SLOTS.find((slot) => slot.id === slotId)?.label ?? "Drawing";
+}
+
+function isDrawingTool(tool: EditorTool): boolean {
+  return DRAWING_SLOTS.some((slot) => slot.tool === tool);
+}
+
+/**
+ * The drawing slot every drawing read resolves through.
+ *
+ * While a drawing tool is active this is that tool's slot, which is what makes
+ * the five slots genuinely independent.
+ *
+ * While Select, Eraser or Shapes is active there is no active drawing slot, and
+ * the answer falls back to the first slot of the tool's nominal family. That
+ * deliberately reproduces the established behaviour: the creation-tool
+ * diagnostics are expected to report a stable family default at that point, not
+ * whichever drawing slot happened to be used last. Resolving to the remembered
+ * slot instead would make a selection edit appear to change the creation brush.
+ */
+function resolveDrawingSlotId(
+  tool: EditorTool,
+  lastActivatedDrawingSlotId: string | null,
+  family: DrawingToolKind,
+  slotFamilies: Readonly<Record<string, DrawingToolKind>>,
+): string {
+  const active = resolveActiveDockSlotId(tool, lastActivatedDrawingSlotId, slotFamilies);
+  if (active !== null && DRAWING_SLOTS.some((slot) => slot.id === active)) return active;
+  const byFamily = DRAWING_SLOTS.find((slot) => (slotFamilies[slot.id] ?? slot.family) === family);
+  return (byFamily ?? DRAWING_SLOTS[0]!).id;
 }
 
 function drawingKindForTool(tool: EditorTool): DrawingToolKind {

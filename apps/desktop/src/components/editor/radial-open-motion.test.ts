@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PROFESSIONAL_EASE } from "../../motion/interaction-motion";
-import { BRUSH_LIBRARY_FIXTURES } from "./brush-library-fixtures";
+import { BRUSH_LIBRARY_CATALOGUE } from "./brush-library-catalogue";
 import {
   RADIAL_APERTURE,
   RADIAL_SWEEP,
@@ -344,16 +344,14 @@ describe("radial interpolation", () => {
   it("leaves the catalogue assignment untouched", () => {
     for (const expansion of [0, 0.37, 1]) {
       const drawn = FINAL.cells.map((cell) => expandCell(cell, expansion));
-      expect(drawn.map((cell) => cell.fixture.id)).toEqual(
-        FINAL.cells.map((cell) => cell.fixture.id),
-      );
+      expect(drawn.map((cell) => cell.brush.id)).toEqual(FINAL.cells.map((cell) => cell.brush.id));
       expect(drawn.map((cell) => cell.trackIndex)).toEqual(
         FINAL.cells.map((cell) => cell.trackIndex),
       );
       expect(drawn.map((cell) => cell.catalogueIndex)).toEqual(
         FINAL.cells.map((cell) => cell.catalogueIndex),
       );
-      expect(drawn).toHaveLength(BRUSH_LIBRARY_FIXTURES.length);
+      expect(drawn).toHaveLength(BRUSH_LIBRARY_CATALOGUE.length);
     }
   });
 
@@ -451,7 +449,7 @@ describe("circumferential reveal", () => {
       let previous = -1;
       for (let step = 0; step <= 100; step += 1) {
         const value = cellCircumferentialReveal(cell.midAngleDegrees, step / 100);
-        expect(value, `${cell.fixture.id} at ${step}`).toBeGreaterThanOrEqual(previous);
+        expect(value, `${cell.brush.id} at ${step}`).toBeGreaterThanOrEqual(previous);
         previous = value;
       }
     }
@@ -466,7 +464,7 @@ describe("circumferential reveal", () => {
     for (let index = 1; index < ordered.length; index += 1) {
       expect(
         cellCircumferentialReveal(ordered[index - 1]!.midAngleDegrees, 0.5),
-        `${ordered[index - 1]!.fixture.id} leads ${ordered[index]!.fixture.id}`,
+        `${ordered[index - 1]!.brush.id} leads ${ordered[index]!.brush.id}`,
       ).toBeGreaterThanOrEqual(cellCircumferentialReveal(ordered[index]!.midAngleDegrees, 0.5));
     }
   });

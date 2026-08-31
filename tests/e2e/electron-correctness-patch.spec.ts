@@ -35,14 +35,14 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await expect(contextHint).toContainText("Tip: Alt + Click → Select object beneath");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
 
-    const pencilButton = toolDock.getByRole("button", { name: "Pencil", exact: true });
+    const pencilButton = toolDock.locator('button[data-dock-slot="pencil"]');
     await pencilButton.click();
     await expect(palette).toBeHidden();
     await expect(surface).toHaveAttribute("data-drawing-color", "#343434");
     await expect(surface).toHaveAttribute("data-drawing-width", "2");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.78");
 
-    const penButton = toolDock.getByRole("button", { name: "Pen", exact: true });
+    const penButton = toolDock.locator('button[data-dock-slot="pen"]');
     await penButton.click();
     await expect(palette).toBeHidden();
     await penButton.click();
@@ -57,17 +57,14 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
 
-    const markerButton = toolDock.getByRole("button", { name: "Marker", exact: true });
+    const markerButton = toolDock.locator('button[data-dock-slot="marker"]');
     await markerButton.click();
     await expect(palette).toBeHidden();
     await expect(surface).toHaveAttribute("data-drawing-color", "#1f2937");
     await expect(surface).toHaveAttribute("data-drawing-width", "8");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.9");
 
-    const highlighterButton = toolDock.getByRole("button", {
-      name: "Highlighter",
-      exact: true,
-    });
+    const highlighterButton = toolDock.locator('button[data-dock-slot="highlighter"]');
     await highlighterButton.click();
     await expect(palette).toBeHidden();
     await highlighterButton.click();

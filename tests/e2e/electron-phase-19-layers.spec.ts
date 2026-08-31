@@ -75,7 +75,7 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     await expect(panel.getByTestId("layer-name-layer-1")).toHaveText("Layer 1");
 
     // 2. Draw in Layer 1.
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await drawStroke(window, 260);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     expect(await membership(surface)).toEqual([1]);
@@ -273,7 +273,7 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     await expect(surface).toHaveAttribute("data-active-layer-id", "layer-1");
 
     // 21. The Eyedropper samples the visible composite with no layer special cases.
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await window.getByTestId("quick-color-current").click();
     const picker = window.getByTestId("full-color-picker");
     await expect(picker).toBeVisible();

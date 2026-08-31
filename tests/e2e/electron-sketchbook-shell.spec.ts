@@ -39,7 +39,7 @@ test("captures the Phase 16.5 sketchbook workspace states", async ({ browserName
     });
     await capture(window, screenshotDirectory, "phase-16-5-default-workspace.png");
 
-    const penButton = toolDock.getByRole("button", { name: "Pen", exact: true });
+    const penButton = toolDock.locator('button[data-dock-slot="pen"]');
     await penButton.click();
     await expect(palette).toBeHidden();
     await penButton.click();
@@ -47,10 +47,7 @@ test("captures the Phase 16.5 sketchbook workspace states", async ({ browserName
     await capture(window, screenshotDirectory, "phase-16-5-pen-settings.png");
     await window.keyboard.press("Escape");
 
-    const highlighterButton = toolDock.getByRole("button", {
-      name: "Highlighter",
-      exact: true,
-    });
+    const highlighterButton = toolDock.locator('button[data-dock-slot="highlighter"]');
     await highlighterButton.click();
     await expect(palette).toBeHidden();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "highlighter");

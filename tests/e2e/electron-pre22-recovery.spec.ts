@@ -143,7 +143,7 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     await expect(window.getByTestId("page-settings")).toHaveCount(0);
 
     // 6. The Eraser owns its size; switching tools never moves the other's.
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     const penSize = await openToolOptions(window, "Pen");
     await penSize.fill("3");
     await penSize.press("Enter");
@@ -155,7 +155,7 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     await expect(surface).toHaveAttribute("data-drawing-width", "24");
     const historyBeforeToolSwitching = await surface.getAttribute("data-history-undo-depth");
     for (let round = 0; round < 2; round += 1) {
-      await window.getByRole("button", { name: "Pen", exact: true }).click();
+      await window.locator('button[data-dock-slot="pen"]').click();
       await expect(surface).toHaveAttribute("data-drawing-width", "3");
       await window.getByRole("button", { name: "Eraser", exact: true }).click();
       await expect(surface).toHaveAttribute("data-drawing-width", "24");
@@ -163,7 +163,7 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     expect(await surface.getAttribute("data-history-undo-depth")).toBe(historyBeforeToolSwitching);
 
     // 7. A canvas gesture dismisses Tool Options without swallowing the stroke.
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await openToolOptions(window, "Pen");
     await drawOnPage(window, 0.3);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
@@ -246,7 +246,7 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     );
 
     // 12. A press that starts off the paper creates nothing.
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     const objectsBeforeOffPage = await surface.getAttribute("data-document-object-count");
     const hostBounds = await window.getByTestId("canvas-host").boundingBox();
     if (hostBounds === null) throw new Error("Canvas host has no bounds.");
@@ -270,7 +270,7 @@ test("Pre-22 recovery refuses creation on hidden and locked active Layers", asyn
   const surface = window.getByTestId("canvas-surface");
   try {
     // Seed one stroke so the clipboard routes have a source to copy.
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await drawOnPage(window, 0.25);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await window.getByRole("button", { name: "Select", exact: true }).click();
@@ -288,9 +288,9 @@ test("Pre-22 recovery refuses creation on hidden and locked active Layers", asyn
       const objectsBefore = await surface.getAttribute("data-document-object-count");
       const historyBefore = await surface.getAttribute("data-history-undo-depth");
 
-      await window.getByRole("button", { name: "Pen", exact: true }).click();
+      await window.locator('button[data-dock-slot="pen"]').click();
       await drawOnPage(window, 0.5);
-      await window.getByRole("button", { name: "Highlighter", exact: true }).click();
+      await window.locator('button[data-dock-slot="highlighter"]').click();
       await drawOnPage(window, 0.6);
       await window.getByRole("button", { name: "Select", exact: true }).click();
       await window.keyboard.press("Control+v");

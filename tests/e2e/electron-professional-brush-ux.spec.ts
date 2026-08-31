@@ -45,16 +45,33 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await expect(toolDock).toBeVisible();
     // Five drawing preset slots, then the three permanent utilities.
     await expect(toolDock.locator("button[aria-label]")).toHaveCount(8);
+    // Order and identity come from the stable slot ids. A drawing slot's
+    // accessible name is composed from its position and the brush it holds, so
+    // it is asserted by shape rather than by a fixed tool name.
     expect(
       await toolDock
-        .locator("button[aria-label]")
+        .locator("button[data-dock-slot]")
+        .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("data-dock-slot"))),
+    ).toEqual([
+      "pencil",
+      "pen",
+      "brush-pen",
+      "marker",
+      "highlighter",
+      "select",
+      "eraser",
+      "shapes",
+    ]);
+    expect(
+      await toolDock
+        .locator("button[data-dock-slot]")
         .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
     ).toEqual([
-      "Pencil",
-      "Pen",
-      "Brush Pen",
-      "Marker",
-      "Highlighter",
+      expect.stringMatching(/^Brush slot 1, .+/u),
+      expect.stringMatching(/^Brush slot 2, .+/u),
+      expect.stringMatching(/^Brush slot 3, .+/u),
+      expect.stringMatching(/^Brush slot 4, .+/u),
+      expect.stringMatching(/^Brush slot 5, .+/u),
       "Select",
       "Eraser",
       "Shapes",
@@ -66,7 +83,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pencil-hb");
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[0]);
 
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pencil");
     await expect(window.getByRole("button", { name: "Pencil preset" })).toHaveAttribute(
       "data-active-preset-id",
@@ -76,7 +93,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[1]);
 
     await selectInactiveBrush(window, "Pen");
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await selectPreset(window, "Pen preset", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-width", "6");
@@ -84,7 +101,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[2]);
 
     await selectInactiveBrush(window, "Marker");
-    await window.getByRole("button", { name: "Marker", exact: true }).click();
+    await window.locator('button[data-dock-slot="marker"]').click();
     await selectPreset(window, "Marker preset", "marker-broad");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "marker-broad");
     await expect(surface).toHaveAttribute("data-drawing-width", "16");
@@ -92,7 +109,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[3]);
 
     await selectInactiveBrush(window, "Highlighter");
-    await window.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await window.locator('button[data-dock-slot="highlighter"]').click();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await expect(window.getByRole("button", { name: "Highlighter preset" })).toHaveCount(0);
     await expect(window.getByRole("slider", { name: "Smoothing" })).toHaveCount(0);
@@ -100,7 +117,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[4]);
 
     const pageToScreen = await pageCoordinateMapper(inkCanvas, surface);
-    await window.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await window.locator('button[data-dock-slot="highlighter"]').click();
     await drawPath(window, pageToScreen, 420);
     await selectInactiveBrush(window, "Pencil");
     await drawPath(window, pageToScreen, 180);
@@ -113,7 +130,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[5]);
 
     await selectInactiveBrush(window, "Pencil");
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "1");
     await setNumericValue(window.getByRole("spinbutton", { name: "Smoothing value" }), "65");
     await expect(surface).toHaveAttribute("data-drawing-smoothing", "0.65");
@@ -123,7 +140,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await expect(cursor).toHaveCSS("width", "7px");
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[6]);
 
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "20");
     await selectZoomMenuItem(window, "200%");
     await moveToPageCenter(window, inkCanvas, surface);
@@ -147,11 +164,9 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
 });
 
 async function selectInactiveBrush(window: Page, tool: string): Promise<void> {
-  await window.getByRole("button", { name: tool, exact: true }).click();
-  await expect(window.getByRole("button", { name: tool, exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  const slotButton = window.locator(`button[data-dock-slot="${tool.toLowerCase()}"]`);
+  await slotButton.click();
+  await expect(slotButton).toHaveAttribute("aria-pressed", "true");
 }
 
 async function selectPreset(window: Page, triggerName: string, presetId: string): Promise<void> {

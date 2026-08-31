@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BRUSH_LIBRARY_FIXTURES } from "./brush-library-fixtures";
+import { BRUSH_LIBRARY_CATALOGUE } from "./brush-library-catalogue";
 import {
   RADIAL_APERTURE,
   RADIAL_LIBRARY_CONFIGURATION,
@@ -21,7 +21,7 @@ function rotated(offsetDegrees: number) {
   return buildRadialLibraryLayout(
     CENTER,
     RADIAL_LIBRARY_CONFIGURATION,
-    BRUSH_LIBRARY_FIXTURES,
+    BRUSH_LIBRARY_CATALOGUE,
     offsetDegrees,
   );
 }
@@ -211,8 +211,8 @@ describe("fade changes nothing structural", () => {
       computeCellVisibility(cell);
     }
     const again = rotated(0);
-    expect(again.cells.map((cell) => cell.fixture.id)).toEqual(
-      base.cells.map((cell) => cell.fixture.id),
+    expect(again.cells.map((cell) => cell.brush.id)).toEqual(
+      base.cells.map((cell) => cell.brush.id),
     );
     for (const [index, cell] of base.cells.entries()) {
       expect(again.cells[index]!.startAngleDegrees).toBe(cell.startAngleDegrees);

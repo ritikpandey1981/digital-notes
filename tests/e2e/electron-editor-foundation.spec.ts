@@ -24,15 +24,15 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     const baseCanvas = host.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
     await expect(surface).toHaveAttribute("data-tool-registry-size", "11");
-    await expect(window.getByRole("button", { name: "Pencil", exact: true })).toBeVisible();
-    await expect(window.getByRole("button", { name: "Marker", exact: true })).toBeVisible();
+    await expect(window.locator('button[data-dock-slot="pencil"]')).toBeVisible();
+    await expect(window.locator('button[data-dock-slot="marker"]')).toBeVisible();
     await inkCanvas.evaluate((canvas) => {
       canvas.dataset.phase14LifecycleToken = "mounted-once";
     });
 
     for (let index = 0; index < 8; index += 1) {
-      await window.getByRole("button", { name: "Pen", exact: true }).click();
-      await window.getByRole("button", { name: "Highlighter", exact: true }).click();
+      await window.locator('button[data-dock-slot="pen"]').click();
+      await window.locator('button[data-dock-slot="highlighter"]').click();
       await window.getByRole("button", { name: "Eraser", exact: true }).click();
       await window.getByRole("button", { name: "Select", exact: true }).click();
     }
@@ -40,8 +40,8 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     await expect(inkCanvas).toHaveAttribute("data-ink-path-build-count", "0");
 
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await window.getByRole("button", { name: "Use color #2563eb" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
@@ -66,7 +66,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       },
     ]);
 
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "4");
     await drawPath(window, pageToScreen, [
@@ -83,7 +83,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       { presetId: "pen-fineliner", family: "pen", size: 4, opacity: 0.8 },
     ]);
 
-    await window.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await window.locator('button[data-dock-slot="highlighter"]').click();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "highlighter");
     await expect(surface).toHaveAttribute("data-drawing-width", "12");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.34");

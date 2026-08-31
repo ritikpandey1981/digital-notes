@@ -71,6 +71,10 @@ import { ContinuousVectorStyleEdit } from "./ContinuousVectorStyleEdit";
 import { SELECTION_HIGHLIGHT_COLOR, SELECTION_OUTLINE_COLOR } from "./selection-presentation";
 import { committedArtworkColor, committedVectorRecolor } from "./artwork-color-usage";
 import { hexToRgb } from "./foundation/color-conversion";
+import {
+  isEditableKeyboardTarget,
+  isInteractiveKeyboardTarget,
+} from "./foundation/interactive-keyboard-target";
 import { EditorClipboard } from "./EditorClipboard";
 import {
   LOUPE_DIAMETER,
@@ -395,13 +399,6 @@ function readOpaqueWorkspaceColor() {
   } catch {
     return hexToRgb(fallback);
   }
-}
-
-function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName))
-  );
 }
 
 function manipulationKindForMode(mode: CanvasInteractionMode): ManipulationKind | null {
@@ -2567,11 +2564,16 @@ export function CanvasSurface({
         return false;
       };
       const handleViewportKeyboard = (phase: "down" | "up", event: KeyboardEvent): boolean => {
-        if (
-          event.code !== "Space" ||
-          isEditableKeyboardTarget(event.target) ||
-          (phase === "down" && event.target instanceof HTMLButtonElement && !pointerOverCanvas)
-        ) {
+        if (event.code !== "Space" || isEditableKeyboardTarget(event.target)) return false;
+        // A focused control keeps its own activation key: a button, a slider,
+        // or a semantic SVG radio in the Brush Library all act on Space, and
+        // claiming it here would leave the control inert while the view panned.
+        //
+        // The exception is the established one, previously written for buttons
+        // alone and now covering every such control: with the pointer over the
+        // canvas the user's evident intent is to pan, whatever still holds
+        // focus. Only the press is gated, so a pan that started can always end.
+        if (phase === "down" && isInteractiveKeyboardTarget(event.target) && !pointerOverCanvas) {
           return false;
         }
         event.preventDefault();

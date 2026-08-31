@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BRUSH_LIBRARY_FIXTURES } from "./brush-library-fixtures";
+import { BRUSH_LIBRARY_CATALOGUE } from "./brush-library-catalogue";
 import {
   RADIAL_LIBRARY_CONFIGURATION,
   RADIAL_ROTATION_DRAG_THRESHOLD,
@@ -16,7 +16,7 @@ function rotated(offsetDegrees: number) {
   return buildRadialLibraryLayout(
     CENTER,
     RADIAL_LIBRARY_CONFIGURATION,
-    BRUSH_LIBRARY_FIXTURES,
+    BRUSH_LIBRARY_CATALOGUE,
     offsetDegrees,
   );
 }
@@ -149,7 +149,7 @@ describe("rigid rotation of the whole instrument", () => {
           const reverse = normalizeDegrees(cell.startAngleDegrees - blocked.startDegrees);
           const overlapping =
             offset + 1e-6 < cell.cellAngleDegrees && reverse + 1e-6 < blocked.widthDegrees;
-          expect(overlapping, `${cell.fixture.id} after rotation`).toBe(false);
+          expect(overlapping, `${cell.brush.id} after rotation`).toBe(false);
         }
       }
     }
@@ -170,8 +170,8 @@ describe("rigid rotation of the whole instrument", () => {
   it("never changes catalogue assignment or ring capacity", () => {
     const base = rotated(0);
     const turned = rotated(1000);
-    expect(turned.cells.map((cell) => cell.fixture.id)).toEqual(
-      base.cells.map((cell) => cell.fixture.id),
+    expect(turned.cells.map((cell) => cell.brush.id)).toEqual(
+      base.cells.map((cell) => cell.brush.id),
     );
     expect(turned.tracks.map((track) => track.cells.length)).toEqual(
       base.tracks.map((track) => track.cells.length),

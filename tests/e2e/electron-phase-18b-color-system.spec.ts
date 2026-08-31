@@ -40,7 +40,7 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     const pageToScreen = await pageCoordinateMapper(surface, host);
 
     await expect(rail).toHaveCount(0);
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await expect(rail).toBeVisible();
     await expect(rail).toHaveAttribute("data-active-color-target", "creation-pencil");
     await expect(rail).toHaveAttribute("data-visible-swatch-count", "7");
@@ -54,7 +54,7 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await expect(window.getByTestId("shapes-widget")).toHaveCount(0);
     await capture(window, testInfo, "03-select-rail-hidden.png");
 
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     const historyBeforeRail = await historyDepth(surface);
     await rail.getByRole("button", { name: "Use color #2563eb" }).click();
     await expect(surface).toHaveAttribute("data-drawing-color", "#2563eb");
@@ -62,7 +62,7 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await drawGesture(window, pageToScreen(160, 150), pageToScreen(310, 170));
     await expect(surface).toHaveAttribute("data-history-undo-depth", String(historyBeforeRail + 1));
 
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pen"]').click();
     await expect(surface).not.toHaveAttribute("data-drawing-color", "#2563eb");
     const penOriginal = (await surface.getAttribute("data-drawing-color")) ?? "#111111";
     await rail.getByTestId("quick-color-current").focus();
@@ -140,8 +140,8 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await workspace.click({ position: { x: 420, y: 28 } });
     await expect(picker).toHaveCount(0);
 
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     const toolSettings = window.getByTestId("context-tool-palette");
     await toolSettings.getByTestId("tool-options-color-trigger").click();
     await expect(picker).toHaveAttribute("data-picker-source", "tool-settings");
@@ -151,8 +151,8 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await toolSettings.click({ position: { x: 12, y: 12 } });
     await expect(picker).toHaveCount(0);
     await expect(toolSettings.getByTestId("tool-options-color-trigger")).toContainText("#8b5cf6");
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await expect(surface).toHaveAttribute("data-drawing-color", "#8b5cf6");
 
     await window.setViewportSize({ width: 960, height: 700 });
@@ -240,7 +240,7 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await toolDock.getByRole("button", { name: "Shapes", exact: true }).click();
     await expect(surface).toHaveAttribute("data-drawing-color", shapeDefault);
     await expect(rail).toHaveAttribute("data-palette-id", "sketch");
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await drawGesture(window, pageToScreen(180, 520), pageToScreen(360, 545));
     await toolDock.getByRole("button", { name: "Select", exact: true }).click();
     await window.mouse.click(...pointTuple(pageToScreen(270, 532)));

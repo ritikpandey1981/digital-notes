@@ -210,7 +210,7 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
     await expect(surface).toHaveAttribute("data-page-width", "794");
 
     // 12-13. Draw on page 1 across two layers.
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await stroke(window, 300);
     await window.getByTestId("layers-toggle").click();
     await window.getByTestId("layers-add").click();
@@ -276,7 +276,7 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
     expect(await objects(surface)).toBe(2);
     await expect(surface).toHaveAttribute("data-layer-count", "2");
 
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await stroke(window, 460);
     expect(await objects(surface)).toBe(3);
     await expect(navigator).toHaveCount(0);
@@ -349,7 +349,7 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
     await expect(navigator).toBeVisible();
 
     // A canvas gesture dismisses the drawer without swallowing the stroke.
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await stroke(window, 320);
     await expect(navigator).toHaveCount(0);
     await window.getByTestId("pages-toggle").click();
@@ -476,7 +476,7 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
       await new Promise((resolve) => setTimeout(resolve, 320));
       return { width, height };
     });
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await window.getByTestId("tool-options-affordance").click();
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
     await window.getByTestId("pages-toggle").click();

@@ -106,8 +106,13 @@ function ApplicationShellContent() {
           onDismissPageSettings={dismissPageSettings}
           activeTool={editorWorkspace.activeTool}
           activeDrawingSlotId={editorWorkspace.activeDrawingSlotId}
+          slotFamilies={editorWorkspace.slotFamilies}
+          slotBrushIds={editorWorkspace.slotBrushIds}
+          slotBrushNames={editorWorkspace.slotBrushNames}
           activeDockSlotId={editorWorkspace.activeDockSlotId}
           brushLibraryOpen={editorWorkspace.brushLibraryOpen}
+          activeSlotBrushId={editorWorkspace.activeSlotBrushId}
+          selectLibraryBrush={editorWorkspace.selectLibraryBrush}
           onSelectDrawingSlot={editorWorkspace.selectDrawingSlot}
           activeShape={editorWorkspace.activeShape}
           armedShape={editorWorkspace.armedShape}

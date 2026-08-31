@@ -21,6 +21,14 @@ export interface DockSlotDefinition {
 }
 
 export interface DrawingSlotDefinition extends DockSlotDefinition {
+  /**
+   * The family this slot *starts* on.
+   *
+   * A slot is a stable physical position that owns preferences, not a fixed
+   * tool: assigning a brush from the library replaces the slot's family, its
+   * backing preset and its tool together. This value seeds a fresh session and
+   * is never re-applied afterwards.
+   */
   readonly family: DrawingToolKind;
   /**
    * The catalog preset pinned when this slot is activated, or `null` to keep
@@ -34,6 +42,39 @@ export interface DrawingSlotDefinition extends DockSlotDefinition {
    * `docs/design/drawing-tool-system.md` §26 records as future work.
    */
   readonly presetId: string | null;
+}
+
+/** The editor tool a drawing slot activates while it holds a given family. */
+export function toolForDrawingFamily(family: DrawingToolKind): EditorTool {
+  switch (family) {
+    case "pencil":
+      return "Pencil";
+    case "marker":
+      return "Marker";
+    case "highlighter":
+      return "Highlighter";
+    default:
+      return "Pen";
+  }
+}
+
+/**
+ * The tool each drawing slot currently activates.
+ *
+ * Defaults to the seeded families, so callers that have no live slot state --
+ * and the dock's own tests -- keep the original behaviour.
+ */
+export function dockSlotTools(
+  slotFamilies: Readonly<Record<string, DrawingToolKind>> = {},
+): Readonly<Record<string, EditorTool>> {
+  return Object.freeze(
+    Object.fromEntries(
+      DRAWING_SLOTS.map((slot) => [
+        slot.id,
+        toolForDrawingFamily(slotFamilies[slot.id] ?? slot.family),
+      ]),
+    ),
+  );
 }
 
 /**
@@ -105,16 +146,22 @@ export function dockSlotById(slotId: string): DockSlotDefinition | null {
  * The one slot that may present as active.
  *
  * A utility owns the active presentation outright whenever its tool is active,
- * so a drawing slot and a utility can never look active at the same time. Two
- * drawing slots sharing a tool are separated by whichever the user last chose.
+ * so a drawing slot and a utility can never look active at the same time.
+ *
+ * Several drawing slots can now share a tool at once -- three of them may hold
+ * pencils -- so the slot the user last chose is what separates them. The tools
+ * are supplied by the caller because a slot's tool follows the brush it holds;
+ * omitting them falls back to the seeded families.
  */
 export function resolveActiveDockSlotId(
   activeTool: EditorTool,
   lastActivatedDrawingSlotId: string | null,
+  slotFamilies: Readonly<Record<string, DrawingToolKind>> = {},
 ): string | null {
   const utility = UTILITY_SLOTS.find((slot) => slot.tool === activeTool);
   if (utility !== undefined) return utility.id;
-  const candidates = DRAWING_SLOTS.filter((slot) => slot.tool === activeTool);
+  const tools = dockSlotTools(slotFamilies);
+  const candidates = DRAWING_SLOTS.filter((slot) => tools[slot.id] === activeTool);
   const remembered = candidates.find((slot) => slot.id === lastActivatedDrawingSlotId);
   if (remembered !== undefined) return remembered.id;
   const first = candidates[0];

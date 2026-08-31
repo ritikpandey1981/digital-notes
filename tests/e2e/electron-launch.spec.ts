@@ -25,16 +25,18 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
         0,
       );
     }
-    for (const retainedTool of [
-      "Select",
-      "Pencil",
-      "Pen",
-      "Marker",
-      "Highlighter",
-      "Eraser",
-      "Shapes",
+    // Located by stable slot id: a drawing slot's accessible name now carries
+    // the brush it holds rather than a fixed tool name.
+    for (const retainedSlot of [
+      "select",
+      "pencil",
+      "pen",
+      "marker",
+      "highlighter",
+      "eraser",
+      "shapes",
     ] as const) {
-      await expect(toolDock.getByRole("button", { name: retainedTool, exact: true })).toBeVisible();
+      await expect(toolDock.locator(`button[data-dock-slot="${retainedSlot}"]`)).toBeVisible();
     }
     for (const individualShape of ["Line", "Rectangle", "Ellipse"] as const) {
       await expect(
@@ -142,8 +144,8 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     );
     const baseRenderBeforeInk = Number(await canvas.getAttribute("data-render-count"));
     const inkRenderBefore = Number(await inkCanvas.getAttribute("data-ink-render-count"));
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await expect(window.getByRole("button", { name: "Pen", exact: true })).toHaveAttribute(
+    await window.locator('button[data-dock-slot="pen"]').click();
+    await expect(window.locator('button[data-dock-slot="pen"]')).toHaveAttribute(
       "aria-pressed",
       "true",
     );

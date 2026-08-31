@@ -1,6 +1,22 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
+/**
+ * Dock slots are located by their stable position id, not by their accessible
+ * name: that name now describes the brush a slot currently holds and changes
+ * the moment one is assigned.
+ */
+const DOCK_SLOT_IDS: Readonly<Record<string, string>> = {
+  Pencil: "pencil",
+  Pen: "pen",
+  "Brush Pen": "brush-pen",
+  Marker: "marker",
+  Highlighter: "highlighter",
+  Select: "select",
+  Eraser: "eraser",
+  Shapes: "shapes",
+};
+
 test("unfolds the radial brush library from its slot and collapses back into it", async () => {
   test.setTimeout(120_000);
   const repositoryRoot = process.cwd();
@@ -24,7 +40,8 @@ test("unfolds the radial brush library from its slot and collapses back into it"
     const library = window.getByTestId("radial-brush-library");
     const surface = window.getByTestId("canvas-surface");
     const rail = window.getByTestId("drawing-property-rail");
-    const slot = (name: string): Locator => dock.getByRole("button", { name, exact: true });
+    const slot = (name: string): Locator =>
+      dock.locator(`button[data-dock-slot="${DOCK_SLOT_IDS[name] ?? name}"]`);
 
     await slot("Brush Pen").click();
     const slotBoxBefore = (await slot("Brush Pen").boundingBox())!;

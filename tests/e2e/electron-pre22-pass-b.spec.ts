@@ -81,7 +81,7 @@ async function drawDiagonalInk(
   from = { x: 0.3, y: 0.35 },
   to = { x: 0.62, y: 0.62 },
 ) {
-  await window.locator('button[data-tool-name="Pen"]').click();
+  await window.locator('button[data-dock-slot="pen"]').click();
   const origin = await pagePoint(window, from.x, from.y);
   const end = await pagePoint(window, to.x, to.y);
   await window.mouse.move(origin.x, origin.y);
@@ -152,7 +152,7 @@ test("Pass B delivers the Eyedropper magnifier over the authoritative sample pat
     await drawDiagonalInk(window);
 
     // 1. Activating the Eyedropper from the picker arms sampling.
-    await window.locator('button[data-tool-name="Pen"]').click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await window.getByTestId("quick-color-current").click();
     await expect(window.getByTestId("full-color-picker")).toBeVisible();
     await window.getByTestId("eyedropper-toggle").click();
@@ -430,7 +430,7 @@ test("Pass B gives one selected stroke a tight oriented frame with live angle fe
   try {
     // 22. Select a long diagonal stroke.
     await drawDiagonalInk(window);
-    await window.locator('button[data-tool-name="Select"]').click();
+    await window.locator('button[data-dock-slot="select"]').click();
     const middle = await pagePoint(window, 0.46, 0.485);
     await window.mouse.click(middle.x, middle.y);
     await window.waitForTimeout(250);
@@ -619,7 +619,7 @@ test("Pass B keeps an off-page selection recoverable while its artwork stays cli
   const surface = window.getByTestId("canvas-surface");
   try {
     await drawDiagonalInk(window, { x: 0.3, y: 0.4 }, { x: 0.5, y: 0.6 });
-    await window.locator('button[data-tool-name="Select"]').click();
+    await window.locator('button[data-dock-slot="select"]').click();
     const middle = await pagePoint(window, 0.4, 0.5);
     await window.mouse.click(middle.x, middle.y);
     await expect(surface).toHaveAttribute("data-selection-state", "selected");
@@ -713,7 +713,7 @@ test("Pass B places the color picker against the shared occupied-zone model", as
     };
 
     // 34. From the Quick Color Rail the picker opens beside its own rail.
-    await window.locator('button[data-tool-name="Pen"]').click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await window.getByTestId("quick-color-current").click();
     await expect(picker).toBeVisible();
     await window.waitForTimeout(320);
@@ -737,7 +737,7 @@ test("Pass B places the color picker against the shared occupied-zone model", as
     // 36. With a selected stroke, and with the selection toolbar's Width
     // section expanded so the toolbar is measured at its real size.
     await drawDiagonalInk(window);
-    await window.locator('button[data-tool-name="Select"]').click();
+    await window.locator('button[data-dock-slot="select"]').click();
     const middle = await pagePoint(window, 0.46, 0.485);
     await window.mouse.click(middle.x, middle.y);
     const toolbar = window.getByTestId("shape-editing-toolbar");
@@ -780,7 +780,7 @@ test("Pass B places the color picker against the shared occupied-zone model", as
       [960, 640],
     ] as const) {
       await resize(app, width, height);
-      await window.locator('button[data-tool-name="Pen"]').click();
+      await window.locator('button[data-dock-slot="pen"]').click();
       await window.getByTestId("quick-color-current").click();
       await expect(picker).toBeVisible();
       await window.waitForTimeout(340);
@@ -816,7 +816,7 @@ test("Pass B shares one motion treatment and never delays interaction", async ()
   const surface = window.getByTestId("canvas-surface");
   try {
     // 40. Every floating surface reports the shared preset.
-    await window.locator('button[data-tool-name="Pen"]').click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await window.getByTestId("tool-options-affordance").click();
     await expect(window.getByTestId("context-tool-palette")).toHaveAttribute(
       "data-motion-preset",

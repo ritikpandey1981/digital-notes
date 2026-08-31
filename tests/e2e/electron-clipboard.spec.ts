@@ -26,7 +26,7 @@ test("supports session clipboard workflows, multi-object History, shortcuts, and
     await expect(surface).toHaveAttribute("data-context-menu-capability", "ready");
 
     const points = await pagePoints(baseCanvas, inkCanvas);
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "ink");
     await drawStroke(window, points.first, { x: 70, y: 15 });
     await expect(surface).toHaveAttribute("data-document-object-count", "1");

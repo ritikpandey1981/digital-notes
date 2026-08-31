@@ -6,16 +6,17 @@ import {
   MousePointer2,
   Paintbrush,
   Pencil,
-  PenLine,
   PenTool,
   Shapes,
   type LucideIcon,
 } from "lucide-react";
+import type { DrawingToolKind } from "@folio/editor";
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import type { EditorTool } from "./editor-types";
 import {
   DRAWING_SLOTS,
   UTILITY_SLOTS,
+  dockSlotTools,
   resolveActiveDockSlotId,
   resolveDockKeyboardTarget,
   resolveTabbableDockSlotId,
@@ -27,6 +28,23 @@ import { ToolTooltip } from "./ToolTooltip";
 interface ToolDockProps {
   readonly activeTool: EditorTool;
   readonly activeDrawingSlotId: string | null;
+  /**
+   * The family each drawing slot currently holds, keyed by slot id.
+   *
+   * A slot is a position, not a tool: its icon and the tool it activates follow
+   * whatever brush has been assigned to it. Omitted, the seeded families apply.
+   */
+  readonly slotFamilies?: Readonly<Record<string, DrawingToolKind>>;
+  /**
+   * The name of the brush each drawing slot currently holds, keyed by slot id.
+   *
+   * A slot is a position; what it holds is a brush. Naming it after the family
+   * it was seeded with would keep announcing "Pen" long after the artist put a
+   * pencil in it. Omitted, the seeded labels apply.
+   */
+  readonly slotBrushNames?: Readonly<Record<string, string>>;
+  /** The library identity id each drawing slot holds, or "" for none. */
+  readonly slotBrushIds?: Readonly<Record<string, string>>;
   /**
    * `inspectBrushLibrary` carries the TEMPORARY Shift+Click geometry-evaluation
    * trigger. Normal presses pass false and behave exactly as before.
@@ -53,14 +71,23 @@ interface ToolDockProps {
  * have yet.
  */
 const SLOT_ICONS: Readonly<Record<string, LucideIcon>> = Object.freeze({
-  pencil: Pencil,
-  pen: PenLine,
-  "brush-pen": PenTool,
-  marker: Paintbrush,
-  highlighter: Highlighter,
   select: MousePointer2,
   eraser: Eraser,
   shapes: Shapes,
+});
+
+/**
+ * A drawing slot's glyph follows the family it currently holds.
+ *
+ * A slot given a pencil must stop reading as a pen; the dock would otherwise
+ * be labelling the slot with a tool it no longer activates. The glyphs are the
+ * existing Folio vocabulary, unchanged.
+ */
+const FAMILY_ICONS: Readonly<Record<DrawingToolKind, LucideIcon>> = Object.freeze({
+  pencil: Pencil,
+  pen: PenTool,
+  marker: Paintbrush,
+  highlighter: Highlighter,
 });
 
 /** Optical nudges for glyphs whose ink sits off-centre in their box. */
@@ -77,6 +104,9 @@ const dockCapsuleClassName =
 export function ToolDock({
   activeTool,
   activeDrawingSlotId,
+  slotFamilies,
+  slotBrushNames,
+  slotBrushIds,
   onSelectDrawingSlot,
   onSelectTool,
   activeToolHasOptions,
@@ -92,7 +122,11 @@ export function ToolDock({
     }
   });
 
-  const activeSlotId = resolveActiveDockSlotId(activeTool, activeDrawingSlotId);
+  const families = slotFamilies ?? {};
+  const brushNames = slotBrushNames ?? {};
+  const brushIds = slotBrushIds ?? {};
+  const activeSlotId = resolveActiveDockSlotId(activeTool, activeDrawingSlotId, families);
+  const slotTools = dockSlotTools(families);
   const tabbableSlotId = resolveTabbableDockSlotId(activeSlotId);
 
   const activateSlotId = (slotId: string, inspectBrushLibrary = false): void => {
@@ -101,6 +135,7 @@ export function ToolDock({
       onSelectDrawingSlot(drawingSlot, inspectBrushLibrary);
       return;
     }
+    void slotTools;
     const utilitySlot = UTILITY_SLOTS.find((slot) => slot.id === slotId);
     if (utilitySlot !== undefined) onSelectTool(utilitySlot.tool);
   };
@@ -147,6 +182,10 @@ export function ToolDock({
           <DockButton
             key={slot.id}
             slot={slot}
+            family={families[slot.id] ?? slot.family}
+            position={DRAWING_SLOTS.indexOf(slot) + 1}
+            brushName={brushNames[slot.id]}
+            brushId={brushIds[slot.id] ?? ""}
             active={activeSlotId === slot.id}
             tabbable={tabbableSlotId === slot.id}
             showOptionsAffordance={activeSlotId === slot.id && activeToolHasOptions}
@@ -180,6 +219,10 @@ export function ToolDock({
 
 function DockButton({
   slot,
+  family,
+  position,
+  brushName,
+  brushId,
   active,
   tabbable,
   showOptionsAffordance,
@@ -188,6 +231,14 @@ function DockButton({
   onToggleOptions,
 }: {
   readonly slot: DockSlotDefinition;
+  /** Present for drawing slots: the family currently assigned to this slot. */
+  readonly family?: DrawingToolKind | undefined;
+  /** 1-based position of a drawing slot, which never changes. */
+  readonly position?: number | undefined;
+  /** The brush this drawing slot currently holds. */
+  readonly brushName?: string | undefined;
+  /** Its library identity id, or "" where the slot holds no catalogue brush. */
+  readonly brushId?: string | undefined;
   readonly active: boolean;
   readonly tabbable: boolean;
   readonly showOptionsAffordance: boolean;
@@ -195,7 +246,16 @@ function DockButton({
   readonly onActivate: (slotId: string, inspectBrushLibrary?: boolean) => void;
   readonly onToggleOptions: () => void;
 }) {
-  const Icon = SLOT_ICONS[slot.id] ?? Pencil;
+  const Icon =
+    family === undefined ? (SLOT_ICONS[slot.id] ?? Pencil) : (FAMILY_ICONS[family] ?? Pencil);
+  // Position and contents together: the number is the stable physical slot the
+  // artist reaches for, the brush name is what is currently in it. A utility is
+  // a fixed category and keeps its own name.
+  const accessibleName =
+    position === undefined || brushName === undefined
+      ? slot.label
+      : `Brush slot ${position}, ${brushName}`;
+  const tooltipLabel = brushName ?? slot.label;
   const opticalOffset = SLOT_OPTICAL_OFFSETS[slot.id];
   return (
     <div className="relative">
@@ -205,12 +265,17 @@ function DockButton({
           dockButtonClassName,
           active && "bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft",
         )}
-        aria-label={slot.label}
+        aria-label={accessibleName}
         aria-pressed={active}
         tabIndex={tabbable ? 0 : -1}
         data-tool-active={active}
-        data-tool-name={slot.label}
+        // The brush this slot currently holds, not the family it was seeded
+        // with. A generic slot that has been given a pencil must stop
+        // reporting "Pen"; `data-dock-slot` is the stable physical identity.
+        data-tool-name={tooltipLabel}
         data-dock-slot={slot.id}
+        data-slot-family={family ?? ""}
+        data-slot-brush={brushId ?? ""}
         data-interaction-motion="selection-140ms"
         // Shift is the temporary Brush Library geometry trigger; a plain press
         // is untouched production behaviour.
@@ -221,14 +286,14 @@ function DockButton({
           aria-hidden="true"
           data-optical-alignment={opticalOffset === undefined ? "centered" : "down-right-1px"}
         />
-        <ToolTooltip label={slot.label} />
+        <ToolTooltip label={tooltipLabel} />
       </button>
       {showOptionsAffordance ? (
         // The one discoverable entry point into the active tool's settings.
         <button
           type="button"
           className="absolute -right-0.5 bottom-0 grid size-3.5 place-items-center rounded-[4px] text-folio-accent transition-transform duration-100 hover:bg-folio-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-          aria-label={`${slot.label} options`}
+          aria-label={`${tooltipLabel} options`}
           aria-expanded={optionsOpen}
           tabIndex={-1}
           data-testid="tool-options-affordance"

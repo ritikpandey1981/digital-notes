@@ -1,4 +1,4 @@
-import { BRUSH_LIBRARY_FIXTURES, type BrushFixture } from "./brush-library-fixtures";
+import { BRUSH_LIBRARY_CATALOGUE, type BrushLibraryEntry } from "./brush-library-catalogue";
 
 /**
  * Pure polar geometry for the radial Brush Library.
@@ -82,7 +82,7 @@ export const RADIAL_LIBRARY_CONFIGURATION: RadialLibraryConfiguration = Object.f
 });
 
 export interface RadialCell {
-  readonly fixture: BrushFixture;
+  readonly brush: BrushLibraryEntry;
   /** Zero-based track, innermost first. */
   readonly trackIndex: number;
   /** Zero-based position within the track. */
@@ -847,7 +847,7 @@ export function polarPoint(
 export function buildRadialLibraryLayout(
   center: RadialCenter,
   configuration: RadialLibraryConfiguration = RADIAL_LIBRARY_CONFIGURATION,
-  catalogue: readonly BrushFixture[] = BRUSH_LIBRARY_FIXTURES,
+  catalogue: readonly BrushLibraryEntry[] = BRUSH_LIBRARY_CATALOGUE,
   /**
    * Reserved for the future rotation pass. Applied uniformly to every cell in
    * every track, so the whole library turns as one rigid instrument. Nothing in
@@ -888,13 +888,13 @@ export function buildRadialLibraryLayout(
       const fits = Math.floor(arc.widthDegrees / cellAngleDegrees + ANGLE_EPSILON);
       capacity += fits;
       for (let indexInArc = 0; indexInArc < fits; indexInArc += 1) {
-        const fixture = catalogue[catalogueIndex];
-        if (fixture === undefined) break;
+        const brush = catalogue[catalogueIndex];
+        if (brush === undefined) break;
         const startAngleDegrees =
           arc.startDegrees + indexInArc * cellAngleDegrees + rotationOffsetDegrees;
         const endAngleDegrees = startAngleDegrees + cellAngleDegrees;
         const cell: RadialCell = Object.freeze({
-          fixture,
+          brush,
           trackIndex,
           indexInTrack: trackCells.length,
           catalogueIndex,

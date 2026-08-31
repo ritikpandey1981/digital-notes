@@ -1,8 +1,10 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
-const DRAWING_SLOTS = ["Pencil", "Pen", "Brush Pen", "Marker", "Highlighter"] as const;
-const UTILITY_SLOTS = ["Select", "Eraser", "Shapes"] as const;
+// Slots are located by their stable position id. Their accessible name now
+// describes the brush each one holds, which changes as soon as one is assigned.
+const DRAWING_SLOTS = ["pencil", "pen", "brush-pen", "marker", "highlighter"] as const;
+const UTILITY_SLOTS = ["select", "eraser", "shapes"] as const;
 
 test("presents the tool dock as five drawing preset slots above three permanent utilities", async () => {
   test.setTimeout(90_000);
@@ -34,11 +36,18 @@ test("presents the tool dock as five drawing preset slots above three permanent 
     // 1. Five drawing slots, three utilities, in visual order.
     await expect(drawingCapsule.locator("button[data-dock-slot]")).toHaveCount(5);
     await expect(utilityCapsule.locator("button[data-dock-slot]")).toHaveCount(3);
-    for (const label of DRAWING_SLOTS) {
-      await expect(drawingCapsule.getByRole("button", { name: label, exact: true })).toBeVisible();
+    for (const [index, slotId] of DRAWING_SLOTS.entries()) {
+      const button = drawingCapsule.locator(`button[data-dock-slot="${slotId}"]`);
+      await expect(button).toBeVisible();
+      // Position first, contents second: the number is the stable slot, the
+      // brush name is whatever it currently holds.
+      await expect(button).toHaveAttribute(
+        "aria-label",
+        new RegExp(`^Brush slot ${index + 1}, .+`),
+      );
     }
-    for (const label of UTILITY_SLOTS) {
-      await expect(utilityCapsule.getByRole("button", { name: label, exact: true })).toBeVisible();
+    for (const slotId of UTILITY_SLOTS) {
+      await expect(utilityCapsule.locator(`button[data-dock-slot="${slotId}"]`)).toBeVisible();
     }
 
     // 2. Two genuinely separate surfaces with real exterior space between them.
@@ -76,39 +85,39 @@ test("presents the tool dock as five drawing preset slots above three permanent 
 
     // 5. Drawing slots activate real brush state, not a parallel store.
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
-    await dock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await dock.locator('button[data-dock-slot="pencil"]').click();
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pencil");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pencil-hb");
-    await expectOnlyActive(dock, "Pencil");
+    await expectOnlyActive(dock, "pencil");
 
     // 6. The two pen slots are genuinely different presets, not one button twice.
-    await dock.getByRole("button", { name: "Pen", exact: true }).click();
+    await dock.locator('button[data-dock-slot="pen"]').click();
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pen");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-fineliner");
-    await expectOnlyActive(dock, "Pen");
+    await expectOnlyActive(dock, "pen");
 
-    await dock.getByRole("button", { name: "Brush Pen", exact: true }).click();
+    await dock.locator('button[data-dock-slot="brush-pen"]').click();
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pen");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-width", "6");
-    await expectOnlyActive(dock, "Brush Pen");
+    await expectOnlyActive(dock, "brush-pen");
 
-    await dock.getByRole("button", { name: "Marker", exact: true }).click();
+    await dock.locator('button[data-dock-slot="marker"]').click();
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "marker");
-    await expectOnlyActive(dock, "Marker");
+    await expectOnlyActive(dock, "marker");
 
-    await dock.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await dock.locator('button[data-dock-slot="highlighter"]').click();
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "highlighter");
-    await expectOnlyActive(dock, "Highlighter");
+    await expectOnlyActive(dock, "highlighter");
 
     // 7. Each utility activates through the existing tool architecture, and
     //    takes the active presentation away from every drawing slot.
     await dock.getByRole("button", { name: "Select", exact: true }).click();
-    await expectOnlyActive(dock, "Select");
+    await expectOnlyActive(dock, "select");
     await dock.getByRole("button", { name: "Eraser", exact: true }).click();
-    await expectOnlyActive(dock, "Eraser");
+    await expectOnlyActive(dock, "eraser");
     await dock.getByRole("button", { name: "Shapes", exact: true }).click();
-    await expectOnlyActive(dock, "Shapes");
+    await expectOnlyActive(dock, "shapes");
     await expect(window.getByTestId("shapes-widget")).toBeVisible();
 
     // 8. Switching tools and presets is workspace preference: zero History.
@@ -117,18 +126,18 @@ test("presents the tool dock as five drawing preset slots above three permanent 
 
     // 9. A committed stroke still reaches History through the normal path.
     const pageToScreen = await pageCoordinateMapper(inkCanvas, surface);
-    await dock.getByRole("button", { name: "Brush Pen", exact: true }).click();
+    await dock.locator('button[data-dock-slot="brush-pen"]').click();
     await drawPath(window, pageToScreen, 260);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
     expect(await strokeBrushFamilies(surface)).toEqual(["pen"]);
 
     // 10. Arrow keys traverse the capsule boundary as one toolbar.
-    await dock.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await dock.locator('button[data-dock-slot="highlighter"]').click();
     await window.keyboard.press("ArrowDown");
-    await expectOnlyActive(dock, "Select");
+    await expectOnlyActive(dock, "select");
     await window.keyboard.press("ArrowUp");
-    await expectOnlyActive(dock, "Highlighter");
+    await expectOnlyActive(dock, "highlighter");
 
     // 11. The minimum supported window still shows the whole dock on screen.
     await window.setViewportSize({ width: 960, height: 640 });
@@ -143,16 +152,16 @@ test("presents the tool dock as five drawing preset slots above three permanent 
       );
     });
     expect(clipped, "dock fits the minimum window").toBe(false);
-    for (const label of [...DRAWING_SLOTS, ...UTILITY_SLOTS]) {
-      const box = await dock.getByRole("button", { name: label, exact: true }).boundingBox();
-      expect(box, `${label} has bounds at minimum window`).not.toBeNull();
-      expect(box!.width, `${label} hit target`).toBeGreaterThanOrEqual(32);
-      expect(box!.height, `${label} hit target`).toBeGreaterThanOrEqual(32);
+    for (const slotId of [...DRAWING_SLOTS, ...UTILITY_SLOTS]) {
+      const box = await dock.locator(`button[data-dock-slot="${slotId}"]`).boundingBox();
+      expect(box, `${slotId} has bounds at minimum window`).not.toBeNull();
+      expect(box!.width, `${slotId} hit target`).toBeGreaterThanOrEqual(32);
+      expect(box!.height, `${slotId} hit target`).toBeGreaterThanOrEqual(32);
     }
 
     // 12. The canvas still takes the first action after switching tools.
     await window.setViewportSize({ width: 1440, height: 900 });
-    await dock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await dock.locator('button[data-dock-slot="pencil"]').click();
     const restored = await pageCoordinateMapper(inkCanvas, surface);
     await drawPath(window, restored, 380);
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
@@ -163,19 +172,21 @@ test("presents the tool dock as five drawing preset slots above three permanent 
   }
 });
 
-async function expectOnlyActive(dock: Locator, label: string): Promise<void> {
-  await expect(dock.getByRole("button", { name: label, exact: true })).toHaveAttribute(
+async function expectOnlyActive(dock: Locator, slotId: string): Promise<void> {
+  await expect(dock.locator(`button[data-dock-slot="${slotId}"]`)).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+  // Compared by slot id rather than accessible name: the name now carries the
+  // brush a slot holds, which is exactly the thing that changes.
   const pressed = await dock
     .locator("button[data-dock-slot]")
     .evaluateAll((buttons) =>
       buttons
         .filter((button) => button.getAttribute("aria-pressed") === "true")
-        .map((button) => button.getAttribute("aria-label")),
+        .map((button) => button.getAttribute("data-dock-slot")),
     );
-  expect(pressed, `only ${label} is active`).toEqual([label]);
+  expect(pressed, `only ${slotId} is active`).toEqual([slotId]);
 }
 
 async function drawPath(

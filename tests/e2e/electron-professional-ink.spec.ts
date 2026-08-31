@@ -23,7 +23,7 @@ test("renders handwriting, long curves, small writing, and rapid ink from cached
     const baseCanvas = host.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
     const coordinates = await canvasCoordinates(baseCanvas, inkCanvas, surface);
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
 
     const smallHandwriting = [
       { x: 70, y: 165 },

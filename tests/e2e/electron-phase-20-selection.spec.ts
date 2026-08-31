@@ -61,7 +61,7 @@ test("Phase 20 delivers multi-selection, marquee, group transform, and selection
     });
 
     // Mixed content: three strokes plus one rectangle.
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     for (let index = 0; index < 3; index += 1) await stroke(window, 260 + index * 70);
     await window.getByRole("button", { name: "Shapes", exact: true }).click();
     await window.getByRole("button", { name: "Rectangle", exact: true }).click();
@@ -169,7 +169,7 @@ test("Phase 20 delivers multi-selection, marquee, group transform, and selection
 
     // Panels coexist and the workspace stays usable at the minimum size.
     await window.getByTestId("layers-toggle").click();
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await window.getByTestId("quick-color-current").click();
     await expect(window.getByTestId("full-color-picker")).toBeVisible();
     await window.setViewportSize({ width: 960, height: 640 });
@@ -217,7 +217,7 @@ test("Phase 20 keeps locked layers read-only and preserves Alt overlap cycling",
   try {
     const surface = window.getByTestId("canvas-surface");
 
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     await stroke(window, 300);
     await stroke(window, 306);
     await window.getByRole("button", { name: "Select", exact: true }).click();

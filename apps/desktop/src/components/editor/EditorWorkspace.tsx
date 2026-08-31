@@ -2,6 +2,7 @@ import type {
   ArtworkColorSampleResult,
   CanvasDrawingStyle,
   ColorTargetAdapter,
+  DrawingToolKind,
   EditorColorSystemSnapshot,
   EditorEscapeActions,
   LayerActions,
@@ -51,8 +52,16 @@ interface EditorWorkspaceProps {
   onDismissPageSettings: () => void;
   activeTool: EditorTool;
   activeDrawingSlotId: string | null;
+  /** The family each drawing slot currently holds, so the dock follows it. */
+  slotFamilies: Readonly<Record<string, DrawingToolKind>>;
+  /** The library identity id each drawing slot holds, or "" for none. */
+  slotBrushIds: Readonly<Record<string, string>>;
+  /** The brush each drawing slot currently holds, for its name and tooltip. */
+  slotBrushNames: Readonly<Record<string, string>>;
   activeDockSlotId: string | null;
   brushLibraryOpen: boolean;
+  activeSlotBrushId: string | null;
+  selectLibraryBrush: (brushId: string) => void;
   onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
   activeShape: ShapeToolKind;
   armedShape: ShapeToolKind | null;
@@ -93,8 +102,13 @@ export function EditorWorkspace({
   onDismissPageSettings,
   activeTool,
   activeDrawingSlotId,
+  slotFamilies,
+  slotBrushIds,
+  slotBrushNames,
   activeDockSlotId,
   brushLibraryOpen,
+  activeSlotBrushId,
+  selectLibraryBrush,
   onSelectDrawingSlot,
   activeShape,
   armedShape,
@@ -386,10 +400,18 @@ export function EditorWorkspace({
         onViewportChange={onViewportChange}
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
-      <RadialBrushLibrary open={brushLibraryOpen} anchorSlotId={activeDockSlotId} />
+      <RadialBrushLibrary
+        open={brushLibraryOpen}
+        anchorSlotId={activeDockSlotId}
+        selectedBrushId={activeSlotBrushId}
+        onSelectBrush={selectLibraryBrush}
+      />
       <ToolDock
         activeTool={activeTool}
         activeDrawingSlotId={activeDrawingSlotId}
+        slotFamilies={slotFamilies}
+        slotBrushIds={slotBrushIds}
+        slotBrushNames={slotBrushNames}
         onSelectDrawingSlot={onSelectDrawingSlot}
         onSelectTool={onSelectTool}
         activeToolHasOptions={activeToolHasOptions}

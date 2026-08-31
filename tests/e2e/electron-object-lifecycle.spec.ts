@@ -47,7 +47,7 @@ test("duplicates and deletes one selected object through immutable History", asy
         (metrics.pageY + metrics.pageHeight * 0.4) * (inkBounds.height / metrics.logicalHeight),
     };
 
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await expect(window.getByTestId("context-tool-palette")).toBeHidden();
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "pen");
     await window.evaluate(
@@ -79,7 +79,7 @@ test("duplicates and deletes one selected object through immutable History", asy
       y: Number(await surface.getAttribute("data-selected-object-translation-y")),
     };
 
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await expect(selectionCanvas).toHaveAttribute("data-selection-state", "empty");
     await window.getByRole("button", { name: "Select", exact: true }).click();
     await window.mouse.click(start.x + 30, start.y + 8);

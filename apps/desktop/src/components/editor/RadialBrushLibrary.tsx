@@ -1,3 +1,4 @@
+import { cn } from "@folio/ui";
 import { Paintbrush, Pencil, PenTool, type LucideIcon } from "lucide-react";
 import {
   useCallback,
@@ -5,10 +6,11 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useReducedMotionPreference } from "../../motion/floating-surface-motion";
-import type { BrushFixtureFamily } from "./brush-library-fixtures";
+import type { BrushLibraryFamily } from "./brush-library-catalogue";
 import {
   RADIAL_OPEN_MOTION,
   RADIAL_ROTATION_DRAG_THRESHOLD,
@@ -44,21 +46,28 @@ interface RadialBrushLibraryProps {
   readonly open: boolean;
   /** Dock slot the library radiates from, e.g. "pencil". */
   readonly anchorSlotId: string | null;
+  /**
+   * The library identity the anchoring slot currently holds, or null when it
+   * holds none. Null shows no selection rather than guessing at one.
+   */
+  readonly selectedBrushId: string | null;
+  readonly onSelectBrush: (brushId: string) => void;
 }
 
 /**
- * One semantic glyph per library family.
+ * One semantic glyph per library family, matching the dock's own vocabulary.
  *
- * Deliberately coarse: every pencil fixture shares the pencil glyph, every pen
- * the nib, every colour brush the brush. This phase is judging geometry, and a
- * per-brush specimen both implied engine behaviour that does not exist and made
- * the wheel read as noise. Names stay available through `aria-label` and the
- * native SVG tooltip.
+ * Deliberately coarse. Every pencil identity shares the pencil glyph and every
+ * pen the nib, because a per-brush specimen would imply that forty-five
+ * distinct brush behaviours exist. They do not yet: several identities share
+ * one backing preset, and drawing a unique mark for each would be the wheel
+ * making a promise the engine cannot keep. Names carry the distinction, through
+ * the accessible name on every cell.
  */
-const FAMILY_ICONS: Readonly<Record<BrushFixtureFamily, LucideIcon>> = Object.freeze({
+const FAMILY_ICONS: Readonly<Record<BrushLibraryFamily, LucideIcon>> = Object.freeze({
   pencil: Pencil,
   pen: PenTool,
-  "color-brush": Paintbrush,
+  marker: Paintbrush,
 });
 
 const ICON_SIZE = 22;
@@ -90,7 +99,12 @@ const TRACK_TONES: readonly string[] = Object.freeze([
  * the dock — for now plain occlusion is enough, and cells passing behind the
  * dock is expected rather than a defect: the future rotation brings them round.
  */
-export function RadialBrushLibrary({ open, anchorSlotId }: RadialBrushLibraryProps) {
+export function RadialBrushLibrary({
+  open,
+  anchorSlotId,
+  selectedBrushId,
+  onSelectBrush,
+}: RadialBrushLibraryProps) {
   const requested = open && anchorSlotId !== null;
   const presentation = useRadialPresentation(requested);
   // The axle is latched while the library is wanted, because a tool switch
@@ -112,6 +126,8 @@ export function RadialBrushLibrary({ open, anchorSlotId }: RadialBrushLibraryPro
       anchorSlotId={slotId}
       phase={presentation.phase}
       openProgress={presentation.progress}
+      selectedBrushId={selectedBrushId}
+      onSelectBrush={onSelectBrush}
     />
   );
 }
@@ -203,6 +219,14 @@ interface RotationDrag {
   travelledDegrees: number;
   /** Recent movement, trimmed to the sample window on every move. */
   samples: readonly RotationSample[];
+  /**
+   * The identity the press landed on, and the candidate for selection.
+   *
+   * Cleared the moment the gesture becomes a rotation: one threshold decides
+   * between turning the wheel and choosing a brush, and a drag can never also
+   * be a click.
+   */
+  candidateBrushId: string | null;
 }
 
 /** The single coast in flight, if any. */
@@ -216,10 +240,14 @@ function RadialLibrarySurface({
   anchorSlotId,
   phase,
   openProgress,
+  selectedBrushId,
+  onSelectBrush,
 }: {
   readonly anchorSlotId: string;
   readonly phase: RadialPresentationPhase;
   readonly openProgress: number;
+  readonly selectedBrushId: string | null;
+  readonly onSelectBrush: (brushId: string) => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [center, setCenter] = useState<RadialCenter | null>(null);
@@ -369,6 +397,9 @@ function RadialLibrarySurface({
     if (center === null || dragRef.current !== null) return;
     const point = workspacePoint(event);
     if (point === null) return;
+    // Which brush the press landed on, read from the cell the event came from.
+    // Only a wheel that has finished unfolding offers a selection.
+    const pressed = brushCellAt(event.target);
     // The pointer always wins. Grabbing a coasting wheel stops it dead on this
     // frame, so there is never a tug-of-war between momentum and the hand.
     stopInertia();
@@ -380,6 +411,7 @@ function RadialLibrarySurface({
       rotating: false,
       travelledDegrees: 0,
       samples: [],
+      candidateBrushId: phase === "open" ? pressed : null,
     };
     // Capture on the rotating group, so the drag survives leaving the cell it
     // started on and continues over the dock, the rail, or empty workspace.
@@ -401,6 +433,9 @@ function RadialLibrarySurface({
         return;
       }
       drag.rotating = true;
+      // Past the threshold this is a rotation, so it is no longer a click. The
+      // same 4px that starts the turn is what cancels the selection.
+      drag.candidateBrushId = null;
       // The gesture only starts being measured once it is a rotation, so the
       // still moments before the threshold cannot dilute the release speed.
       drag.samples = [{ timeMs: event.timeStamp, rotationDegrees: drag.travelledDegrees }];
@@ -428,10 +463,13 @@ function RadialLibrarySurface({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    // A press that never became a drag is a click, not a tiny fling. It stays
-    // available for the later brush selection and starts nothing here.
+    // A press that never became a drag is a click, not a tiny fling: it selects
+    // the brush it landed on and starts no momentum.
     if (!drag.rotating || event.type === "pointercancel") {
       setReleaseVelocity(0);
+      if (event.type !== "pointercancel" && drag.candidateBrushId !== null) {
+        onSelectBrush(drag.candidateBrushId);
+      }
       return;
     }
     // Reduced motion keeps the wheel fully usable and simply stops it on
@@ -446,6 +484,22 @@ function RadialLibrarySurface({
     setReleaseVelocity(velocity);
     if (!shouldStartInertia(velocity)) return;
     startInertia(velocity);
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<SVGGElement>): void => {
+    if (phase !== "open") return;
+    // Enter and Space are the standard activation keys for a radio, and both
+    // are handled here. Only Enter can actually arrive today: the editor binds
+    // Space globally to transient viewport panning and consumes it with
+    // stopImmediatePropagation, so no keydown for it reaches this surface.
+    // That is the frozen viewport authority's gesture, not something to take
+    // from it here; if it ever exempts these cells, this already works.
+    if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+    const brushId = brushCellAt(event.target);
+    if (brushId === null) return;
+    // Space would otherwise scroll the workspace out from under the wheel.
+    event.preventDefault();
+    onSelectBrush(brushId);
   };
 
   const layout =
@@ -474,8 +528,8 @@ function RadialLibrarySurface({
       {layout === null ? null : (
         <svg
           className="size-full overflow-visible"
-          role="group"
-          aria-label="Brush library layout preview"
+          role="radiogroup"
+          aria-label="Brush library"
           focusable="false"
         >
           {/*
@@ -491,6 +545,7 @@ function RadialLibrarySurface({
             onPointerMove={handlePointerMove}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
+            onKeyDown={handleKeyDown}
           >
             {layout.tracks.map((track) => {
               // Two presentation dimensions per ring, both from the one shared
@@ -526,13 +581,14 @@ function RadialLibrarySurface({
                 >
                   {track.cells.map((cell) => (
                     <BrushCell
-                      key={cell.fixture.id}
+                      key={cell.brush.id}
                       center={{ x: layout.centerX, y: layout.centerY }}
                       cell={cell}
                       expansion={expansion}
                       reveal={reveal}
                       angularProgress={angularProgress}
                       interactive={phase === "open"}
+                      selected={cell.brush.id === selectedBrushId}
                       tone={TRACK_TONES[track.index % TRACK_TONES.length] ?? TRACK_TONES[0]!}
                     />
                   ))}
@@ -546,6 +602,18 @@ function RadialLibrarySurface({
   );
 }
 
+/**
+ * The brush under an event target.
+ *
+ * Every catalogue entry fits every slot: a drawing slot is a stable position
+ * that owns preferences, and family is a property of the brush it happens to
+ * hold, so there is nothing here to refuse.
+ */
+function brushCellAt(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest("[data-brush-item]")?.getAttribute("data-brush-item") ?? null;
+}
+
 function BrushCell({
   center,
   cell,
@@ -553,6 +621,7 @@ function BrushCell({
   reveal,
   angularProgress,
   interactive,
+  selected,
   tone,
 }: {
   readonly center: RadialCenter;
@@ -564,13 +633,15 @@ function BrushCell({
   /** How far the ring's reveal front has swept, 0 to 1. */
   readonly angularProgress: number;
   readonly interactive: boolean;
+  /** True when the anchoring slot currently holds this identity. */
+  readonly selected: boolean;
   readonly tone: string;
 }) {
   // One animated geometry drives the surface, the seam and the glyph together,
   // so nothing detaches from its cell while the ring travels.
   const drawn = expandCell(cell, expansion);
   const iconMid = polarPoint(center, drawn.midRadius, drawn.midAngleDegrees);
-  const Icon = FAMILY_ICONS[cell.fixture.family];
+  const Icon = FAMILY_ICONS[cell.brush.family];
   // Opacity on the group, so surface, seam, icon and hover tint all fade as one
   // object rather than the glyph floating at full strength over a ghost cell.
   //
@@ -584,6 +655,8 @@ function BrushCell({
   const opacity = combineRevealFactors(visibility, reveal, circumferential);
   // A cell hidden behind the dock must not quietly collect presses, and a wheel
   // still unfolding is not yet an instrument to grab.
+  // Every visible cell on a settled wheel both turns the instrument and offers
+  // itself for selection. Only visibility and the presentation phase gate that.
   const hidden = visibility <= RADIAL_VISIBILITY_EPSILON || !interactive;
   return (
     <g
@@ -595,16 +668,33 @@ function BrushCell({
       // grab/grabbing communicates the affordance on fine pointers; touch and
       // stylus rely on the physical radial form instead. A cell hidden behind
       // the dock stops taking input rather than collecting presses invisibly.
+      // `outline-none` unconditionally, on the hidden branch too. Chromium's
+      // default focus ring here is a 4.8px orange rectangle drawn around the
+      // element's bounding box, which is doubly wrong for an annular cell: the
+      // wrong shape, and a colour from outside Folio's palette. Leaving the
+      // suppression on the visible branch alone would let it reappear the
+      // moment rotation carried a focused cell behind the dock — a rectangle
+      // floating over empty workspace. The Folio treatment is drawn on the
+      // cell's own path instead, so it follows the real geometry.
       className={
         hidden
-          ? "pointer-events-none"
-          : "pointer-events-auto cursor-grab focus:outline-none active:cursor-grabbing"
+          ? "group pointer-events-none outline-none"
+          : "group pointer-events-auto cursor-grab outline-none active:cursor-grabbing"
       }
+      role="radio"
+      aria-checked={selected}
+      // Focusable only while the wheel is a usable instrument, so a collapsed,
+      // unfolding or hidden cell never becomes a tab stop.
+      tabIndex={hidden ? -1 : 0}
       data-brush-visibility={visibility.toFixed(3)}
       data-brush-circumferential={circumferential.toFixed(3)}
       data-brush-opacity={opacity.toFixed(3)}
-      data-brush-item={cell.fixture.id}
-      data-brush-family={cell.fixture.family}
+      data-brush-selected={selected ? "true" : "false"}
+      data-brush-item={cell.brush.id}
+      data-brush-family={cell.brush.family}
+      // The real preset backing this identity today. Reported so the
+      // provisional mapping is observable rather than an unverifiable claim.
+      data-brush-fallback-preset={cell.brush.fallbackPresetId}
       data-brush-track={cell.trackIndex}
       data-brush-index={cell.catalogueIndex}
       data-brush-arc-length={cell.arcLength.toFixed(2)}
@@ -613,16 +703,41 @@ function BrushCell({
       data-brush-cell-angle={cell.cellAngleDegrees.toFixed(3)}
       data-brush-start-angle={normalizeDegrees(cell.startAngleDegrees).toFixed(3)}
       data-brush-end-angle={cell.endAngleDegrees.toFixed(3)}
-      aria-label={cell.fixture.name}
+      aria-label={cell.brush.name}
     >
-      <title>{cell.fixture.name}</title>
+      {/*
+        No <title>: the browser's own SVG tooltip is unpositionable, and on the
+        dock side of the wheel it surfaced over the Property Rail and blocked
+        it. The name is carried by `aria-label`, which screen readers announce
+        and which the tooltip was only ever duplicating.
+      */}
       <path
         d={annularSectorPath(center, drawn)}
-        data-brush-cell={cell.fixture.id}
-        fill={tone}
+        data-brush-cell={cell.brush.id}
+        fill={selected ? "var(--folio-accent-soft)" : tone}
         // A hairline seam rather than a grid line: the instruments should read
-        // before the lattice does. Hover is the only state this phase carries.
-        className="stroke-[var(--folio-border)] stroke-[0.6] transition-[fill] duration-100 hover:fill-[var(--folio-accent-soft)]"
+        // before the lattice does. The selected cell is stated by a slightly
+        // firmer accent seam over a faint accent surface — enough to find at a
+        // glance, restrained enough that the wheel stays calm. It inherits the
+        // group's opacity like everything else, so a selected cell behind the
+        // dock fades away exactly as its neighbours do.
+        // Keyboard focus is drawn on this same arc rather than as a box, so the
+        // indicator keeps the curved physical geometry of the control. It is a
+        // firmer accent seam than selection uses, and it lives inside the cell
+        // group, so it fades with the cell rather than hanging in empty space
+        // once rotation carries that cell behind the dock.
+        //
+        // Driven by the browser's own `:focus-visible` on the focusable group,
+        // not by a React flag: the modality decision is the browser's, and
+        // reading it inside `onFocus` races the decision itself. A pointer
+        // press therefore focuses the cell without raising this indicator.
+        className={cn(
+          "transition-[fill] duration-100",
+          selected
+            ? "stroke-[var(--folio-accent)] stroke-[1.2]"
+            : "stroke-[var(--folio-border)] stroke-[0.6] hover:fill-[var(--folio-accent-soft)]",
+          "group-focus-visible:stroke-[var(--folio-accent)] group-focus-visible:stroke-[2.2]",
+        )}
       />
       {/*
         Positioned, never rotated. A glyph carried around the circle would sit
@@ -636,8 +751,8 @@ function BrushCell({
         <Icon
           width={ICON_SIZE}
           height={ICON_SIZE}
-          strokeWidth={1.6}
-          className="text-[var(--folio-icon-neutral)]"
+          strokeWidth={selected ? 1.9 : 1.6}
+          className={selected ? "text-[var(--folio-accent)]" : "text-[var(--folio-icon-neutral)]"}
           aria-hidden="true"
         />
       </g>

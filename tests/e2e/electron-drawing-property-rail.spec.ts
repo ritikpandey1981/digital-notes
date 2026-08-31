@@ -34,7 +34,7 @@ test("shows a contextual drawing property rail beside the drawing capsule", asyn
     await expect(rail).toHaveCount(0);
 
     // 2. A drawing preset brings the rail up with exactly four controls.
-    await dock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await dock.locator('button[data-dock-slot="pencil"]').click();
     await expect(rail).toBeVisible();
     await expect(rail.locator("button[data-property-key]")).toHaveCount(4);
     expect(
@@ -85,7 +85,7 @@ test("shows a contextual drawing property rail beside the drawing capsule", asyn
     expect(pencilPrinted.smoothing).toMatch(/^\d+%$/u);
 
     // 5. Switching presets re-reads the newly active preset.
-    await dock.getByRole("button", { name: "Brush Pen", exact: true }).click();
+    await dock.locator('button[data-dock-slot="brush-pen"]').click();
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-brush");
     const brushPen = await canonical();
     expect(brushPen.width).not.toBe(pencil.width);
@@ -99,7 +99,7 @@ test("shows a contextual drawing property rail beside the drawing capsule", asyn
 
     // 6. Smoothing is truthfully unavailable for the Highlighter, and prints no
     //    invented number. Its icons stay identical to every other tool's.
-    await dock.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await dock.locator('button[data-dock-slot="highlighter"]').click();
     const smoothing = rail.locator('button[data-property-key="smoothing"]');
     await expect(smoothing).toBeDisabled();
     await expect(smoothing).toHaveAttribute("data-property-available", "false");
@@ -108,7 +108,7 @@ test("shows a contextual drawing property rail beside the drawing capsule", asyn
     // Opacity at its remapped display scale, never the raw 0.34 model value.
     expect(highlighterPrinted.opacity).toMatch(/^\d+%$/u);
     expect(await glyphGeometry(rail), "icons are tool-independent").toEqual(pencilGlyphs);
-    await dock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await dock.locator('button[data-dock-slot="pencil"]').click();
     await expect(smoothing).toBeEnabled();
 
     // 7. The colour swatch shows the canonical creation colour, and the quick
@@ -188,7 +188,7 @@ test("shows a contextual drawing property rail beside the drawing capsule", asyn
 
     // 14. The minimum window keeps the rail on screen and clear of the dock.
     await window.setViewportSize({ width: 960, height: 640 });
-    await dock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await dock.locator('button[data-dock-slot="pencil"]').click();
     await expect(rail).toBeVisible();
     const smallRail = (await rail.boundingBox())!;
     const smallCapsule = (await drawingCapsule.boundingBox())!;

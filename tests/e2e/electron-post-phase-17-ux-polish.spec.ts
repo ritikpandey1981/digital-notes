@@ -39,7 +39,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
       y: mapping.canvasBounds.y + mapping.canvasBounds.height / 2,
     };
 
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await window.mouse.move(2, 2);
     await window.mouse.move(insidePage.x, insidePage.y);
     await expect(brushCursor).toHaveAttribute("data-visible", "true");
@@ -47,11 +47,11 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await window.mouse.move(outsidePage.x, outsidePage.y);
     await expect(brushCursor).toHaveAttribute("data-visible", "false");
     await expect(inkCanvas).toHaveCSS("cursor", "default");
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).hover();
+    await toolDock.locator('button[data-dock-slot="pencil"]').hover();
     await expect(brushCursor).toHaveAttribute("data-visible", "false");
     await expect(inkCanvas).toHaveCSS("cursor", "default");
 
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     const palette = window.getByTestId("context-tool-palette");
     await expect(palette).toBeVisible();
     await palette.hover();
@@ -76,8 +76,8 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await window.mouse.move(insidePage.x, insidePage.y);
     await expect(brushCursor).toHaveAttribute("data-visible", "false");
     await expect(inkCanvas).toHaveCSS("cursor", "default");
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await expect(palette).toBeVisible();
 
     const workspaceMenu = window.getByRole("button", { name: "Workspace menu" });
@@ -100,7 +100,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await expect(workspaceTooltip).toBeHidden();
     await window.keyboard.press("Escape");
     await expect(settingsDialog).toHaveCount(0);
-    await toolDock.getByRole("button", { name: "Pencil", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pencil"]').click();
     await expect(palette).toBeVisible();
 
     const presetTrigger = window.getByRole("button", { name: "Pencil preset" });
@@ -152,7 +152,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
     await expect(surface).toHaveAttribute("data-last-created-shape-type", "ellipse");
 
-    await toolDock.getByRole("button", { name: "Pen", exact: true }).click();
+    await toolDock.locator('button[data-dock-slot="pen"]').click();
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
     await expect(ellipseButton).toHaveAttribute("aria-pressed", "true");

@@ -1,6 +1,22 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
+/**
+ * Dock slots are located by their stable position id, not by their accessible
+ * name: that name now describes the brush a slot currently holds and changes
+ * the moment one is assigned.
+ */
+const DOCK_SLOT_IDS: Readonly<Record<string, string>> = {
+  Pencil: "pencil",
+  Pen: "pen",
+  "Brush Pen": "brush-pen",
+  Marker: "marker",
+  Highlighter: "highlighter",
+  Select: "select",
+  Eraser: "eraser",
+  Shapes: "shapes",
+};
+
 test("opens a static radial brush library around the active drawing slot", async () => {
   test.setTimeout(120_000);
   const repositoryRoot = process.cwd();
@@ -24,7 +40,8 @@ test("opens a static radial brush library around the active drawing slot", async
     const library = window.getByTestId("radial-brush-library");
     const rail = window.getByTestId("drawing-property-rail");
     const surface = window.getByTestId("canvas-surface");
-    const slot = (name: string): Locator => dock.getByRole("button", { name, exact: true });
+    const slot = (name: string): Locator =>
+      dock.locator(`button[data-dock-slot="${DOCK_SLOT_IDS[name] ?? name}"]`);
 
     const palette = window.getByTestId("context-tool-palette");
 
@@ -230,9 +247,9 @@ test("opens a static radial brush library around the active drawing slot", async
     await slot("Pencil").click({ modifiers: ["Shift"] });
     await expect(library).toBeVisible();
     await waitForOpen(window);
-    await expect(library.locator('[data-brush-item="watercolor"]')).toHaveAttribute(
+    await expect(library.locator('[data-brush-item="fine-marker"]')).toHaveAttribute(
       "aria-label",
-      "Watercolor",
+      "Fine Marker",
     );
     await expect(library.locator("[data-brush-inspected]")).toHaveCount(0);
     const glyphFamilies = await window.evaluate(() => {
@@ -240,7 +257,11 @@ test("opens a static radial brush library around the active drawing slot", async
         const cell = document.querySelector(`[data-brush-item="${id}"] svg.lucide`);
         return cell?.getAttribute("class")?.match(/lucide-[a-z-]+/u)?.[0] ?? null;
       };
-      return { pencil: iconOf("hb"), pen: iconOf("fineliner"), brush: iconOf("watercolor") };
+      return {
+        pencil: iconOf("hb-pencil"),
+        pen: iconOf("fineliner"),
+        marker: iconOf("fine-marker"),
+      };
     });
     expect(glyphFamilies.pencil).not.toBeNull();
     // Three distinct family glyphs, one per family.

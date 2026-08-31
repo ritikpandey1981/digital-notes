@@ -25,8 +25,8 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
     const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
 
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     const presetTrigger = window.getByRole("button", { name: "Pen preset" });
     await presetTrigger.click();
     await window.locator('[role="menuitemradio"][data-preset-id="pen-brush"]').click();
@@ -164,7 +164,7 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
     expect(await inkRendererKind(surface, 4)).toBe("centerline");
     expect(await inkPointerType(surface, 4)).toBe("mouse");
 
-    await window.getByRole("button", { name: "Highlighter", exact: true }).click();
+    await window.locator('button[data-dock-slot="highlighter"]').click();
     const highlighterStart = pageToScreen(120, 640);
     const highlighterMiddle = pageToScreen(230, 640);
     const highlighterEnd = pageToScreen(340, 640);

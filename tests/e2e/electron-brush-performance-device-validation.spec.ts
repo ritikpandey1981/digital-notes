@@ -26,8 +26,8 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
     const inkCanvas = window.locator('canvas[data-folio-layer="ink"]');
     const cursor = window.getByTestId("brush-cursor");
 
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     const palette = window.getByTestId("context-tool-palette");
     await expect(palette).toBeVisible();
     await nextPaint(window);
@@ -75,7 +75,7 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
     ).toBeLessThanOrEqual(2);
     await expect(cursor).toHaveAttribute("data-visible", "true");
 
-    await window.getByRole("button", { name: "Pencil", exact: true }).click();
+    await window.locator('button[data-dock-slot="pencil"]').click();
     // Selecting a tool no longer closes an open settings panel; the dock's
     // options affordance and Escape own that. Close it explicitly so the
     // render-count measurements below observe a bare canvas.
@@ -97,7 +97,7 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
     let strokeCount = 1;
     for (const [familyIndex, family] of families.entries()) {
       if (family !== "Pencil") {
-        await window.getByRole("button", { name: family, exact: true }).click();
+        await window.locator(`button[data-dock-slot="${family.toLowerCase()}"]`).click();
         await nextPaint(window);
       }
       for (let index = 0; index < 5; index += 1) {
@@ -109,7 +109,7 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
     }
     await expect(surface).toHaveAttribute("data-document-object-count", String(strokeCount));
 
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await dispatchCancelledPenStroke(inkCanvas, pageToScreen);
     await expect(surface).toHaveAttribute("data-document-object-count", String(strokeCount));
     await expect(inkCanvas).toHaveAttribute("data-ink-live-point-count", "0");
@@ -119,7 +119,7 @@ test("validates Phase 17D brush hot paths, stress lifecycles, and console cleanl
 
     const historicalBrushes = await surface.getAttribute("data-document-stroke-brushes");
     const historyDepth = await surface.getAttribute("data-history-undo-depth");
-    await window.getByRole("button", { name: "Pen", exact: true }).click();
+    await window.locator('button[data-dock-slot="pen"]').click();
     await palette.getByTestId("tool-options-color-trigger").click();
     const hexInput = window.getByRole("textbox", { name: "Hex color" });
     await hexInput.fill("#2f6fed");

@@ -63,6 +63,21 @@ export {
   type OklchColor,
 } from "./foundation/oklch-color";
 export {
+  describesEditableTarget,
+  describesInteractiveControl,
+  isEditableKeyboardTarget,
+  isInteractiveKeyboardTarget,
+  type KeyboardTargetDescription,
+} from "./foundation/interactive-keyboard-target";
+export {
+  createDrawingSlotStore,
+  type DrawingSlotBrushAssignment,
+  type DrawingSlotDescriptor,
+  type DrawingSlotState,
+  type DrawingSlotStore,
+  type DrawingSlotStoreSnapshot,
+} from "./foundation/drawing-slot-state";
+export {
   DEFAULT_BRUSH_PRESETS,
   DEFAULT_BRUSH_PRESET_IDS,
   DEFAULT_PEN_PRESETS,

@@ -1,6 +1,22 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 
+/**
+ * Dock slots are located by their stable position id, not by their accessible
+ * name: that name now describes the brush a slot currently holds and changes
+ * the moment one is assigned.
+ */
+const DOCK_SLOT_IDS: Readonly<Record<string, string>> = {
+  Pencil: "pencil",
+  Pen: "pen",
+  "Brush Pen": "brush-pen",
+  Marker: "marker",
+  Highlighter: "highlighter",
+  Select: "select",
+  Eraser: "eraser",
+  Shapes: "shapes",
+};
+
 test("rotates the radial brush library as one rigid instrument", async () => {
   test.setTimeout(120_000);
   const repositoryRoot = process.cwd();
@@ -24,7 +40,8 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     const library = window.getByTestId("radial-brush-library");
     const surface = window.getByTestId("canvas-surface");
     const rail = window.getByTestId("drawing-property-rail");
-    const slot = (name: string): Locator => dock.getByRole("button", { name, exact: true });
+    const slot = (name: string): Locator =>
+      dock.locator(`button[data-dock-slot="${DOCK_SLOT_IDS[name] ?? name}"]`);
 
     // 1. Shift+Click opens the QA library, unrotated.
     await slot("Brush Pen").click();
@@ -199,13 +216,16 @@ test("rotates the radial brush library as one rigid instrument", async () => {
       window.evaluate(() =>
         Number(
           document
-            .querySelector('[data-brush-item="watercolor"]')
+            .querySelector('[data-brush-item="fine-marker"]')
             ?.getAttribute("data-brush-visibility") ?? -1,
         ),
       );
+    // Stepped in 20 degree increments rather than 45: the hidden core is only
+    // 30 degrees wide, so a coarser step can carry a cell clean over it and the
+    // sampled minimum would depend on which cell happened to be tracked.
     const opacities: number[] = [await trackCell()];
-    for (let step = 0; step < 8; step += 1) {
-      await rotateWheel(window, axle, 45, 6);
+    for (let step = 0; step < 19; step += 1) {
+      await rotateWheel(window, axle, 20, 4);
       opacities.push(await trackCell());
     }
     expect(Math.min(...opacities), "the cell passes behind the dock").toBeLessThan(0.15);
@@ -269,6 +289,10 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     const caught = await rotation(library);
     await window.waitForTimeout(150);
     expect(await rotation(library), "and nothing drifts under the finger").toBeCloseTo(caught, 3);
+    // Past the drag threshold before releasing: a sub-threshold press and
+    // release is a brush selection now, which would close the library. This
+    // section is about momentum yielding to the hand, so it ends as a drag.
+    await window.mouse.move(grabPoint.x + 12, grabPoint.y + 12);
     await window.mouse.up();
 
     // 10k. Fade keeps working during a coast, and gaps stay radially aligned.
@@ -374,7 +398,9 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     );
     expect(finiteAfterCoast, "geometry survives momentum past a turn").toBe(true);
 
-    // 10o. A sub-threshold press is a click, never a tiny fling.
+    // 10o. A sub-threshold press is a click, never a tiny fling. It now also
+    //      selects the brush it landed on, so the library folds away; what
+    //      matters here is that no rotation or momentum came out of it.
     await waitForStillness(window);
     const beforeClick = await rotation(library);
     const clickTarget = await grabPointOnWheel(window);
@@ -386,10 +412,10 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     await window.mouse.down();
     // Inside the 4px threshold, so this never becomes a rotation.
     await window.mouse.move(clickPoint.x + 2, clickPoint.y + 1);
+    const duringClick = await rotation(library);
+    expect(duringClick, "a click never turns the wheel").toBeCloseTo(beforeClick, 3);
     await window.mouse.up();
-    await window.waitForTimeout(200);
-    expect(await rotation(library), "a click never flings the wheel").toBeCloseTo(beforeClick, 3);
-    await expect(library).toHaveAttribute("data-library-coasting", "false");
+    await expect(library, "and selecting folds the library away").toHaveCount(0);
 
     // 11. None of this touches the document.
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");

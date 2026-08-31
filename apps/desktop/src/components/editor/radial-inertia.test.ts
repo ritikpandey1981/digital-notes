@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BRUSH_LIBRARY_FIXTURES } from "./brush-library-fixtures";
+import { BRUSH_LIBRARY_CATALOGUE } from "./brush-library-catalogue";
 import {
   RADIAL_APERTURE,
   RADIAL_INERTIA,
@@ -400,7 +400,7 @@ describe("inertia changes nothing but the shared offset", () => {
         const moved = rotated.cells[index]!;
         // Same instrument, same catalogue order, same physical size: only the
         // bearing differs, and it differs by the offset for every ring alike.
-        expect(moved.fixture.id).toBe(cell.fixture.id);
+        expect(moved.brush.id).toBe(cell.brush.id);
         expect(moved.trackIndex).toBe(cell.trackIndex);
         expect(moved.arcLength).toBeCloseTo(cell.arcLength, 9);
         expect(moved.innerRadius).toBe(cell.innerRadius);
@@ -421,9 +421,9 @@ describe("inertia changes nothing but the shared offset", () => {
         undefined,
         offset,
       );
-      expect(layout.cells).toHaveLength(BRUSH_LIBRARY_FIXTURES.length);
+      expect(layout.cells).toHaveLength(BRUSH_LIBRARY_CATALOGUE.length);
       expect(layout.tracks.map((track) => track.cells.length).reduce((a, b) => a + b, 0)).toBe(
-        BRUSH_LIBRARY_FIXTURES.length,
+        BRUSH_LIBRARY_CATALOGUE.length,
       );
     }
   });

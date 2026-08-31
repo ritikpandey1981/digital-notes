@@ -115,7 +115,7 @@ test("renders every PageObject in one creation-ordered document stack", async ()
 });
 
 async function selectDrawingColor(window: Page, color: string): Promise<void> {
-  const penButton = window.getByRole("button", { name: "Pen", exact: true });
+  const penButton = window.locator('button[data-dock-slot="pen"]');
   await penButton.click();
   const trigger = window.getByTestId("tool-options-color-trigger");
   if (!(await trigger.isVisible())) await penButton.click();

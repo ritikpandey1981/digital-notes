@@ -4,6 +4,8 @@ import {
   DRAWING_SLOTS,
   UTILITY_SLOTS,
   dockSlotById,
+  dockSlotTools,
+  toolForDrawingFamily,
   resolveActiveDockSlotId,
   resolveDockKeyboardTarget,
   resolveTabbableDockSlotId,
@@ -69,6 +71,9 @@ describe("tool dock composition", () => {
   });
 
   it("looks slots up by id from either group", () => {
+    // The seeded label is the slot's own identity, still used by utilities and
+    // as a stable structural hook. What the dock *announces* for a drawing slot
+    // is composed from its position and the brush it currently holds.
     expect(dockSlotById("brush-pen")?.label).toBe("Brush Pen");
     expect(dockSlotById("shapes")?.label).toBe("Shapes");
     expect(dockSlotById("nothing")).toBeNull();
@@ -144,5 +149,40 @@ describe("dock keyboard model", () => {
     expect(resolveDockKeyboardTarget("pencil", "Enter")).toBeNull();
     expect(resolveDockKeyboardTarget("pencil", "a")).toBeNull();
     expect(resolveDockKeyboardTarget(null, "ArrowDown")).toBeNull();
+  });
+});
+
+describe("slot tool follows the brush it holds", () => {
+  it("maps each family to the tool that draws it", () => {
+    expect(toolForDrawingFamily("pencil")).toBe("Pencil");
+    expect(toolForDrawingFamily("pen")).toBe("Pen");
+    expect(toolForDrawingFamily("marker")).toBe("Marker");
+    expect(toolForDrawingFamily("highlighter")).toBe("Highlighter");
+  });
+
+  it("defaults every slot to its seeded family", () => {
+    const tools = dockSlotTools();
+    for (const slot of DRAWING_SLOTS) {
+      expect(tools[slot.id], slot.id).toBe(toolForDrawingFamily(slot.family));
+    }
+  });
+
+  it("re-points a slot's tool when it is given another family", () => {
+    // A slot is a position. Put a pencil in the pen slot and pressing it must
+    // activate the Pencil tool, not the tool the slot was seeded with.
+    const tools = dockSlotTools({ pen: "pencil" });
+    expect(tools.pen).toBe("Pencil");
+    expect(tools.pencil, "and no other slot moves").toBe("Pencil");
+    expect(tools.marker).toBe("Marker");
+  });
+
+  it("resolves the active slot by current tool, not seeded family", () => {
+    // Three slots can hold pencils at once, so the slot last chosen is what
+    // separates them.
+    const families = { pen: "pencil" } as const;
+    expect(resolveActiveDockSlotId("Pencil", "pen", families)).toBe("pen");
+    expect(resolveActiveDockSlotId("Pencil", "pencil", families)).toBe("pencil");
+    // The seeded resolution is unchanged when no families are supplied.
+    expect(resolveActiveDockSlotId("Pencil", null)).toBe("pencil");
   });
 });
