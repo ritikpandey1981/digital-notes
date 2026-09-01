@@ -7,6 +7,7 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 test("Phase 18C keeps Favorites deliberate, ordered, target-safe, and separate from palettes and Recent", async ({
   browserName: _browserName,
@@ -40,7 +41,7 @@ test("Phase 18C keeps Favorites deliberate, ordered, target-safe, and separate f
     const rendererCanvas = host.locator('canvas[data-folio-renderer="true"]');
     const pageToScreen = await pageCoordinateMapper(surface, host);
 
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await activateDockSlot(window, "pencil");
     await rail.getByTestId("quick-color-more").click();
     await expect(picker.getByTestId("favorites-empty-state")).toHaveText("No favorites yet");
     await capture(window, testInfo, "01-picker-empty-favorites.png");
@@ -166,7 +167,7 @@ test("Phase 18C keeps Favorites deliberate, ordered, target-safe, and separate f
 
     await toolDock.getByRole("button", { name: "Shapes", exact: true }).click();
     await expect(surface).toHaveAttribute("data-drawing-color", shapeDefault);
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await activateDockSlot(window, "pencil");
     await rail.getByTestId("quick-color-more").click();
     expect(await favoriteValues(picker)).toEqual(["#0ea5e9", "#dc2626"]);
     await expect(picker.getByRole("button", { name: "Use recent color #0ea5e9" })).toBeVisible();

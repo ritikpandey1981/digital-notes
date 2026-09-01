@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 test("renders handwriting, long curves, small writing, and rapid ink from cached paths", async () => {
   const repositoryRoot = process.cwd();
@@ -23,7 +24,7 @@ test("renders handwriting, long curves, small writing, and rapid ink from cached
     const baseCanvas = host.locator("canvas[data-folio-renderer='true']");
     const inkCanvas = host.locator("canvas[data-folio-layer='ink']");
     const coordinates = await canvasCoordinates(baseCanvas, inkCanvas, surface);
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
 
     const smallHandwriting = [
       { x: 70, y: 165 },

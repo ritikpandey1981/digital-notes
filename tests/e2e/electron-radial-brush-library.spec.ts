@@ -51,26 +51,29 @@ test("opens a static radial brush library around the active drawing slot", async
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pencil");
     await expect(library).toHaveCount(0);
 
-    // 2. A normal press on the ACTIVE slot keeps its established behaviour:
-    //    Tool Options, not the library. The gesture migration is a later task.
-    await slot("Pencil").click();
+    // 2. The chevron is the explicit route to Tool Options, and its press does
+    //    not bubble into the slot body and open the library instead.
+    await dock
+      .locator('div:has(> button[data-dock-slot="pencil"]) [data-testid="tool-options-affordance"]')
+      .click();
     await expect(palette).toBeVisible();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pencil");
     await expect(library).toHaveCount(0);
     await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
 
-    // 3. Shift+Click on the active slot is the temporary geometry trigger.
-    await slot("Pencil").click({ modifiers: ["Shift"] });
+    // 3. The second press on the ACTIVE slot body opens the Brush Library, and
+    //    dismisses Tool Options rather than stacking two surfaces.
+    await slot("Pencil").click();
     await expect(library).toBeVisible();
     await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-anchor-slot", "pencil");
     await expect(palette).toHaveCount(0);
 
-    // 4. Shift+Click again closes it.
-    await slot("Pencil").click({ modifiers: ["Shift"] });
+    // 4. Pressing the active slot again closes it.
+    await slot("Pencil").click();
     await expect(library).toHaveCount(0);
-    await slot("Pencil").click({ modifiers: ["Shift"] });
+    await slot("Pencil").click();
     await expect(library).toBeVisible();
     await waitForOpen(window);
 
@@ -219,7 +222,7 @@ test("opens a static radial brush library around the active drawing slot", async
     // 10. Switching the active drawing slot relocates the origin.
     await slot("Marker").click();
     await expect(library).toHaveCount(0);
-    await slot("Marker").click({ modifiers: ["Shift"] });
+    await slot("Marker").click();
     await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-anchor-slot", "marker");
     await expectCenteredOnSlot(window, "marker");
@@ -229,10 +232,7 @@ test("opens a static radial brush library around the active drawing slot", async
 
     // 11. Every utility tool closes it.
     for (const utility of ["Select", "Eraser", "Shapes"] as const) {
-      await slot("Pencil").click();
-      await slot("Pencil").click({ modifiers: ["Shift"] });
-      await expect(library, `${utility} setup`).toBeVisible();
-      await waitForOpen(window);
+      await openLibraryFrom(window, slot("Pencil"));
       await slot(utility).click();
       await expect(library, `${utility} closes the library`).toHaveCount(0);
     }
@@ -243,10 +243,7 @@ test("opens a static radial brush library around the active drawing slot", async
 
     // 13. Fixtures carry their name and their family glyph, and no cell opens
     //      in a selected state: brush selection is a later task.
-    await slot("Pencil").click();
-    await slot("Pencil").click({ modifiers: ["Shift"] });
-    await expect(library).toBeVisible();
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Pencil"));
     await expect(library.locator('[data-brush-item="fine-marker"]')).toHaveAttribute(
       "aria-label",
       "Fine Marker",
@@ -271,7 +268,7 @@ test("opens a static radial brush library around the active drawing slot", async
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pencil");
 
     // 14. The canvas still draws normally once the library is closed.
-    await slot("Pencil").click({ modifiers: ["Shift"] });
+    await slot("Pencil").click();
     await expect(library).toHaveCount(0);
     const inkCanvas = window.locator('canvas[data-folio-layer="ink"]');
     const bounds = (await inkCanvas.boundingBox())!;
@@ -326,4 +323,30 @@ async function waitForOpen(window: Page): Promise<void> {
     "data-library-phase",
     "open",
   );
+}
+
+/**
+ * Opens the library from one slot, whatever state the dock is in.
+ *
+ * The production gesture is a toggle on the active slot, so "click twice" is
+ * only right when the slot starts inactive. This presses, then presses again
+ * only if the library is not yet up.
+ */
+async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
+  const library = window.getByTestId("radial-brush-library");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await target.click();
+    // Wait for the choreography to settle before judging what the press did: a
+    // collapsing library is still mounted, so counting elements mid-flight
+    // would mistake "closing" for "already open".
+    await expect
+      .poll(async () =>
+        (await library.count()) === 0
+          ? "closed"
+          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
+      )
+      .toMatch(/^(open|closed)$/u);
+    if ((await library.count()) > 0) return;
+  }
+  throw new Error("The Brush Library never opened.");
 }

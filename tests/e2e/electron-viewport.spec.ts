@@ -7,6 +7,7 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 test("provides live zoom controls, anchored zoom, transient pan, and mode-aware resize", async () => {
   test.setTimeout(90_000);
@@ -55,7 +56,7 @@ test("provides live zoom controls, anchored zoom, transient pan, and mode-aware 
     await window.mouse.click(initialInkBounds.x + 20, initialInkBounds.y + 20);
     await expect(window.getByRole("menu")).toHaveCount(0);
 
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     const pageDismissPoint = await pageToScreen(surface, inkCanvas, { x: 100, y: 100 });
     await zoomMenuTrigger.click();
     await expect(window.getByRole("menu")).toBeVisible();
@@ -100,7 +101,7 @@ test("provides live zoom controls, anchored zoom, transient pan, and mode-aware 
     expect(Math.abs(worldAfterZoom.x - worldBeforeZoom.x)).toBeLessThan(0.5);
     expect(Math.abs(worldAfterZoom.y - worldBeforeZoom.y)).toBeLessThan(0.5);
 
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(contextHint).toContainText("Tip: Hold Space + Drag → Move canvas");
     const objectCountBeforePan = await attributeNumber(surface, "data-document-object-count");
     const cameraBeforeSpacePan = await cameraPosition(surface);
@@ -195,7 +196,7 @@ test("keeps drawing, constraints, selection, overlap, overlays, and erasing page
     await window.mouse.wheel(-35, -70);
     await expect(surface).toHaveAttribute("data-viewport-mode", "manual");
 
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     const penStart = await pageToScreen(surface, inkCanvas, { x: 250, y: 300 });
     const penEnd = await pageToScreen(surface, inkCanvas, { x: 360, y: 300 });
     await drawGesture(window, penStart, penEnd);

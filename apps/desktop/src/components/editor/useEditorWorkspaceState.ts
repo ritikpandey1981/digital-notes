@@ -173,6 +173,9 @@ export function useEditorWorkspaceState() {
   /** The dock's explicit options affordance, independent of tool activation. */
   const toggleToolOptions = React.useCallback((): void => {
     if (activeToolWidget === null) return;
+    // Asking for Tool Options is asking for the other view of this slot, so the
+    // Brush Library folds away rather than both surfaces standing open.
+    setBrushLibraryOpen(false);
     setActiveFloatingWidget((current) => (current === activeToolWidget ? null : activeToolWidget));
   }, [activeToolWidget]);
   /**
@@ -184,42 +187,41 @@ export function useEditorWorkspaceState() {
    */
   const openToolOptions = React.useCallback((): void => {
     if (activeToolWidget === null) return;
+    setBrushLibraryOpen(false);
     setActiveFloatingWidget(activeToolWidget);
   }, [activeToolWidget]);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
   /**
    * Activating one drawing preset slot.
    *
-   * The slot pins its catalog preset against the slot's own family rather than
-   * the family derived from the outgoing tool, so pinning cannot land on the
-   * previous brush. Slots whose family hosts no sibling carry no preset and
-   * leave the family's current choice alone, keeping Tool Options' preset
-   * selection behaving exactly as it does today.
+   * Two presses, two meanings. The first press on a slot the artist is not
+   * already using means "give me this tool", and must hand the canvas straight
+   * back so drawing can start immediately — it never opens anything. Pressing
+   * the slot that is already active is the second, deliberate press, and that
+   * is the one that asks which brush should live there.
    *
-   * A normal press keeps its established behaviour exactly: activating a slot
-   * that is already active falls through to `selectTool`, which is what opens
-   * Tool Options. `docs/design/drawing-tool-system.md` §6 eventually gives that
-   * second press to the Brush Library, but that gesture migration is its own
-   * task and is deliberately not made here.
+   * The routing is keyed on the active slot id alone. A slot is a physical
+   * position, so a slot holding a marker behaves exactly like one holding a
+   * pencil, and nothing here consults the family a slot was seeded with.
    *
-   * `inspectBrushLibrary` is the TEMPORARY Shift+Click development trigger
-   * described below. It exists only so the radial geometry can be evaluated in
-   * the real window, and adds no visible affordance for normal users.
+   * The Brush Library and Tool Options are alternate ways of talking about the
+   * same slot, never two panels to accumulate: opening one dismisses the other.
    */
   const selectDrawingSlot = React.useCallback(
-    (slot: DrawingSlotDefinition, inspectBrushLibrary = false): void => {
-      if (
-        inspectBrushLibrary &&
-        slot.id === resolveActiveDockSlotId(activeTool, activeDrawingSlotId, slotFamilies)
-      ) {
+    (slot: DrawingSlotDefinition): void => {
+      if (slot.id === resolveActiveDockSlotId(activeTool, activeDrawingSlotId, slotFamilies)) {
+        // The second press on the slot already in use. Toggling the same
+        // logical request is what lets a press during the unfolding retarget
+        // toward closing, and one during the collapse turn back toward open,
+        // through the choreography's own reversal rather than a second state
+        // machine.
         setBrushLibraryOpen((open) => !open);
         setActiveFloatingWidget(null);
         return;
       }
-      // No re-pinning. The slot already holds its own brush identity and
-      // values, and activating it simply makes that state current again. The
-      // tool follows whatever family the slot currently holds, so a slot given
-      // a pencil activates the Pencil tool even if it started as a pen.
+      // First press: activate, and nothing more. `selectTool` closes any open
+      // library, and the surface stays latched to the slot it unfolded from so
+      // the collapse still resolves into that slot rather than this one.
       setActiveDrawingSlotId(slot.id);
       selectTool(toolForDrawingFamily(slotStore.stateFor(slot.id).family));
       refresh();

@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 test("captures the Phase 16.5 sketchbook workspace states", async ({ browserName }, testInfo) => {
   void browserName;
@@ -38,20 +39,16 @@ test("captures the Phase 16.5 sketchbook workspace states", async ({ browserName
       surface: "#fff",
     });
     await capture(window, screenshotDirectory, "phase-16-5-default-workspace.png");
-
-    const penButton = toolDock.locator('button[data-dock-slot="pen"]');
-    await penButton.click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toBeHidden();
-    await penButton.click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
     await capture(window, screenshotDirectory, "phase-16-5-pen-settings.png");
     await window.keyboard.press("Escape");
-
-    const highlighterButton = toolDock.locator('button[data-dock-slot="highlighter"]');
-    await highlighterButton.click();
+    await activateDockSlot(window, "highlighter");
     await expect(palette).toBeHidden();
     await expect(surface).toHaveAttribute("data-active-editor-tool", "highlighter");
-    await highlighterButton.click();
+    await openSlotToolOptions(window, "highlighter");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await window.keyboard.press("Escape");
 
@@ -90,7 +87,7 @@ test("captures the Phase 16.5 sketchbook workspace states", async ({ browserName
     await expect(shapeToolbar).toHaveAttribute("data-toolbar-state", "visible");
     await capture(window, screenshotDirectory, "phase-16-5-rectangle-selected.png");
 
-    await penButton.click();
+    await activateDockSlot(window, "pen");
     await expect(surface).toHaveAttribute("data-active-editor-tool", "ink");
     await expect(palette).toBeHidden();
     await shapesButton.click();

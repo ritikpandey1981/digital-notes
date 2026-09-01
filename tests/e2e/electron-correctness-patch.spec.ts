@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 test("preserves independent Shape state, contextual hints, modal stacking, and ink-only erasing", async () => {
   test.setTimeout(90_000);
@@ -34,18 +35,16 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
 
     await expect(contextHint).toContainText("Tip: Alt + Click → Select object beneath");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
-
-    const pencilButton = toolDock.locator('button[data-dock-slot="pencil"]');
-    await pencilButton.click();
+    await activateDockSlot(window, "pencil");
     await expect(palette).toBeHidden();
     await expect(surface).toHaveAttribute("data-drawing-color", "#343434");
     await expect(surface).toHaveAttribute("data-drawing-width", "2");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.78");
 
     const penButton = toolDock.locator('button[data-dock-slot="pen"]');
-    await penButton.click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toBeHidden();
-    await penButton.click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
     await window.mouse.move(500, 120);
@@ -56,18 +55,16 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
-
-    const markerButton = toolDock.locator('button[data-dock-slot="marker"]');
-    await markerButton.click();
+    await activateDockSlot(window, "marker");
     await expect(palette).toBeHidden();
     await expect(surface).toHaveAttribute("data-drawing-color", "#1f2937");
     await expect(surface).toHaveAttribute("data-drawing-width", "8");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.9");
 
     const highlighterButton = toolDock.locator('button[data-dock-slot="highlighter"]');
-    await highlighterButton.click();
+    await activateDockSlot(window, "highlighter");
     await expect(palette).toBeHidden();
-    await highlighterButton.click();
+    await openSlotToolOptions(window, "highlighter");
     await expect(palette).toBeVisible();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
     await window.mouse.move(500, 120);
@@ -175,19 +172,19 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     });
     await window.keyboard.press("Escape");
 
-    await pencilButton.click();
+    await activateDockSlot(window, "pencil");
     await expect(surface).toHaveAttribute("data-drawing-color", "#343434");
     await expect(surface).toHaveAttribute("data-drawing-width", "2");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.78");
-    await penButton.click();
+    await activateDockSlot(window, "pen");
     await expect(surface).toHaveAttribute("data-drawing-color", "#2563eb");
     await expect(surface).toHaveAttribute("data-drawing-width", "8");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.8");
-    await markerButton.click();
+    await activateDockSlot(window, "marker");
     await expect(surface).toHaveAttribute("data-drawing-color", "#1f2937");
     await expect(surface).toHaveAttribute("data-drawing-width", "8");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.9");
-    await highlighterButton.click();
+    await activateDockSlot(window, "highlighter");
     await expect(surface).toHaveAttribute("data-drawing-color", "#facc15");
     await expect(surface).toHaveAttribute("data-drawing-width", "12");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.34");
@@ -211,8 +208,8 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     });
 
     const historyBeforeRecentInspection = await attributeNumber(surface, "data-history-undo-depth");
-    await penButton.click();
-    await penButton.click();
+    await activateDockSlot(window, "pen");
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await palette.getByTestId("tool-options-color-trigger").click();
     const recentColorButtons = window
@@ -246,7 +243,7 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
 
-    await penButton.click();
+    await activateDockSlot(window, "pen");
     await drawGesture(window, pageToScreen(280, 500), pageToScreen(440, 500));
     await expect(inkCanvas).toHaveAttribute("data-document-ink-object-count", "1");
     await shapesButton.click();

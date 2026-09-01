@@ -7,6 +7,7 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 test("keeps the responsive color picker clear of minimum-window chrome and selected artwork", async ({
   browserName: _browserName,
@@ -35,11 +36,10 @@ test("keeps the responsive color picker clear of minimum-window chrome and selec
     const workspace = window.getByTestId("editor-workspace");
     const topBar = window.getByTestId("sketchbook-top-bar");
     const viewportControls = window.getByTestId("viewport-controls");
-    const toolDock = window.getByRole("toolbar", { name: "Notebook tool dock" });
     const rail = window.getByTestId("quick-color-rail");
     const picker = window.getByTestId("full-color-picker");
 
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await activateDockSlot(window, "pencil");
     await rail.getByTestId("quick-color-more").click();
     await expect(picker).toHaveAttribute("data-picker-source", "quick-rail");
     await expectMinimumWindowPlacement(picker, workspace, topBar, viewportControls, rail);

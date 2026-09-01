@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 test("provides manipulation cursors and grouped move, scale, and rotate interactions", async () => {
   const repositoryRoot = process.cwd();
@@ -25,7 +26,7 @@ test("provides manipulation cursors and grouped move, scale, and rotate interact
     const selectionCanvas = host.locator("canvas[data-folio-layer='selection']");
     const coordinates = await canvasCoordinates(baseCanvas, inkCanvas, surface);
 
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await drawStroke(window, coordinates.pageToScreen(160, 220), { x: 90, y: 0 });
     await drawStroke(window, coordinates.pageToScreen(430, 390), { x: 70, y: 0 });
     await expect(surface).toHaveAttribute("data-document-object-count", "2");

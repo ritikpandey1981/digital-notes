@@ -46,13 +46,13 @@ interface ToolDockProps {
   /** The library identity id each drawing slot holds, or "" for none. */
   readonly slotBrushIds?: Readonly<Record<string, string>>;
   /**
-   * `inspectBrushLibrary` carries the TEMPORARY Shift+Click geometry-evaluation
-   * trigger. Normal presses pass false and behave exactly as before.
+   * Activates one drawing slot.
+   *
+   * The dock reports the press; what it means — take this tool, or choose a
+   * brush for the tool already in hand — is decided by the workspace from
+   * which slot is currently active.
    */
-  readonly onSelectDrawingSlot: (
-    slot: DrawingSlotDefinition,
-    inspectBrushLibrary?: boolean,
-  ) => void;
+  readonly onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
   readonly onSelectTool: (tool: EditorTool) => void;
   /** True when the active tool owns a settings or chooser widget. */
   readonly activeToolHasOptions: boolean;
@@ -129,10 +129,10 @@ export function ToolDock({
   const slotTools = dockSlotTools(families);
   const tabbableSlotId = resolveTabbableDockSlotId(activeSlotId);
 
-  const activateSlotId = (slotId: string, inspectBrushLibrary = false): void => {
+  const activateSlotId = (slotId: string): void => {
     const drawingSlot = DRAWING_SLOTS.find((slot) => slot.id === slotId);
     if (drawingSlot !== undefined) {
-      onSelectDrawingSlot(drawingSlot, inspectBrushLibrary);
+      onSelectDrawingSlot(drawingSlot);
       return;
     }
     void slotTools;
@@ -243,7 +243,7 @@ function DockButton({
   readonly tabbable: boolean;
   readonly showOptionsAffordance: boolean;
   readonly optionsOpen: boolean;
-  readonly onActivate: (slotId: string, inspectBrushLibrary?: boolean) => void;
+  readonly onActivate: (slotId: string) => void;
   readonly onToggleOptions: () => void;
 }) {
   const Icon =
@@ -277,9 +277,9 @@ function DockButton({
         data-slot-family={family ?? ""}
         data-slot-brush={brushId ?? ""}
         data-interaction-motion="selection-140ms"
-        // Shift is the temporary Brush Library geometry trigger; a plain press
-        // is untouched production behaviour.
-        onClick={(event) => onActivate(slot.id, event.shiftKey)}
+        // One press, whatever modifiers are held. What it means is decided by
+        // the workspace from which slot is already active.
+        onClick={() => onActivate(slot.id)}
       >
         <Icon
           className={cn("size-[17px]", opticalOffset)}

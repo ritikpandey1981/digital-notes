@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { openSlotToolOptions } from "./dock-helpers";
 
 test("renders every PageObject in one creation-ordered document stack", async () => {
   test.setTimeout(75_000);
@@ -115,10 +116,8 @@ test("renders every PageObject in one creation-ordered document stack", async ()
 });
 
 async function selectDrawingColor(window: Page, color: string): Promise<void> {
-  const penButton = window.locator('button[data-dock-slot="pen"]');
-  await penButton.click();
+  await openSlotToolOptions(window, "pen");
   const trigger = window.getByTestId("tool-options-color-trigger");
-  if (!(await trigger.isVisible())) await penButton.click();
   await trigger.click();
   await window.getByRole("textbox", { name: "Hex color" }).fill(color);
   await expect(window.getByTestId("canvas-surface")).toHaveAttribute("data-drawing-color", color);

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 test("switches tools without remounting and supports styled ink, highlighter, and eraser History", async () => {
   test.setTimeout(60_000);
@@ -31,8 +32,8 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     });
 
     for (let index = 0; index < 8; index += 1) {
-      await window.locator('button[data-dock-slot="pen"]').click();
-      await window.locator('button[data-dock-slot="highlighter"]').click();
+      await activateDockSlot(window, "pen");
+      await activateDockSlot(window, "highlighter");
       await window.getByRole("button", { name: "Eraser", exact: true }).click();
       await window.getByRole("button", { name: "Select", exact: true }).click();
     }
@@ -40,8 +41,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     await expect(inkCanvas).toHaveAttribute("data-ink-path-build-count", "0");
 
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
-    await window.locator('button[data-dock-slot="pen"]').click();
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await window.getByRole("button", { name: "Use color #2563eb" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
@@ -66,7 +66,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       },
     ]);
 
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "4");
     await drawPath(window, pageToScreen, [
@@ -83,7 +83,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       { presetId: "pen-fineliner", family: "pen", size: 4, opacity: 0.8 },
     ]);
 
-    await window.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await expect(surface).toHaveAttribute("data-active-editor-tool", "highlighter");
     await expect(surface).toHaveAttribute("data-drawing-width", "12");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.34");

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and Shapes", async () => {
   test.setTimeout(120_000);
@@ -112,8 +113,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
       .poll(async () => canvasHost.getAttribute("data-latest-diagnostics-callback-generation"))
       .toBe(await canvasHost.getAttribute("data-render-count"));
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     const palette = window.getByTestId("context-tool-palette");
     await expect(palette).toBeVisible();
     const brushSizeSlider = palette.getByRole("slider", { name: "Size" });
@@ -146,7 +146,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     const beforePageGesture = Number(await surface.getAttribute("data-document-object-count"));
     await drawGesture(window, mapping.pageToScreen(520, 420), mapping.pageToScreen(570, 440));
@@ -157,14 +157,14 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
       String(beforePageGesture + 1),
     );
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     // Outside-page workspace is dismissal-only and does not alter artwork.
     await window.mouse.click(mapping.canvasBounds.x + 4, mapping.canvasBounds.y + 200);
     await expect(palette).toHaveCount(0);
 
     await expect(window.getByText("Folio", { exact: true })).toHaveCSS("user-select", "none");
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette.getByText("Size", { exact: true })).toHaveCSS("user-select", "none");
     await expect(palette.getByRole("spinbutton", { name: "Size value" })).toHaveCSS(
       "user-select",
@@ -179,7 +179,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
       "true",
     );
     await shapesWidget.getByRole("button", { name: "Ellipse", exact: true }).click();
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await toolDock.getByRole("button", { name: "Shapes", exact: true }).click();
     await expect(shapesWidget.getByRole("button", { name: "Ellipse" })).toHaveAttribute(
       "aria-pressed",

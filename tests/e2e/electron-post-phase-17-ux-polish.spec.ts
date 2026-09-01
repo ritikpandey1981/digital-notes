@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation polish", async ({
   browserName,
@@ -39,7 +40,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
       y: mapping.canvasBounds.y + mapping.canvasBounds.height / 2,
     };
 
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await activateDockSlot(window, "pencil");
     await window.mouse.move(2, 2);
     await window.mouse.move(insidePage.x, insidePage.y);
     await expect(brushCursor).toHaveAttribute("data-visible", "true");
@@ -51,7 +52,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await expect(brushCursor).toHaveAttribute("data-visible", "false");
     await expect(inkCanvas).toHaveCSS("cursor", "default");
 
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await openSlotToolOptions(window, "pencil");
     const palette = window.getByTestId("context-tool-palette");
     await expect(palette).toBeVisible();
     await palette.hover();
@@ -76,8 +77,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await window.mouse.move(insidePage.x, insidePage.y);
     await expect(brushCursor).toHaveAttribute("data-visible", "false");
     await expect(inkCanvas).toHaveCSS("cursor", "default");
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await openSlotToolOptions(window, "pencil");
     await expect(palette).toBeVisible();
 
     const workspaceMenu = window.getByRole("button", { name: "Workspace menu" });
@@ -100,7 +100,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await expect(workspaceTooltip).toBeHidden();
     await window.keyboard.press("Escape");
     await expect(settingsDialog).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pencil"]').click();
+    await openSlotToolOptions(window, "pencil");
     await expect(palette).toBeVisible();
 
     const presetTrigger = window.getByRole("button", { name: "Pencil preset" });
@@ -152,7 +152,7 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
     await expect(surface).toHaveAttribute("data-last-created-shape-type", "ellipse");
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await shapesButton.click();
     await expect(shapesWidget).toBeVisible();
     await expect(ellipseButton).toHaveAttribute("aria-pressed", "true");

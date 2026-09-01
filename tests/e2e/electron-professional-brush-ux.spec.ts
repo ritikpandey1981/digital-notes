@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 const SCREENSHOT_NAMES = [
   "01-pencil-active.png",
@@ -83,7 +84,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pencil-hb");
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[0]);
 
-    await window.locator('button[data-dock-slot="pencil"]').click();
+    await openSlotToolOptions(window, "pencil");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pencil");
     await expect(window.getByRole("button", { name: "Pencil preset" })).toHaveAttribute(
       "data-active-preset-id",
@@ -93,7 +94,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[1]);
 
     await selectInactiveBrush(window, "Pen");
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await selectPreset(window, "Pen preset", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-width", "6");
@@ -101,7 +102,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[2]);
 
     await selectInactiveBrush(window, "Marker");
-    await window.locator('button[data-dock-slot="marker"]').click();
+    await openSlotToolOptions(window, "marker");
     await selectPreset(window, "Marker preset", "marker-broad");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "marker-broad");
     await expect(surface).toHaveAttribute("data-drawing-width", "16");
@@ -109,7 +110,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[3]);
 
     await selectInactiveBrush(window, "Highlighter");
-    await window.locator('button[data-dock-slot="highlighter"]').click();
+    await openSlotToolOptions(window, "highlighter");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await expect(window.getByRole("button", { name: "Highlighter preset" })).toHaveCount(0);
     await expect(window.getByRole("slider", { name: "Smoothing" })).toHaveCount(0);
@@ -117,7 +118,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[4]);
 
     const pageToScreen = await pageCoordinateMapper(inkCanvas, surface);
-    await window.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await drawPath(window, pageToScreen, 420);
     await selectInactiveBrush(window, "Pencil");
     await drawPath(window, pageToScreen, 180);
@@ -130,7 +131,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[5]);
 
     await selectInactiveBrush(window, "Pencil");
-    await window.locator('button[data-dock-slot="pencil"]').click();
+    await openSlotToolOptions(window, "pencil");
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "1");
     await setNumericValue(window.getByRole("spinbutton", { name: "Smoothing value" }), "65");
     await expect(surface).toHaveAttribute("data-drawing-smoothing", "0.65");
@@ -140,7 +141,7 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await expect(cursor).toHaveCSS("width", "7px");
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[6]);
 
-    await window.locator('button[data-dock-slot="pencil"]').click();
+    await openSlotToolOptions(window, "pencil");
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "20");
     await selectZoomMenuItem(window, "200%");
     await moveToPageCenter(window, inkCanvas, surface);

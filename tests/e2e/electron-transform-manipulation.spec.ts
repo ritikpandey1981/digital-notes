@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { openSlotToolOptions } from "./dock-helpers";
 
 test("keeps active transform previews clean while preserving History", async () => {
   const repositoryRoot = process.cwd();
@@ -52,8 +53,7 @@ test("keeps active transform previews clean while preserving History", async () 
     };
     const strokeStart = pageToScreen(strokeStartPage.x, strokeStartPage.y);
 
-    await window.locator('button[data-dock-slot="pen"]').click();
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "30");
     await window.keyboard.press("Escape");
     await expect(window.getByTestId("context-tool-palette")).toBeHidden();

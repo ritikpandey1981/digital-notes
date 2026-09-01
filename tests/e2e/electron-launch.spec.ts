@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 test("launches the shell with the Phase 11 History-backed manipulation lifecycle", async () => {
   const repositoryRoot = process.cwd();
@@ -144,7 +145,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     );
     const baseRenderBeforeInk = Number(await canvas.getAttribute("data-render-count"));
     const inkRenderBefore = Number(await inkCanvas.getAttribute("data-ink-render-count"));
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(window.locator('button[data-dock-slot="pen"]')).toHaveAttribute(
       "aria-pressed",
       "true",

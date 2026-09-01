@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 test("keeps a compact Tool Dock and active-tool Context Palette workflow", async () => {
   test.setTimeout(75_000);
@@ -95,9 +96,9 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     );
     expect(await inactiveIconColor(penButton)).not.toBe(await mutedTokenColor(window));
 
-    await penButton.click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toHaveCount(0);
-    await penButton.click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
     await expect(palette).toHaveAttribute("data-motion-profile", "professional");
@@ -133,19 +134,19 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     });
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
 
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "true");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await openSlotToolOptions(window, "highlighter");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "highlighter");
     const highlighterCursor = await inkCanvas.evaluate((canvas) => canvas.style.cursor);
     expect(highlighterCursor).toBe("default");
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
     await chooseColor(window, "#2563eb");
     const selectedColor = window.getByRole("button", { name: "Use color #2563eb" });
@@ -253,9 +254,9 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     );
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "5.8");
 
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await openSlotToolOptions(window, "highlighter");
     await expect(window.getByRole("spinbutton", { name: "Size value" })).toHaveValue("12");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("72");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.34");
@@ -276,9 +277,9 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       "0.45",
     );
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(window.getByRole("spinbutton", { name: "Size value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
 
@@ -292,9 +293,9 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await window.mouse.click(emptyWorkspacePoint.x, emptyWorkspacePoint.y);
     await expect(palette).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await openSlotToolOptions(window, "highlighter");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Highlighter");
     await window.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
@@ -308,26 +309,26 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await window.keyboard.press("Escape");
     await expect(shapesWidget).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await toolDock.getByRole("button", { name: "Shapes", exact: true }).click();
     await expect(palette).toHaveCount(0);
     await expect(shapesWidget).toBeVisible();
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(shapesWidget).toHaveCount(0);
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
     await toolDock.getByRole("button", { name: "Eraser", exact: true }).click();
     await expect(inkCanvas).toHaveAttribute("data-desktop-tool-cursor", "eraser");
     const eraserCursor = await inkCanvas.evaluate((canvas) => canvas.style.cursor);
     expect(eraserCursor).not.toBe(penCursor);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await expect(window.getByRole("spinbutton", { name: "Size value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
@@ -340,7 +341,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await expect(palette).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     const pageToScreen = await pageCoordinateMapper(baseCanvas, inkCanvas, surface);
     await drawPath(window, pageToScreen, [
@@ -351,13 +352,13 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     // The first Page gesture dismisses settings and still commits the stroke.
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await expect(window.getByRole("spinbutton", { name: "Size value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
     await expectRecentlyUsedColor(window, "#2563eb", true);
 
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await drawPath(window, pageToScreen, [
       { x: 110, y: 280 },
       { x: 200, y: 280 },
@@ -374,25 +375,28 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await expect(palette).toHaveCount(0, { timeout: 1_000 });
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
 
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     for (let index = 0; index < 8; index += 1) {
-      await toolDock.locator('button[data-dock-slot="highlighter"]').click();
-      await toolDock.locator('button[data-dock-slot="highlighter"]').click();
-      await toolDock.locator('button[data-dock-slot="pen"]').click();
-      await toolDock.locator('button[data-dock-slot="pen"]').click();
+      await activateDockSlot(window, "highlighter");
+      await activateDockSlot(window, "pen");
     }
+    // Changing tool closes the settings panel — the frozen rule in
+    // `resolveFloatingWidgetAfterToolSelection`. What this case is really about
+    // is that rapid switching leaves the panel able to reopen against the right
+    // tool, and never remounts the canvas.
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pen");
     await expect(inkCanvas).toHaveAttribute("data-phase141-lifecycle-token", "mounted-once");
 
     for (let index = 0; index < 4; index += 1) {
       await toolDock.getByRole("button", { name: "Select", exact: true }).click();
-      await toolDock.locator('button[data-dock-slot="pen"]').click();
+      await activateDockSlot(window, "pen");
     }
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="pen"]').click();
+    await openSlotToolOptions(window, "pen");
     await expect(palette).toBeVisible();
     await expect(inkCanvas).toHaveAttribute("data-phase141-lifecycle-token", "mounted-once");
     expect(await dockMetrics(toolDock)).toEqual(initialDock);
@@ -423,8 +427,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
       width: 40,
       pressureEnabled: false,
     });
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await openSlotToolOptions(window, "highlighter");
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "40");
     await drawPath(window, pageToScreen, [
       { x: 360, y: 480 },
@@ -437,7 +440,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     });
     // The Page gesture dismisses settings without swallowing the stroke.
     await expect(palette).toHaveCount(0);
-    await toolDock.locator('button[data-dock-slot="highlighter"]').click();
+    await openSlotToolOptions(window, "highlighter");
     await expect(palette).toBeVisible();
 
     await window.setViewportSize({ width: 960, height: 720 });

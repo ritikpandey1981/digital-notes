@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Page } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 test("supports session clipboard workflows, multi-object History, shortcuts, and context menu", async () => {
   const repositoryRoot = process.cwd();
@@ -26,7 +27,7 @@ test("supports session clipboard workflows, multi-object History, shortcuts, and
     await expect(surface).toHaveAttribute("data-context-menu-capability", "ready");
 
     const points = await pagePoints(baseCanvas, inkCanvas);
-    await window.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(surface).toHaveAttribute("data-active-editor-tool", "ink");
     await drawStroke(window, points.first, { x: 70, y: 15 });
     await expect(surface).toHaveAttribute("data-document-object-count", "1");

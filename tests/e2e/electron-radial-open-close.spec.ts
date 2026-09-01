@@ -49,7 +49,7 @@ test("unfolds the radial brush library from its slot and collapses back into it"
     const railBoxBefore = (await rail.boundingBox())!;
 
     // 1. Opening begins as an unfolding, not as a finished wheel appearing.
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await expect(library).toBeVisible();
     const firstFrames = await sampleWhileOpening(window);
     expect(firstFrames.length, "the open is observable, not instant").toBeGreaterThan(0);
@@ -164,7 +164,7 @@ test("unfolds the radial brush library from its slot and collapses back into it"
     );
 
     // 9. Closing mid-coast cancels the momentum immediately.
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await expect(library, "the coast is dropped as the collapse starts").toHaveAttribute(
       "data-library-coasting",
       "false",
@@ -209,7 +209,7 @@ test("unfolds the radial brush library from its slot and collapses back into it"
     await expect(library, "the surface is torn down once collapsed").toHaveCount(0);
 
     // 12. Reopening starts from rest at the frozen orientation.
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-rotation", "0.000");
     await expect(library).toHaveAttribute("data-library-coasting", "false");
@@ -217,12 +217,10 @@ test("unfolds the radial brush library from its slot and collapses back into it"
     // 13. Rapid open -> close turns round from wherever it had reached: it
     //     never completes the open first, never remounts at zero, and every
     //     ring keeps following one shared curve across the turn.
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await expect(library).toHaveCount(0);
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
-    const reversal = await reverseMidFlight(window, () =>
-      slot("Brush Pen").click({ modifiers: ["Shift"] }),
-    );
+    await slot("Brush Pen").click();
+    const reversal = await reverseMidFlight(window, () => slot("Brush Pen").click());
     expect(
       reversal.some((frame) => frame.phase === "opening"),
       "caught the open",
@@ -245,9 +243,9 @@ test("unfolds the radial brush library from its slot and collapses back into it"
 
     // 14. Rapid close -> open likewise: interrupting a collapse brings the
     //     instrument back out from where it had got to.
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await waitForOpen(window);
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     const backOpen: MotionFrame[] = [];
     let reopened = false;
     for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -255,7 +253,7 @@ test("unfolds the radial brush library from its slot and collapses back into it"
       if (frame === null) break;
       backOpen.push(frame);
       if (!reopened && frame.phase === "closing" && frame.progress < 0.85) {
-        await slot("Brush Pen").click({ modifiers: ["Shift"] });
+        await slot("Brush Pen").click();
         reopened = true;
       }
       if (reopened && frame.phase === "open") break;
@@ -272,39 +270,40 @@ test("unfolds the radial brush library from its slot and collapses back into it"
 
     // 15. Each utility still closes it safely, collapse and all.
     for (const utility of ["Select", "Eraser", "Shapes"] as const) {
-      await slot("Brush Pen").click();
-      await slot("Brush Pen").click({ modifiers: ["Shift"] });
-      await waitForOpen(window);
+      await openLibraryFrom(window, slot("Brush Pen"));
       await slot(utility).click();
       await expect(library, `${utility} closes the library`).toHaveCount(0);
     }
 
-    // 16. The normal Tool Options gesture is untouched: the first press makes
-    //     the slot active, the second opens Tool Options rather than the wheel.
+    // 16. Tool Options has its own explicit entry point: the chevron, which
+    //     only the active slot carries. The slot body belongs to the Brush
+    //     Library, and the chevron's press must not bubble into it.
     await slot("Brush Pen").click();
-    await slot("Brush Pen").click();
+    await expect(library, "activating alone opens nothing").toHaveCount(0);
+    await dock
+      .locator(
+        'div:has(> button[data-dock-slot="brush-pen"]) [data-testid="tool-options-affordance"]',
+      )
+      .click();
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
-    await expect(library, "a plain second press is not the library").toHaveCount(0);
+    await expect(library, "the chevron never opens the library").toHaveCount(0);
     await window.keyboard.press("Escape");
 
     // 17. Reduced motion gets the instrument with no unfolding at all.
     await window.emulateMedia({ reducedMotion: "reduce" });
-    await slot("Brush Pen").click();
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await openLibraryFrom(window, slot("Brush Pen"));
     await expect(library).toHaveAttribute("data-library-motion-preset", "reduced");
     await expect(library, "it is simply there").toHaveAttribute("data-library-phase", "open");
     await expect(library).toHaveAttribute("data-library-open-progress", "1.000");
     const reducedGeometry = await readGeometry(window);
     expect(reducedGeometry.radii, "at its final geometry immediately").toEqual(settled.radii);
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await expect(library, "and gone immediately").toHaveCount(0);
     await window.emulateMedia({ reducedMotion: "no-preference" });
 
     // 18. Minimum window: it opens, closes, and stays usable.
     await window.setViewportSize({ width: 960, height: 640 });
-    await slot("Brush Pen").click();
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Brush Pen"));
     const smallGeometry = await readGeometry(window);
     expect(smallGeometry.radii, "geometry is unchanged by the window").toEqual(settled.radii);
     const smallAxle = await libraryAxle(window);
@@ -313,7 +312,7 @@ test("unfolds the radial brush library from its slot and collapses back into it"
       Number(await library.getAttribute("data-library-rotation")),
       "still rotates at the minimum size",
     ).toBeGreaterThan(25);
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await expect(library).toHaveCount(0);
     await expect(dock.locator("button[data-dock-slot]")).toHaveCount(8);
     await expect(rail.locator("button[data-property-key]")).toHaveCount(4);
@@ -608,4 +607,30 @@ async function sweepWheel(
       "false",
     );
   }
+}
+
+/**
+ * Opens the library from one slot, whatever state the dock is in.
+ *
+ * The production gesture is a toggle on the active slot, so "click twice" is
+ * only right when the slot starts inactive. This presses, then presses again
+ * only if the library is not yet up.
+ */
+async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
+  const library = window.getByTestId("radial-brush-library");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await target.click();
+    // Wait for the choreography to settle before judging what the press did: a
+    // collapsing library is still mounted, so counting elements mid-flight
+    // would mistake "closing" for "already open".
+    await expect
+      .poll(async () =>
+        (await library.count()) === 0
+          ? "closed"
+          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
+      )
+      .toMatch(/^(open|closed)$/u);
+    if ((await library.count()) > 0) return;
+  }
+  throw new Error("The Brush Library never opened.");
 }

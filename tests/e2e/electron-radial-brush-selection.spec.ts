@@ -44,9 +44,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
       dock.locator(`button[data-dock-slot="${DOCK_SLOT_IDS[name] ?? name}"]`);
 
     // 1. Open the library from the Pen slot; its own brush reads as selected.
-    await slot("Pen").click();
-    await slot("Pen").click({ modifiers: ["Shift"] });
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Pen"));
     expect(await selectedBrush(window), "the slot's own brush is indicated").toBe("fineliner");
     expect(await selectedCount(window), "exactly one cell is selected").toBe(1);
 
@@ -90,45 +88,37 @@ test("assigns real brush identities to independent drawing slots", async () => {
     expect(railWidth, "the rail printed a width").toMatch(/[0-9]/u);
 
     // 6. Reopening indicates the newly chosen brush.
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await waitForOpen(window);
     expect(await selectedBrush(window)).toBe(penChoice.id);
     expect(await selectedCount(window)).toBe(1);
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await expect(library).toHaveCount(0);
 
     // 7. Slot independence: Brush Pen keeps its own assignment.
-    await slot("Brush Pen").click();
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Brush Pen"));
     expect(await selectedBrush(window), "Brush Pen holds its own brush").toBe("brush-pen-soft");
     const brushPenChoice = await clickReachableBrush(window, { excludeSelected: true });
     await expect(library).toHaveCount(0);
 
     // 8. Going back to Pen must restore Pen's assignment, not the last one used.
-    await slot("Pen").click();
-    await slot("Pen").click({ modifiers: ["Shift"] });
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Pen"));
     expect(await selectedBrush(window), "Pen kept its own choice").toBe(penChoice.id);
     await expect(library).toHaveAttribute("data-library-anchor-slot", "pen");
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await expect(library).toHaveCount(0);
 
     // And Brush Pen still holds what it was given.
-    await slot("Brush Pen").click();
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Brush Pen"));
     expect(await selectedBrush(window), "Brush Pen kept its own choice").toBe(brushPenChoice.id);
     expect(brushPenChoice.id, "the two slots hold different brushes").not.toBe(penChoice.id);
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await expect(library).toHaveCount(0);
 
     // 9. A slot whose family has no catalogue entries shows no selection.
-    await slot("Highlighter").click();
-    await slot("Highlighter").click({ modifiers: ["Shift"] });
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Highlighter"));
     expect(await selectedCount(window), "no fake default selection").toBe(0);
-    await slot("Highlighter").click({ modifiers: ["Shift"] });
+    await slot("Highlighter").click();
     await expect(library).toHaveCount(0);
 
     // 10. Drawing uses the selected identity's real backing preset.
@@ -145,7 +135,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     );
 
     // 11. Reassigning must not restyle what is already drawn.
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await waitForOpen(window);
     const historyBefore = await surface.getAttribute("data-history-undo-depth");
     const secondChoice = await clickReachableBrush(window, { excludeSelected: true });
@@ -171,7 +161,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
 
     // 13. A rotation drag must not select anything.
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await waitForOpen(window);
     const beforeDrag = await selectedBrush(window);
     const axle = await libraryAxle(window);
@@ -189,7 +179,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     await expect(library).toHaveAttribute("data-library-coasting", "true");
     const caught = await pressAndRelease(window, axle);
     await expect(library, "the press stopped the coast and selected").toHaveCount(0);
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await waitForOpen(window);
     expect(await selectedBrush(window), "the caught cell was selected").toBe(caught);
 
@@ -226,7 +216,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     expect(keyboardTarget).not.toBeNull();
     await window.keyboard.press("Enter");
     await expect(library, "Enter selects and closes").toHaveCount(0);
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await waitForOpen(window);
     expect(await selectedBrush(window)).toBe(keyboardTarget);
 
@@ -246,7 +236,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     expect(spaceTarget).not.toBeNull();
     await window.keyboard.press("Space");
     await expect(library, "Space selects and closes").toHaveCount(0);
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await waitForOpen(window);
     expect(await selectedBrush(window)).toBe(spaceTarget);
 
@@ -279,7 +269,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     });
     expect(selectedOpacity).not.toBeNull();
     expect(selectedOpacity!.opacity).toBeLessThanOrEqual(selectedOpacity!.visibility + 1e-9);
-    await slot("Pen").click({ modifiers: ["Shift"] });
+    await slot("Pen").click();
     await expect(library).toHaveCount(0);
 
     // 19b. Cross-family: one slot walks pencil -> pen -> marker, its dock glyph
@@ -287,7 +277,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     await slot("Pencil").click();
     const strokesBefore = await strokeBrushes(window);
     for (const family of ["pen", "marker", "pencil"] as const) {
-      await slot("Pencil").click({ modifiers: ["Shift"] });
+      await slot("Pencil").click();
       await waitForOpen(window);
       const chosen = await clickReachableBrush(window, { family, excludeSelected: true });
       await expect(library).toHaveCount(0);
@@ -319,7 +309,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     // 19b-ii. The slot's accessible name and tooltip follow what it holds.
     //         Position stays; contents change.
     for (const family of ["pencil", "pen", "marker"] as const) {
-      await slot("Pencil").click({ modifiers: ["Shift"] });
+      await slot("Pencil").click();
       await waitForOpen(window);
       const chosen = await clickReachableBrush(window, { family, excludeSelected: true });
       await expect(library).toHaveCount(0);
@@ -350,7 +340,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     // 19c. The fifth slot is an ordinary slot: it takes any family too.
     await slot("Highlighter").click();
     for (const family of ["pencil", "marker"] as const) {
-      await slot("Highlighter").click({ modifiers: ["Shift"] });
+      await slot("Highlighter").click();
       await waitForOpen(window);
       await clickReachableBrush(window, { family, excludeSelected: true });
       await expect(library).toHaveCount(0);
@@ -364,7 +354,7 @@ test("assigns real brush identities to independent drawing slots", async () => {
     const assigned: Record<string, string> = {};
     for (const name of ["Pencil", "Pen", "Brush Pen", "Marker", "Highlighter"] as const) {
       await slot(name).click();
-      await slot(name).click({ modifiers: ["Shift"] });
+      await slot(name).click();
       await waitForOpen(window);
       const chosen = await clickReachableBrush(window, {
         excludeSelected: true,
@@ -375,10 +365,10 @@ test("assigns real brush identities to independent drawing slots", async () => {
     }
     for (const name of ["Pencil", "Pen", "Brush Pen", "Marker", "Highlighter"] as const) {
       await slot(name).click();
-      await slot(name).click({ modifiers: ["Shift"] });
+      await slot(name).click();
       await waitForOpen(window);
       expect(await selectedBrush(window), `${name} restored its own brush`).toBe(assigned[name]);
-      await slot(name).click({ modifiers: ["Shift"] });
+      await slot(name).click();
       await expect(library).toHaveCount(0);
     }
     expect(new Set(Object.values(assigned)).size, "five distinct identities").toBe(5);
@@ -635,4 +625,30 @@ async function sweepWheel(
       "false",
     );
   }
+}
+
+/**
+ * Opens the library from one slot, whatever state the dock is in.
+ *
+ * The production gesture is a toggle on the active slot, so "click twice" is
+ * only right when the slot starts inactive. This presses, then presses again
+ * only if the library is not yet up.
+ */
+async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
+  const library = window.getByTestId("radial-brush-library");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await target.click();
+    // Wait for the choreography to settle before judging what the press did: a
+    // collapsing library is still mounted, so counting elements mid-flight
+    // would mistake "closing" for "already open".
+    await expect
+      .poll(async () =>
+        (await library.count()) === 0
+          ? "closed"
+          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
+      )
+      .toMatch(/^(open|closed)$/u);
+    if ((await library.count()) > 0) return;
+  }
+  throw new Error("The Brush Library never opened.");
 }

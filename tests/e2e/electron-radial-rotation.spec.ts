@@ -43,11 +43,8 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     const slot = (name: string): Locator =>
       dock.locator(`button[data-dock-slot="${DOCK_SLOT_IDS[name] ?? name}"]`);
 
-    // 1. Shift+Click opens the QA library, unrotated.
-    await slot("Brush Pen").click();
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
-    await expect(library).toBeVisible();
-    await waitForOpen(window);
+    // 1. a second press on the active slot opens the QA library, unrotated.
+    await openLibraryFrom(window, slot("Brush Pen"));
     await expect(library).toHaveAttribute("data-library-rotation", "0.000");
 
     const axle = await libraryAxle(window);
@@ -350,9 +347,9 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     // 10l. Closing mid-coast cancels the momentum: reopening starts at rest.
     await flickWheel(window, axle, 90, 5);
     await expect(library).toHaveAttribute("data-library-coasting", "true");
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await expect(library, "closing during a coast tears the library down").toHaveCount(0);
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await slot("Brush Pen").click();
     await waitForOpen(window);
     await expect(library).toHaveAttribute("data-library-rotation", "0.000");
     await expect(library, "and it reopens at rest").toHaveAttribute(
@@ -362,10 +359,7 @@ test("rotates the radial brush library as one rigid instrument", async () => {
 
     // 10m. Each utility cancels a coast in flight rather than leaving it running.
     for (const utility of ["Select", "Eraser", "Shapes"] as const) {
-      await slot("Brush Pen").click();
-      await slot("Brush Pen").click({ modifiers: ["Shift"] });
-      await expect(library, `${utility} setup`).toBeVisible();
-      await waitForOpen(window);
+      await openLibraryFrom(window, slot("Brush Pen"));
       const utilityAxle = await libraryAxle(window);
       await flickWheel(window, utilityAxle, 90, 5);
       await expect(library, `${utility} coast started`).toHaveAttribute(
@@ -378,9 +372,7 @@ test("rotates the radial brush library as one rigid instrument", async () => {
       await window.waitForTimeout(150);
       await expect(library, `${utility} leaves no library behind`).toHaveCount(0);
     }
-    await slot("Brush Pen").click();
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
-    await waitForOpen(window);
+    await openLibraryFrom(window, slot("Brush Pen"));
     const reopenedAxle = await libraryAxle(window);
 
     // 10n. Momentum accumulates past a full turn without corrupting geometry.
@@ -427,24 +419,25 @@ test("rotates the radial brush library as one rigid instrument", async () => {
 
     // 13. Each utility still closes the library.
     for (const utility of ["Select", "Eraser", "Shapes"] as const) {
-      await slot("Brush Pen").click();
-      await slot("Brush Pen").click({ modifiers: ["Shift"] });
-      await expect(library, `${utility} setup`).toBeVisible();
-      await waitForOpen(window);
+      await openLibraryFrom(window, slot("Brush Pen"));
       await slot(utility).click();
       await expect(library, `${utility} closes the library`).toHaveCount(0);
     }
 
     // 14. Reopening starts from the configured orientation again.
-    await slot("Brush Pen").click();
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
+    await openLibraryFrom(window, slot("Brush Pen"));
     await expect(library).toHaveAttribute("data-library-rotation", "0.000");
 
     // 15. The normal Tool Options gesture is unaffected by any of it.
-    await slot("Brush Pen").click({ modifiers: ["Shift"] });
-    await expect(library).toHaveCount(0);
-    await slot("Brush Pen").click();
+    // The chevron is Tool Options' explicit entry point now; the slot body
+    // belongs to the Brush Library. Its press must not bubble into the slot.
+    await dock
+      .locator(
+        'div:has(> button[data-dock-slot="brush-pen"]) [data-testid="tool-options-affordance"]',
+      )
+      .click();
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
+    await expect(library, "the chevron never opens the library").toHaveCount(0);
     await window.keyboard.press("Escape");
 
     // 16. And the canvas still draws once the library is closed.
@@ -598,4 +591,30 @@ async function ringAngles(window: Page): Promise<readonly number[]> {
       Number(track.querySelector("[data-brush-item]")?.getAttribute("data-brush-start-angle")),
     ),
   );
+}
+
+/**
+ * Opens the library from one slot, whatever state the dock is in.
+ *
+ * The production gesture is a toggle on the active slot, so "click twice" is
+ * only right when the slot starts inactive. This presses, then presses again
+ * only if the library is not yet up.
+ */
+async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
+  const library = window.getByTestId("radial-brush-library");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await target.click();
+    // Wait for the choreography to settle before judging what the press did: a
+    // collapsing library is still mounted, so counting elements mid-flight
+    // would mistake "closing" for "already open".
+    await expect
+      .poll(async () =>
+        (await library.count()) === 0
+          ? "closed"
+          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
+      )
+      .toMatch(/^(open|closed)$/u);
+    if ((await library.count()) > 0) return;
+  }
+  throw new Error("The Brush Library never opened.");
 }

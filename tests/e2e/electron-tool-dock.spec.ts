@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { activateDockSlot } from "./dock-helpers";
 
 // Slots are located by their stable position id. Their accessible name now
 // describes the brush each one holds, which changes as soon as one is assigned.
@@ -85,28 +86,28 @@ test("presents the tool dock as five drawing preset slots above three permanent 
 
     // 5. Drawing slots activate real brush state, not a parallel store.
     await expect(surface).toHaveAttribute("data-history-undo-depth", "0");
-    await dock.locator('button[data-dock-slot="pencil"]').click();
+    await activateDockSlot(window, "pencil");
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pencil");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pencil-hb");
     await expectOnlyActive(dock, "pencil");
 
     // 6. The two pen slots are genuinely different presets, not one button twice.
-    await dock.locator('button[data-dock-slot="pen"]').click();
+    await activateDockSlot(window, "pen");
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pen");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-fineliner");
     await expectOnlyActive(dock, "pen");
 
-    await dock.locator('button[data-dock-slot="brush-pen"]').click();
+    await activateDockSlot(window, "brush-pen");
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pen");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "pen-brush");
     await expect(surface).toHaveAttribute("data-drawing-width", "6");
     await expectOnlyActive(dock, "brush-pen");
 
-    await dock.locator('button[data-dock-slot="marker"]').click();
+    await activateDockSlot(window, "marker");
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "marker");
     await expectOnlyActive(dock, "marker");
 
-    await dock.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "highlighter");
     await expectOnlyActive(dock, "highlighter");
 
@@ -126,14 +127,14 @@ test("presents the tool dock as five drawing preset slots above three permanent 
 
     // 9. A committed stroke still reaches History through the normal path.
     const pageToScreen = await pageCoordinateMapper(inkCanvas, surface);
-    await dock.locator('button[data-dock-slot="brush-pen"]').click();
+    await activateDockSlot(window, "brush-pen");
     await drawPath(window, pageToScreen, 260);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
     expect(await strokeBrushFamilies(surface)).toEqual(["pen"]);
 
     // 10. Arrow keys traverse the capsule boundary as one toolbar.
-    await dock.locator('button[data-dock-slot="highlighter"]').click();
+    await activateDockSlot(window, "highlighter");
     await window.keyboard.press("ArrowDown");
     await expectOnlyActive(dock, "select");
     await window.keyboard.press("ArrowUp");
@@ -161,7 +162,7 @@ test("presents the tool dock as five drawing preset slots above three permanent 
 
     // 12. The canvas still takes the first action after switching tools.
     await window.setViewportSize({ width: 1440, height: 900 });
-    await dock.locator('button[data-dock-slot="pencil"]').click();
+    await activateDockSlot(window, "pencil");
     const restored = await pageCoordinateMapper(inkCanvas, surface);
     await drawPath(window, restored, 380);
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
