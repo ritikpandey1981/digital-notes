@@ -39,18 +39,18 @@ export function DrawingPropertyRail({
 }: DrawingPropertyRailProps) {
   if (model === null) return null;
   return (
-    // left-[72px] leaves an 8px seam beyond the dock's 64px right edge: close
-    // enough to read as one instrument, wide enough to stay two surfaces.
+    // left-[67px] leaves a 3px seam beyond the dock's 64px right edge: the two
+    // surfaces read as one instrument while retaining independent hit regions.
     //
     // z-20 matches the Tool Dock so both sit in the same foreground band. A
     // future radial Brush Library unfolds from a slot at a lower z-index and
     // therefore paints behind both without either needing to move.
     <div
-      className="pointer-events-none absolute left-[72px] top-[calc(50%-69px)] z-20 -translate-y-1/2"
+      className="pointer-events-none absolute left-[67px] top-[calc(50%-69px)] z-20 -translate-y-1/2"
       data-testid="drawing-property-rail-anchor"
     >
       <div
-        className="folio-floating-surface pointer-events-auto flex w-11 flex-col items-center gap-1 p-1"
+        className="folio-floating-surface pointer-events-auto flex w-[46px] flex-col items-center gap-1 p-1"
         role="group"
         aria-label={`${model.tool} properties`}
         data-testid="drawing-property-rail"
@@ -91,7 +91,7 @@ function PropertyButton({
     <button
       type="button"
       className={cn(
-        "group relative flex w-full shrink-0 flex-col items-center justify-center gap-px rounded-[8px] py-1 text-[var(--folio-icon-neutral)] transition-[background-color,color] duration-100 ease-out hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
+        "group relative flex w-full shrink-0 flex-col items-center justify-center gap-0.5 rounded-[8px] py-1 text-[var(--folio-icon-neutral)] transition-[background-color,color] duration-100 ease-out hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
         control.displayValue === null && "py-1.5",
         !control.available && "cursor-not-allowed opacity-40 hover:bg-transparent",
       )}
@@ -107,8 +107,9 @@ function PropertyButton({
       {control.displayValue === null ? null : (
         <span
           // Tabular figures keep 9 px → 10 px from shifting the column.
-          className="text-[9px] leading-none font-medium text-folio-ink tabular-nums"
+          className="text-[9px] leading-none font-semibold text-folio-ink tabular-nums"
           data-testid={`drawing-property-value-${control.key}`}
+          data-property-emphasis="primary"
           aria-hidden="true"
         >
           {control.displayValue}
@@ -132,6 +133,7 @@ function PropertyGlyph({ control }: { readonly control: DrawingPropertyControl }
         className="size-[18px] rounded-full border border-black/20 shadow-sm"
         style={{ backgroundColor: String(control.value) }}
         data-testid="drawing-property-color-swatch"
+        data-property-emphasis="standalone"
         aria-hidden="true"
       />
     );
@@ -139,7 +141,13 @@ function PropertyGlyph({ control }: { readonly control: DrawingPropertyControl }
   if (control.key === "strokeWidth") {
     // Two fixed rules, thin above thick: "stroke weight", not "this weight".
     return (
-      <svg viewBox="0 0 16 16" className="size-[15px]" aria-hidden="true" focusable="false">
+      <svg
+        viewBox="0 0 16 16"
+        className="size-[15px] opacity-80"
+        aria-hidden="true"
+        focusable="false"
+        data-property-emphasis="secondary"
+      >
         <rect x="1.5" y="5" width="13" height="1.5" rx="0.75" fill="currentColor" />
         <rect x="1.5" y="9" width="13" height="3.25" rx="1.625" fill="currentColor" />
       </svg>
@@ -148,7 +156,13 @@ function PropertyGlyph({ control }: { readonly control: DrawingPropertyControl }
   if (control.key === "opacity") {
     // A half-filled disc, fixed at half regardless of the actual opacity.
     return (
-      <svg viewBox="0 0 16 16" className="size-[15px]" aria-hidden="true" focusable="false">
+      <svg
+        viewBox="0 0 16 16"
+        className="size-[15px] opacity-80"
+        aria-hidden="true"
+        focusable="false"
+        data-property-emphasis="secondary"
+      >
         <path d="M8 1.75 A6.25 6.25 0 0 0 8 14.25 Z" fill="currentColor" />
         <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.4" />
       </svg>
@@ -156,7 +170,13 @@ function PropertyGlyph({ control }: { readonly control: DrawingPropertyControl }
   }
   // A fixed smoothing waveform: constant amplitude, constant geometry.
   return (
-    <svg viewBox="0 0 16 16" className="size-[15px]" aria-hidden="true" focusable="false">
+    <svg
+      viewBox="0 0 16 16"
+      className="size-[15px] opacity-80"
+      aria-hidden="true"
+      focusable="false"
+      data-property-emphasis="secondary"
+    >
       <path
         d="M1.5 9.75 C3.5 4.75 5.5 4.75 7.5 8 S11.5 11.25 14.5 6.25"
         fill="none"

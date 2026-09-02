@@ -971,6 +971,36 @@ export function annularSectorPath(center: RadialCenter, cell: RadialCell): strin
   ].join(" ");
 }
 
+/**
+ * A complete 360-degree annulus used only for radial pointer ownership.
+ *
+ * Two half-circle arcs avoid the SVG full-circle special case. The inner loop
+ * runs in the opposite direction and the caller uses the even-odd fill rule,
+ * leaving the hub genuinely empty while making every visual gap in one ring a
+ * continuous physical interaction surface.
+ */
+export function completeAnnulusPath(
+  center: RadialCenter,
+  innerRadius: number,
+  outerRadius: number,
+): string {
+  const outerRight = round(center.x + outerRadius);
+  const outerLeft = round(center.x - outerRadius);
+  const innerRight = round(center.x + innerRadius);
+  const innerLeft = round(center.x - innerRadius);
+  const centerY = round(center.y);
+  return [
+    `M ${outerRight} ${centerY}`,
+    `A ${round(outerRadius)} ${round(outerRadius)} 0 1 1 ${outerLeft} ${centerY}`,
+    `A ${round(outerRadius)} ${round(outerRadius)} 0 1 1 ${outerRight} ${centerY}`,
+    "Z",
+    `M ${innerRight} ${centerY}`,
+    `A ${round(innerRadius)} ${round(innerRadius)} 0 1 0 ${innerLeft} ${centerY}`,
+    `A ${round(innerRadius)} ${round(innerRadius)} 0 1 0 ${innerRight} ${centerY}`,
+    "Z",
+  ].join(" ");
+}
+
 function round(value: number): number {
   return Math.round(value * 100) / 100;
 }

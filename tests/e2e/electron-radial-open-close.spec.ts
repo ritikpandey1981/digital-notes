@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { openDockSlotBrushLibrary } from "./dock-helpers";
 
 /**
  * Dock slots are located by their stable position id, not by their accessible
@@ -275,18 +276,13 @@ test("unfolds the radial brush library from its slot and collapses back into it"
       await expect(library, `${utility} closes the library`).toHaveCount(0);
     }
 
-    // 16. Tool Options has its own explicit entry point: the chevron, which
-    //     only the active slot carries. The slot body belongs to the Brush
-    //     Library, and the chevron's press must not bubble into it.
+    // 16. Tool Options has its own explicit Property Rail entry point. The
+    //     slot body remains the Brush Library gesture.
     await slot("Brush Pen").click();
     await expect(library, "activating alone opens nothing").toHaveCount(0);
-    await dock
-      .locator(
-        'div:has(> button[data-dock-slot="brush-pen"]) [data-testid="tool-options-affordance"]',
-      )
-      .click();
+    await rail.locator('button[data-property-key="strokeWidth"]').click();
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
-    await expect(library, "the chevron never opens the library").toHaveCount(0);
+    await expect(library, "the Property Rail never opens the library").toHaveCount(0);
     await window.keyboard.press("Escape");
 
     // 17. Reduced motion gets the instrument with no unfolding at all.
@@ -473,7 +469,10 @@ function expectExpansionFollowsProgressOnly(frames: readonly MotionFrame[]): voi
       expect(
         points[index]!.expansion,
         `ring ${ring} at progress ${points[index]!.progress} vs ${points[index - 1]!.progress}`,
-      ).toBeGreaterThanOrEqual(points[index - 1]!.expansion - 1e-6);
+        // Both diagnostics are serialized to three decimals. Two distinct RAF
+        // samples can therefore share a displayed progress while their rounded
+        // expansions differ by one unit in the last reported decimal.
+      ).toBeGreaterThanOrEqual(points[index - 1]!.expansion - 0.001001);
     }
   }
 }
@@ -617,20 +616,5 @@ async function sweepWheel(
  * only if the library is not yet up.
  */
 async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
-  const library = window.getByTestId("radial-brush-library");
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await target.click();
-    // Wait for the choreography to settle before judging what the press did: a
-    // collapsing library is still mounted, so counting elements mid-flight
-    // would mistake "closing" for "already open".
-    await expect
-      .poll(async () =>
-        (await library.count()) === 0
-          ? "closed"
-          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
-      )
-      .toMatch(/^(open|closed)$/u);
-    if ((await library.count()) > 0) return;
-  }
-  throw new Error("The Brush Library never opened.");
+  await openDockSlotBrushLibrary(window, target);
 }

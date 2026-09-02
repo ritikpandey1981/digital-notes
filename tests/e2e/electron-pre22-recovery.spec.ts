@@ -77,7 +77,15 @@ async function openToolOptions(window: Page, tool: string) {
     `[data-testid="context-tool-palette"][data-tool-options-tool="${tool}"]`,
   );
   if ((await palette.count()) === 0) {
-    await window.getByTestId("tool-options-affordance").click();
+    const propertyRail = window.getByTestId("drawing-property-rail");
+    if ((await propertyRail.count()) > 0) {
+      await propertyRail.locator('button[data-property-key="strokeWidth"]').click();
+    } else {
+      // Eraser has no drawing Property Rail. Its existing active-utility
+      // re-press opens its registered settings widget without restoring a
+      // nested chevron to any drawing slot.
+      await window.getByRole("button", { name: tool, exact: true }).click();
+    }
   }
   await expect(palette).toBeVisible();
   return palette.getByRole("spinbutton").first();

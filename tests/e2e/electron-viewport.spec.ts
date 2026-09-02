@@ -60,6 +60,13 @@ test("provides live zoom controls, anchored zoom, transient pan, and mode-aware 
     const pageDismissPoint = await pageToScreen(surface, inkCanvas, { x: 100, y: 100 });
     await zoomMenuTrigger.click();
     await expect(window.getByRole("menu")).toBeVisible();
+    // Radix arms non-modal outside-pointer handling after opening. Let that
+    // listener reach the real document before asserting down-only dismissal;
+    // a physical pointer move naturally spans these frames, Playwright does not.
+    await window.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     await window.mouse.move(pageDismissPoint.x, pageDismissPoint.y);
     await window.mouse.down();
     await expect(window.getByRole("menu")).toHaveCount(0);

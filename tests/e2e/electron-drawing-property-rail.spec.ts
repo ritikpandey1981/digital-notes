@@ -60,17 +60,53 @@ test("shows a contextual drawing property rail beside the drawing capsule", asyn
     const capsuleBox = (await drawingCapsule.boundingBox())!;
     const utilityBox = (await utilityCapsule.boundingBox())!;
     const railBox = (await rail.boundingBox())!;
+    expect(railBox.width, "the relaxed rail width").toBe(46);
+    expect(railBox.height, "three 2px icon/value gaps add 3px overall").toBeCloseTo(153.6, 1);
     expect(railBox.x, "inward of the dock").toBeGreaterThan(capsuleBox.x + capsuleBox.width);
-    // A visible seam of roughly 8px: attached to the dock, still two surfaces.
+    // The chosen 3px seam makes the two surfaces one visual instrument without
+    // merging their independent hit regions.
     const seam = railBox.x - (capsuleBox.x + capsuleBox.width);
-    expect(seam, "seam is a real gap").toBeGreaterThan(2);
-    expect(seam, "seam stays tight").toBeLessThanOrEqual(10);
+    expect(seam, "intentional Dock-to-Rail seam").toBeCloseTo(3, 1);
     expect(railBox.width, "narrower than the drawing capsule").toBeLessThan(capsuleBox.width);
     expect(railBox.y + railBox.height, "clear of the utility capsule").toBeLessThan(utilityBox.y);
     // Centred on the drawing capsule rather than on the whole dock.
     expect(
       Math.abs(railBox.y + railBox.height / 2 - (capsuleBox.y + capsuleBox.height / 2)),
     ).toBeLessThanOrEqual(1);
+    const iconValueGaps = await rail.evaluate((element) =>
+      [
+        ...element.querySelectorAll(
+          'button[data-property-key]:not([data-property-key="strokeColor"])',
+        ),
+      ]
+        .map((button) => {
+          const icon = button.querySelector("svg")?.getBoundingClientRect();
+          const value = button.querySelector("span")?.getBoundingClientRect();
+          return icon === undefined || value === undefined ? null : value.top - icon.bottom;
+        })
+        .filter((gap): gap is number => gap !== null),
+    );
+    expect(iconValueGaps, "icon-to-value spacing grows from 1px to 2px").toEqual([2, 2, 2]);
+    const hierarchy = await rail.evaluate((element) => ({
+      iconOpacities: [
+        ...element.querySelectorAll<SVGElement>('svg[data-property-emphasis="secondary"]'),
+      ].map((icon) => getComputedStyle(icon).opacity),
+      valueWeights: [
+        ...element.querySelectorAll<HTMLElement>('[data-property-emphasis="primary"]'),
+      ].map((value) => getComputedStyle(value).fontWeight),
+      swatchEmphasis: element
+        .querySelector('[data-testid="drawing-property-color-swatch"]')
+        ?.getAttribute("data-property-emphasis"),
+    }));
+    expect(hierarchy.iconOpacities, "icons remain legible secondary cues").toEqual([
+      "0.8",
+      "0.8",
+      "0.8",
+    ]);
+    expect(hierarchy.valueWeights, "numeric values read first").toEqual(["600", "600", "600"]);
+    expect(hierarchy.swatchEmphasis, "Color remains a standalone canonical swatch").toBe(
+      "standalone",
+    );
 
     // 4b. The parameter icons are fixed: their geometry must not depend on the
     //     value. Captured here at the Pencil's settings, compared later.
@@ -144,7 +180,7 @@ test("shows a contextual drawing property rail beside the drawing capsule", asyn
     // The palette keeps its own anchor, so the rail's tightened seam leaves a
     // few pixels of its left edge showing. It still covers the rail's controls
     // and full height, which is what keeps the two from reading as a collision.
-    expect(paletteBox.x - railWithPalette.x, "palette starts at the rail").toBeLessThanOrEqual(6);
+    expect(paletteBox.x - railWithPalette.x, "palette starts at the rail").toBeLessThanOrEqual(8);
     expect(paletteBox.x + paletteBox.width).toBeGreaterThanOrEqual(
       railWithPalette.x + railWithPalette.width - 0.5,
     );

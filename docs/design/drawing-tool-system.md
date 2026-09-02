@@ -187,7 +187,14 @@ click the ACTIVE drawing slot   → open the Brush Library for that slot
 ```
 
 The active slot is therefore both the activation target and the Brush Library entry
-point.
+point. It has no nested chevron or secondary hit target. Detailed width, opacity and
+smoothness settings are entered through the adjacent Property Rail; color follows the
+rail's canonical color control. Every drawing-slot glyph continues to show that slot's
+own canonical artwork color when another slot becomes active; utility glyphs keep Folio's
+UI accent instead. Stored color changes color only: active state comes from a quiet, flat
+slot surface, and a narrow theme-aware neutral silhouette keyline appears only when the
+exact stored color has genuinely insufficient contrast against the dock. It never adds a
+filled plate, thickens the foreground stroke, or recolors the glyph.
 
 > **Do not add a permanent "Brush Library" workspace button.** The re-click is the
 > entry point (§18).
@@ -222,9 +229,11 @@ are determined during Professional Brush Engine design** — deliberately not se
 
 ## 8. Brush Library — FIXED UX
 
-Re-selecting the active drawing slot opens the Brush Library: a **large temporary
-interface** that **may cover most of the canvas. This is intentional.** The user has
-explicitly entered brush-selection mode and is not drawing.
+Re-selecting the active drawing slot opens the Brush Library: a **temporary radial
+chooser** anchored to that slot. Its visible brush cells and the visually empty regions
+inside each complete ring are one physical interaction surface. A press outside the
+radial instrument requests its close while the same pointer action continues to the
+underlying canvas; dismissal never requires a sacrificial first stroke.
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -700,6 +709,9 @@ things `.claude/skills/folio-ui-qa` tests:
 - dismissing transient UI **must not swallow the first intended stroke** — the exiting
   surface drops `pointer-events` immediately
 - the Brush Library and color expansion own pointer interaction **only while open**
+- visual gaps inside a radial ring remain radial-owned material, not canvas holes
+- a pointer outside the radial instrument dismisses it without blocking that pointer's
+  normal drawing, selection, or viewport action
 - closing a temporary interface restores immediate canvas drawing
 - **dock drag must not accidentally start a canvas stroke** — the drag is unambiguously
   owned by the dock before it begins

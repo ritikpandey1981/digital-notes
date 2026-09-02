@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { openDockSlotBrushLibrary } from "./dock-helpers";
 
 /**
  * Dock slots are located by their stable position id, not by their accessible
@@ -51,11 +52,9 @@ test("opens a static radial brush library around the active drawing slot", async
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "pencil");
     await expect(library).toHaveCount(0);
 
-    // 2. The chevron is the explicit route to Tool Options, and its press does
-    //    not bubble into the slot body and open the library instead.
-    await dock
-      .locator('div:has(> button[data-dock-slot="pencil"]) [data-testid="tool-options-affordance"]')
-      .click();
+    // 2. The Property Rail is the explicit route to Tool Options; the slot
+    //    body remains dedicated to the Brush Library gesture.
+    await rail.locator('button[data-property-key="strokeWidth"]').click();
     await expect(palette).toBeVisible();
     await expect(palette).toHaveAttribute("data-tool-options-tool", "Pencil");
     await expect(library).toHaveCount(0);
@@ -333,20 +332,5 @@ async function waitForOpen(window: Page): Promise<void> {
  * only if the library is not yet up.
  */
 async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
-  const library = window.getByTestId("radial-brush-library");
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await target.click();
-    // Wait for the choreography to settle before judging what the press did: a
-    // collapsing library is still mounted, so counting elements mid-flight
-    // would mistake "closing" for "already open".
-    await expect
-      .poll(async () =>
-        (await library.count()) === 0
-          ? "closed"
-          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
-      )
-      .toMatch(/^(open|closed)$/u);
-    if ((await library.count()) > 0) return;
-  }
-  throw new Error("The Brush Library never opened.");
+  await openDockSlotBrushLibrary(window, target);
 }

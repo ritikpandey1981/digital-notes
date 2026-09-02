@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
-import { activateDockSlot } from "./dock-helpers";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 async function launch(): Promise<{
   app: Awaited<ReturnType<typeof electron.launch>>;
@@ -478,7 +478,7 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
       return { width, height };
     });
     await activateDockSlot(window, "pen");
-    await window.getByTestId("tool-options-affordance").click();
+    await openSlotToolOptions(window, "pen");
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
     await window.getByTestId("pages-toggle").click();
     await expect(window.getByTestId("page-navigator")).toBeVisible();

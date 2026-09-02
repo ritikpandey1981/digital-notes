@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { openDockSlotBrushLibrary } from "./dock-helpers";
 
 /**
  * Dock slots are located by their stable position id, not by their accessible
@@ -127,6 +128,10 @@ test("assigns real brush identities to independent drawing slots", async () => {
     const bounds = (await inkCanvas.boundingBox())!;
     await drawStroke(window, bounds, 320);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
+    await expect(
+      window.getByTestId("tool-options-affordance"),
+      "reassignment never recreates the removed chevron",
+    ).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
     const firstStroke = await strokeBrushes(window);
     expect(firstStroke, "one stroke exists").toHaveLength(1);
@@ -635,20 +640,5 @@ async function sweepWheel(
  * only if the library is not yet up.
  */
 async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
-  const library = window.getByTestId("radial-brush-library");
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await target.click();
-    // Wait for the choreography to settle before judging what the press did: a
-    // collapsing library is still mounted, so counting elements mid-flight
-    // would mistake "closing" for "already open".
-    await expect
-      .poll(async () =>
-        (await library.count()) === 0
-          ? "closed"
-          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
-      )
-      .toMatch(/^(open|closed)$/u);
-    if ((await library.count()) > 0) return;
-  }
-  throw new Error("The Brush Library never opened.");
+  await openDockSlotBrushLibrary(window, target);
 }

@@ -43,12 +43,30 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await expect(rail).toHaveCount(0);
     await activateDockSlot(window, "pencil");
     await expect(rail).toBeVisible();
+    const pencilGlyph = toolDock.locator(
+      'button[data-dock-slot="pencil"] [data-drawing-slot-glyph="pencil"]',
+    );
+    const penGlyph = toolDock.locator(
+      'button[data-dock-slot="pen"] [data-drawing-slot-glyph="pen"]',
+    );
+    await expect(pencilGlyph).toHaveAttribute(
+      "data-drawing-slot-glyph-color",
+      (await surface.getAttribute("data-drawing-color")) ?? "",
+    );
+    const penGlyphColor = await penGlyph.getAttribute("data-drawing-slot-glyph-color");
+    expect(penGlyphColor, "each inactive slot exposes its own canonical colour").toMatch(
+      /^#[0-9a-f]{6}$/u,
+    );
     await expect(rail).toHaveAttribute("data-active-color-target", "creation-pencil");
     await expect(rail).toHaveAttribute("data-visible-swatch-count", "7");
     await capture(window, testInfo, "01-pencil-quick-color-rail.png");
 
     await toolDock.getByRole("button", { name: "Shapes", exact: true }).click();
     await expect(rail).toHaveAttribute("data-active-color-target", "creation-shape-rectangle");
+    const shapesGlyph = toolDock.locator('button[data-dock-slot="shapes"] svg');
+    expect(await shapesGlyph.getAttribute("style"), "utilities do not inherit artwork colour").toBe(
+      null,
+    );
     await capture(window, testInfo, "02-shapes-quick-color-rail.png");
     await toolDock.getByRole("button", { name: "Select", exact: true }).click();
     await expect(rail).toHaveCount(0);
@@ -57,13 +75,30 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
 
     await activateDockSlot(window, "pencil");
     const historyBeforeRail = await historyDepth(surface);
+    await rail.getByRole("button", { name: "Use color #dc2626" }).click();
+    await expect(pencilGlyph, "saturated colour reaches the active glyph live").toHaveAttribute(
+      "data-drawing-slot-glyph-color",
+      "#dc2626",
+    );
     await rail.getByRole("button", { name: "Use color #2563eb" }).click();
     await expect(surface).toHaveAttribute("data-drawing-color", "#2563eb");
+    await expect(pencilGlyph, "a second canonical change needs no reactivation").toHaveAttribute(
+      "data-drawing-slot-glyph-color",
+      "#2563eb",
+    );
+    await expect(penGlyph, "changing Pencil does not recolour the Pen slot").toHaveAttribute(
+      "data-drawing-slot-glyph-color",
+      penGlyphColor!,
+    );
     expect(await historyDepth(surface)).toBe(historyBeforeRail);
     await drawGesture(window, pageToScreen(160, 150), pageToScreen(310, 170));
     await expect(surface).toHaveAttribute("data-history-undo-depth", String(historyBeforeRail + 1));
 
     await activateDockSlot(window, "pen");
+    await expect(
+      pencilGlyph,
+      "an inactive slot retains the artwork colour last chosen for that slot",
+    ).toHaveAttribute("data-drawing-slot-glyph-color", "#2563eb");
     await expect(surface).not.toHaveAttribute("data-drawing-color", "#2563eb");
     const penOriginal = (await surface.getAttribute("data-drawing-color")) ?? "#111111";
     await rail.getByTestId("quick-color-current").focus();
@@ -93,6 +128,34 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await expect(hex).toHaveValue(penOriginal.toUpperCase());
     await hex.fill("#123456");
     await expect(surface).toHaveAttribute("data-drawing-color", "#123456");
+    const activePenGlyph = toolDock.locator(
+      'button[data-dock-slot="pen"] [data-drawing-slot-glyph="pen"]',
+    );
+    await expect(activePenGlyph).toHaveAttribute("data-drawing-slot-glyph-color", "#123456");
+    await hex.fill("#ffffff");
+    await expect(surface).toHaveAttribute("data-drawing-color", "#ffffff");
+    await expect(activePenGlyph, "near-white remains exact rather than darkened").toHaveAttribute(
+      "data-drawing-slot-glyph-color",
+      "#ffffff",
+    );
+    expect(await activePenGlyph.evaluate((glyph) => getComputedStyle(glyph).color)).toBe(
+      "rgb(255, 255, 255)",
+    );
+    await expect(
+      activePenGlyph,
+      "exact white gets local contrast support in light mode",
+    ).toHaveAttribute("data-drawing-slot-glyph-contrast", "keylined");
+    await expect(toolDock.getByTestId("drawing-slot-contrast-backplate")).toHaveCount(0);
+    await expect(
+      toolDock
+        .locator('[data-drawing-slot-glyph-frame="pen"]')
+        .getByTestId("drawing-slot-contrast-keyline"),
+    ).toHaveCount(1);
+    await hex.fill("#123456");
+    await expect(
+      activePenGlyph,
+      "ordinary dark blue needs no keyline in light mode",
+    ).toHaveAttribute("data-drawing-slot-glyph-contrast", "direct");
     await expect(picker.getByRole("spinbutton", { name: "red channel" })).toHaveValue("18");
     await expect(picker.getByRole("spinbutton", { name: "green channel" })).toHaveValue("52");
     await expect(picker.getByRole("spinbutton", { name: "blue channel" })).toHaveValue("86");

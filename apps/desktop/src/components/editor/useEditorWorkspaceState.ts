@@ -92,6 +92,14 @@ export function useEditorWorkspaceState() {
       }),
     ),
   );
+  // Every slot's own resolved colour, not merely the one currently active. The
+  // dock can therefore remain a truthful visual memory of the five brushes
+  // without owning or copying any colour state itself.
+  const slotDrawingColors = Object.freeze(
+    Object.fromEntries(
+      DRAWING_SLOTS.map((slot) => [slot.id, slotStore.resolvedBrush(slot.id).color]),
+    ),
+  );
   const drawingSlotId = resolveDrawingSlotId(
     activeTool,
     activeDrawingSlotId,
@@ -169,21 +177,13 @@ export function useEditorWorkspaceState() {
     [activeTool, floatingWidgetRegistry, shapeToolState],
   );
   const dismissFloatingWidget = React.useCallback((): void => setActiveFloatingWidget(null), []);
+  const dismissBrushLibrary = React.useCallback((): void => setBrushLibraryOpen(false), []);
   const activeToolWidget = floatingWidgetRegistry.widgetFor(activeTool);
-  /** The dock's explicit options affordance, independent of tool activation. */
-  const toggleToolOptions = React.useCallback((): void => {
-    if (activeToolWidget === null) return;
-    // Asking for Tool Options is asking for the other view of this slot, so the
-    // Brush Library folds away rather than both surfaces standing open.
-    setBrushLibraryOpen(false);
-    setActiveFloatingWidget((current) => (current === activeToolWidget ? null : activeToolWidget));
-  }, [activeToolWidget]);
   /**
    * Opens the active tool's settings without toggling.
    *
-   * The dock's chevron toggles, because it is the one control that also has to
-   * close the panel. The property rail has four entry points into the same
-   * panel, so pressing a second one must not close what the first opened.
+   * The Property Rail has several entry points into the same panel, so pressing
+   * a second one must not close what the first opened.
    */
   const openToolOptions = React.useCallback((): void => {
     if (activeToolWidget === null) return;
@@ -377,15 +377,15 @@ export function useEditorWorkspaceState() {
     slotFamilies,
     slotBrushIds,
     slotBrushNames,
+    slotDrawingColors,
     brushLibraryOpen,
+    dismissBrushLibrary,
     activeSlotBrushId: slotState.brushId,
     selectDrawingSlot,
     selectLibraryBrush,
     activeShape: shapeState.activeShape,
     armedShape,
     activeFloatingWidget,
-    activeToolHasOptions: activeToolWidget !== null,
-    toggleToolOptions,
     openToolOptions,
     selectTool,
     selectShape,

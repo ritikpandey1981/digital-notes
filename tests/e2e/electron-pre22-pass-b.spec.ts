@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Page } from "@playwright/test";
-import { activateDockSlot } from "./dock-helpers";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 /**
  * Covers the Pre-Phase-22 product-quality pass.
@@ -724,7 +724,7 @@ test("Pass B places the color picker against the shared occupied-zone model", as
     await expect(picker).toHaveCount(0);
 
     // 35. From Tool Options, on the opposite side of the workspace.
-    await window.getByTestId("tool-options-affordance").click();
+    await openSlotToolOptions(window, "pen");
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
     await window.getByTestId("tool-options-color-trigger").click();
     await expect(picker).toBeVisible();
@@ -818,7 +818,7 @@ test("Pass B shares one motion treatment and never delays interaction", async ()
   try {
     // 40. Every floating surface reports the shared preset.
     await activateDockSlot(window, "pen");
-    await window.getByTestId("tool-options-affordance").click();
+    await openSlotToolOptions(window, "pen");
     await expect(window.getByTestId("context-tool-palette")).toHaveAttribute(
       "data-motion-preset",
       "standard",
@@ -840,7 +840,7 @@ test("Pass B shares one motion treatment and never delays interaction", async ()
     // 41. Closing a panel and drawing immediately must not lose the stroke:
     // the exiting surface stops intercepting pointer input on its first frame.
     const strokesBefore = Number(await surface.getAttribute("data-document-object-count"));
-    await window.getByTestId("tool-options-affordance").click();
+    await openSlotToolOptions(window, "pen");
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
     const palette = (await window.getByTestId("context-tool-palette").boundingBox())!;
     await window.keyboard.press("Escape");

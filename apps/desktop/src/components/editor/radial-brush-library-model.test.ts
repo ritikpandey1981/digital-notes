@@ -4,6 +4,7 @@ import {
   RADIAL_LIBRARY_CONFIGURATION,
   annularSectorPath,
   buildRadialLibraryLayout,
+  completeAnnulusPath,
   degreesToRadians,
   normalizeDegrees,
   polarPoint,
@@ -118,6 +119,32 @@ describe("radial track radii", () => {
   it("gives every cell the same 64px radial height", () => {
     const heights = new Set(layout().cells.map((cell) => cell.outerRadius - cell.innerRadius));
     expect([...heights]).toEqual([64]);
+  });
+
+  it("builds one complete interaction annulus for each unchanged visual ring", () => {
+    const result = layout();
+    const annuli = result.tracks.map((track) => ({
+      innerRadius: track.innerRadius,
+      outerRadius: track.outerRadius,
+      path: completeAnnulusPath(CENTER, track.innerRadius, track.outerRadius),
+    }));
+    expect(annuli.map(({ innerRadius, outerRadius }) => [innerRadius, outerRadius])).toEqual([
+      [90, 154],
+      [154, 218],
+      [218, 282],
+      [282, 346],
+    ]);
+    for (const annulus of annuli) {
+      expect(annulus.path.match(/\bM\b/gu)).toHaveLength(2);
+      expect(annulus.path.match(/\bA\b/gu)).toHaveLength(4);
+      expect(annulus.path.match(/\bZ\b/gu)).toHaveLength(2);
+    }
+    // Interaction geometry is derived beside the cells; it does not rewrite a
+    // single visible sector or change catalogue packing.
+    expect(result.cells).toHaveLength(45);
+    expect(annularSectorPath(CENTER, result.cells[0]!)).toBe(
+      annularSectorPath(CENTER, layout().cells[0]!),
+    );
   });
 
   it("places the mid-radii at 122, 186, 250 and 314", () => {

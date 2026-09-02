@@ -15,37 +15,53 @@ export async function activateDockSlot(window: Page, slotId: string): Promise<vo
   await expect(button).toHaveAttribute("aria-pressed", "true");
 }
 
-/** The chevron beside one slot, which is the explicit route to Tool Options. */
-export function slotOptionsAffordance(window: Page, slotId: string): Locator {
-  return window.locator(
-    `div:has(> button[data-dock-slot="${slotId}"]) [data-testid="tool-options-affordance"]`,
-  );
+/** Opens the Brush Library from a drawing slot without racing React's toggle commit. */
+export async function openDockSlotBrushLibrary(window: Page, target: Locator): Promise<void> {
+  const library = window.getByTestId("radial-brush-library");
+  if ((await library.count()) > 0) {
+    const phase = await library.getAttribute("data-library-phase");
+    if (phase === "open") return;
+    if (phase === "opening") {
+      await expect(library).toHaveAttribute("data-library-phase", "open");
+      return;
+    }
+    await expect(library).toHaveCount(0);
+  }
+  if ((await target.getAttribute("aria-pressed")) !== "true") {
+    await target.click();
+    await expect(target).toHaveAttribute("aria-pressed", "true");
+    await expect(library).toHaveCount(0);
+  }
+  await target.click();
+  await expect(library).toHaveAttribute("data-library-phase", "open");
 }
 
 /** Selects a slot and opens its Tool Options, whatever state the dock is in. */
 export async function openSlotToolOptions(window: Page, slotId: string): Promise<void> {
   await activateDockSlot(window, slotId);
-  const chevron = slotOptionsAffordance(window, slotId);
+  const rail = window.getByTestId("drawing-property-rail");
   const palette = window.getByTestId("context-tool-palette");
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if ((await chevron.getAttribute("data-tool-options-open")) !== "true") await chevron.click();
-    // `data-tool-options-open` is the logical state, not the animation, so it
-    // is the thing to wait on. A dismissal left in flight by an earlier
-    // interaction can still flip it back on the next frame, so let the frame
-    // pass and re-read rather than trusting a single sample.
-    await nextFrames(window);
-    if ((await chevron.getAttribute("data-tool-options-open")) === "true") break;
+  await expect(rail).toBeVisible();
+  const expectedTool = await rail.getAttribute("data-property-rail-tool");
+  let paletteAlreadyMatches =
+    (await palette.isVisible()) &&
+    (await palette.getAttribute("data-tool-options-tool")) === expectedTool;
+  if (paletteAlreadyMatches) {
+    // AnimatePresence keeps the previous palette visible while it exits. Give
+    // that short choreography time to distinguish a stable open palette from
+    // an old matching instance that is about to detach.
+    await window.waitForTimeout(250);
+    paletteAlreadyMatches =
+      (await palette.isVisible()) &&
+      (await palette.getAttribute("data-tool-options-tool")) === expectedTool;
   }
-  await expect(chevron).toHaveAttribute("data-tool-options-open", "true");
+  if (!paletteAlreadyMatches) {
+    // A palette left in its close choreography can still cover the rail for a
+    // few frames. Wait for that exiting instance rather than forcing a click
+    // through it; only an already-open palette for this slot's current tool is
+    // the desired state and needs no second activation.
+    await expect(palette).toHaveCount(0);
+    await rail.locator('button[data-property-key="strokeWidth"]').click();
+  }
   await expect(palette).toBeVisible();
-}
-
-/** Waits two animation frames: a settle point, not an arbitrary delay. */
-async function nextFrames(window: Page): Promise<void> {
-  await window.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      }),
-  );
 }

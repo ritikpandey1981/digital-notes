@@ -58,16 +58,17 @@ interface EditorWorkspaceProps {
   slotBrushIds: Readonly<Record<string, string>>;
   /** The brush each drawing slot currently holds, for its name and tooltip. */
   slotBrushNames: Readonly<Record<string, string>>;
+  /** Canonical resolved artwork colour retained independently by each slot. */
+  slotDrawingColors: Readonly<Record<string, string>>;
   activeDockSlotId: string | null;
   brushLibraryOpen: boolean;
+  onDismissBrushLibrary: () => void;
   activeSlotBrushId: string | null;
   selectLibraryBrush: (brushId: string) => void;
   onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
   activeShape: ShapeToolKind;
   armedShape: ShapeToolKind | null;
   activeFloatingWidget: FloatingToolWidgetId | null;
-  activeToolHasOptions: boolean;
-  onToggleToolOptions: () => void;
   onOpenToolOptions: () => void;
   onSelectTool: (tool: EditorTool) => void;
   onSelectShape: (shape: ShapeToolKind) => void;
@@ -105,16 +106,16 @@ export function EditorWorkspace({
   slotFamilies,
   slotBrushIds,
   slotBrushNames,
+  slotDrawingColors,
   activeDockSlotId,
   brushLibraryOpen,
+  onDismissBrushLibrary,
   activeSlotBrushId,
   selectLibraryBrush,
   onSelectDrawingSlot,
   activeShape,
   armedShape,
   activeFloatingWidget,
-  activeToolHasOptions,
-  onToggleToolOptions,
   onOpenToolOptions,
   onSelectTool,
   onSelectShape,
@@ -405,6 +406,7 @@ export function EditorWorkspace({
         anchorSlotId={activeDockSlotId}
         selectedBrushId={activeSlotBrushId}
         onSelectBrush={selectLibraryBrush}
+        onDismiss={onDismissBrushLibrary}
       />
       <ToolDock
         activeTool={activeTool}
@@ -412,11 +414,9 @@ export function EditorWorkspace({
         slotFamilies={slotFamilies}
         slotBrushIds={slotBrushIds}
         slotBrushNames={slotBrushNames}
+        slotDrawingColors={slotDrawingColors}
         onSelectDrawingSlot={onSelectDrawingSlot}
         onSelectTool={onSelectTool}
-        activeToolHasOptions={activeToolHasOptions}
-        toolOptionsOpen={activeFloatingWidget !== null}
-        onToggleToolOptions={onToggleToolOptions}
       />
       <PageNavigator
         open={pageNavigatorOpen}

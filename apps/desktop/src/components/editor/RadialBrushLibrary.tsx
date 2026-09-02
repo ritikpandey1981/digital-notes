@@ -17,6 +17,7 @@ import {
   RADIAL_VISIBILITY_EPSILON,
   cellCircumferentialReveal,
   combineRevealFactors,
+  completeAnnulusPath,
   computeCellVisibility,
   annularSectorPath,
   buildRadialLibraryLayout,
@@ -41,6 +42,7 @@ import {
   type RadialCenter,
   type RotationSample,
 } from "./radial-brush-library-model";
+import { pushDismissal } from "./floating-dismissal-stack";
 
 interface RadialBrushLibraryProps {
   readonly open: boolean;
@@ -52,6 +54,7 @@ interface RadialBrushLibraryProps {
    */
   readonly selectedBrushId: string | null;
   readonly onSelectBrush: (brushId: string) => void;
+  readonly onDismiss: () => void;
 }
 
 /**
@@ -104,6 +107,7 @@ export function RadialBrushLibrary({
   anchorSlotId,
   selectedBrushId,
   onSelectBrush,
+  onDismiss,
 }: RadialBrushLibraryProps) {
   const requested = open && anchorSlotId !== null;
   const presentation = useRadialPresentation(requested);
@@ -128,6 +132,7 @@ export function RadialBrushLibrary({
       openProgress={presentation.progress}
       selectedBrushId={selectedBrushId}
       onSelectBrush={onSelectBrush}
+      onDismiss={onDismiss}
     />
   );
 }
@@ -242,19 +247,26 @@ function RadialLibrarySurface({
   openProgress,
   selectedBrushId,
   onSelectBrush,
+  onDismiss,
 }: {
   readonly anchorSlotId: string;
   readonly phase: RadialPresentationPhase;
   readonly openProgress: number;
   readonly selectedBrushId: string | null;
   readonly onSelectBrush: (brushId: string) => void;
+  readonly onDismiss: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const rotatorRef = useRef<SVGGElement | null>(null);
   const [center, setCenter] = useState<RadialCenter | null>(null);
   // One shared offset for the entire instrument. Transient UI state: it lives
   // and dies with this component, so closing the library discards it.
   const [rotationOffsetDegrees, setRotationOffsetDegrees] = useState(0);
   const dragRef = useRef<RotationDrag | null>(null);
+  // Render-facing view of the mutable drag. The gesture itself remains in the
+  // ref so pointer moves never wait for React; this exists only to expose the
+  // lifecycle accurately to the real-window recovery tests.
+  const [activePointerId, setActivePointerId] = useState<number | null>(null);
   // One velocity for one wheel. Rings never carry momentum of their own.
   const inertiaRef = useRef<InertiaState>({
     frameHandle: null,
@@ -297,6 +309,39 @@ function RadialLibrarySurface({
     cancelInertiaFrame();
     setCoasting(false);
   }, [cancelInertiaFrame]);
+
+  /** Clears one in-flight grab without touching render-facing state. */
+  const clearDragFrame = useCallback((releaseCapture: boolean): void => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    rootRef.current?.setAttribute("data-library-dragging", "false");
+    rootRef.current?.setAttribute("data-library-pointer-id", "");
+    if (!releaseCapture || drag === null) return;
+    const rotator = rotatorRef.current;
+    if (rotator?.hasPointerCapture(drag.pointerId) !== true) return;
+    try {
+      rotator.releasePointerCapture(drag.pointerId);
+    } catch {
+      // Ownership may have disappeared between the query and release. The
+      // local drag is already clear, which is the recovery that matters.
+    }
+  }, []);
+
+  /** Clears one in-flight grab without ever turning its press into a choice. */
+  const cancelDrag = useCallback(
+    (releaseCapture: boolean): void => {
+      clearDragFrame(releaseCapture);
+      setActivePointerId(null);
+    },
+    [clearDragFrame],
+  );
+
+  /** Drops all radial transient input state; it never selects or dismisses. */
+  const cancelTransientInteraction = useCallback((): void => {
+    cancelDrag(true);
+    stopInertia();
+    setReleaseVelocity(0);
+  }, [cancelDrag, stopInertia]);
 
   /**
    * Coasts the wheel from a release speed until friction settles it.
@@ -343,9 +388,23 @@ function RadialLibrarySurface({
   // instrument folds away from where the artist actually left it; a completed
   // close unmounts the surface, which is what resets rotation for next time.
   useEffect(() => {
-    if (phase === "closing") cancelInertiaFrame();
-    return cancelInertiaFrame;
-  }, [cancelInertiaFrame, phase]);
+    if (phase !== "open") {
+      clearDragFrame(true);
+      cancelInertiaFrame();
+    }
+    return () => {
+      clearDragFrame(true);
+      cancelInertiaFrame();
+    };
+  }, [cancelInertiaFrame, clearDragFrame, phase]);
+
+  // Losing the application while a pointer is captured must not strand either
+  // a drag or its RAF. This follows the canvas input system's robustness
+  // principle while keeping radial state entirely local to this surface.
+  useEffect(() => {
+    window.addEventListener("blur", cancelTransientInteraction);
+    return () => window.removeEventListener("blur", cancelTransientInteraction);
+  }, [cancelTransientInteraction]);
 
   /**
    * The origin is measured from the selected slot itself, never assumed.
@@ -413,6 +472,9 @@ function RadialLibrarySurface({
       samples: [],
       candidateBrushId: phase === "open" ? pressed : null,
     };
+    rootRef.current?.setAttribute("data-library-dragging", "true");
+    rootRef.current?.setAttribute("data-library-pointer-id", String(event.pointerId));
+    setActivePointerId(event.pointerId);
     // Capture on the rotating group, so the drag survives leaving the cell it
     // started on and continues over the dock, the rail, or empty workspace.
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -460,6 +522,9 @@ function RadialLibrarySurface({
     const drag = dragRef.current;
     if (drag === null || drag.pointerId !== event.pointerId) return;
     dragRef.current = null;
+    rootRef.current?.setAttribute("data-library-dragging", "false");
+    rootRef.current?.setAttribute("data-library-pointer-id", "");
+    setActivePointerId(null);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -486,6 +551,16 @@ function RadialLibrarySurface({
     startInertia(velocity);
   };
 
+  const handleLostPointerCapture = (event: ReactPointerEvent<SVGGElement>): void => {
+    const drag = dragRef.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    // A lost capture is cancellation, never a release: no selection and no
+    // release velocity may be synthesized from an incomplete gesture.
+    cancelDrag(false);
+    stopInertia();
+    setReleaseVelocity(0);
+  };
+
   const handleKeyDown = (event: ReactKeyboardEvent<SVGGElement>): void => {
     if (phase !== "open") return;
     // Enter and Space are the standard activation keys for a radio, and both
@@ -506,6 +581,73 @@ function RadialLibrarySurface({
     center === null
       ? null
       : buildRadialLibraryLayout(center, undefined, undefined, rotationOffsetDegrees);
+  const interactionInnerRadius = layout?.configuration.hubRadius ?? null;
+  const interactionOuterRadius = layout?.outerRadius ?? null;
+
+  // Escape participates in the editor's existing LIFO transient-surface stack.
+  // Only Escape is registered here; pointer dismissal below intentionally stays
+  // non-blocking so the canvas can own the same pointerdown.
+  useEffect(() => {
+    if (phase !== "open") return;
+    return pushDismissal(`radial-brush-library:${anchorSlotId}`, () => {
+      cancelTransientInteraction();
+      onDismiss();
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLButtonElement>(`button[data-dock-slot="${anchorSlotId}"]`)
+          ?.focus({ preventScroll: true });
+      });
+    });
+  }, [anchorSlotId, cancelTransientInteraction, onDismiss, phase]);
+
+  // Observe only true workspace presses outside the physical instrument. No
+  // default prevention, propagation stop, or backdrop is involved: event
+  // targeting has already chosen the canvas, and that same pointer continues
+  // through its normal drawing/selection/pan path while the wheel closes.
+  useEffect(() => {
+    if (
+      phase !== "open" ||
+      center === null ||
+      interactionInnerRadius === null ||
+      interactionOuterRadius === null
+    ) {
+      return;
+    }
+    const observeOutsidePointer = (event: PointerEvent): void => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('[data-floating-surface="folio"],[data-tool-dock-layout]') !== null
+      ) {
+        // Foreground chrome owns its own action and closing semantics, but a
+        // new physical press still takes momentum away from the wheel now.
+        stopInertia();
+        return;
+      }
+      const root = rootRef.current;
+      if (root === null) return;
+      const rect = root.getBoundingClientRect();
+      const distance = Math.hypot(
+        event.clientX - rect.left - center.x,
+        event.clientY - rect.top - center.y,
+      );
+      const insideTracks = distance >= interactionInnerRadius && distance <= interactionOuterRadius;
+      if (insideTracks) return;
+      cancelTransientInteraction();
+      onDismiss();
+    };
+    window.addEventListener("pointerdown", observeOutsidePointer, true);
+    return () => window.removeEventListener("pointerdown", observeOutsidePointer, true);
+  }, [
+    cancelTransientInteraction,
+    center,
+    interactionInnerRadius,
+    interactionOuterRadius,
+    onDismiss,
+    phase,
+    stopInertia,
+  ]);
+
   return (
     <div
       ref={rootRef}
@@ -524,6 +666,8 @@ function RadialLibrarySurface({
       data-library-motion-preset={reducedMotion ? "reduced" : "standard"}
       data-library-phase={phase}
       data-library-open-progress={openProgress.toFixed(3)}
+      data-library-dragging={phase === "open" && activePointerId !== null ? "true" : "false"}
+      data-library-pointer-id={phase === "open" ? (activePointerId ?? "") : ""}
     >
       {layout === null ? null : (
         <svg
@@ -533,20 +677,41 @@ function RadialLibrarySurface({
           focusable="false"
         >
           {/*
-            One rotating group for the whole instrument. Pointer events bubble
-            here from the cells themselves, so the wheel is grabbed by its
-            brushes: no invisible rectangle is laid over the canvas, and nothing
-            outside the library intercepts input.
+            One rotating group for the whole instrument. Cells paint above one
+            complete transparent annulus per ring, so visible gaps are physical
+            wheel material without creating a rectangular canvas blocker.
           */}
           <g
+            ref={rotatorRef}
             data-testid="radial-brush-library-rotator"
             style={{ touchAction: "none" }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
+            onLostPointerCapture={handleLostPointerCapture}
             onKeyDown={handleKeyDown}
           >
+            {layout.tracks.map((track) => (
+              <path
+                key={`interaction-${track.index}`}
+                d={completeAnnulusPath(
+                  { x: layout.centerX, y: layout.centerY },
+                  track.innerRadius,
+                  track.outerRadius,
+                )}
+                fill="transparent"
+                fillRule="evenodd"
+                stroke="none"
+                pointerEvents={phase === "open" ? "all" : "none"}
+                className={phase === "open" ? "cursor-grab active:cursor-grabbing" : undefined}
+                data-testid="radial-ring-interaction"
+                data-ring-interaction={track.index}
+                data-ring-inner-radius={track.innerRadius}
+                data-ring-outer-radius={track.outerRadius}
+                aria-hidden="true"
+              />
+            ))}
             {layout.tracks.map((track) => {
               // Two presentation dimensions per ring, both from the one shared
               // progress: how far out the ring has grown, and how far a front

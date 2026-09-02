@@ -37,6 +37,8 @@ test("presents the tool dock as five drawing preset slots above three permanent 
     // 1. Five drawing slots, three utilities, in visual order.
     await expect(drawingCapsule.locator("button[data-dock-slot]")).toHaveCount(5);
     await expect(utilityCapsule.locator("button[data-dock-slot]")).toHaveCount(3);
+    await expect(drawingCapsule.locator("button"), "no nested chevron hit targets").toHaveCount(5);
+    await expect(window.getByTestId("tool-options-affordance")).toHaveCount(0);
     for (const [index, slotId] of DRAWING_SLOTS.entries()) {
       const button = drawingCapsule.locator(`button[data-dock-slot="${slotId}"]`);
       await expect(button).toBeVisible();

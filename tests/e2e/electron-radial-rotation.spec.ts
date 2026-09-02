@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { openDockSlotBrushLibrary } from "./dock-helpers";
 
 /**
  * Dock slots are located by their stable position id, not by their accessible
@@ -428,16 +429,11 @@ test("rotates the radial brush library as one rigid instrument", async () => {
     await openLibraryFrom(window, slot("Brush Pen"));
     await expect(library).toHaveAttribute("data-library-rotation", "0.000");
 
-    // 15. The normal Tool Options gesture is unaffected by any of it.
-    // The chevron is Tool Options' explicit entry point now; the slot body
-    // belongs to the Brush Library. Its press must not bubble into the slot.
-    await dock
-      .locator(
-        'div:has(> button[data-dock-slot="brush-pen"]) [data-testid="tool-options-affordance"]',
-      )
-      .click();
+    // 15. The Property Rail remains Tool Options' explicit entry point; the
+    // slot body continues to belong to the Brush Library.
+    await rail.locator('button[data-property-key="strokeWidth"]').click();
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
-    await expect(library, "the chevron never opens the library").toHaveCount(0);
+    await expect(library, "the Property Rail closes the library").toHaveCount(0);
     await window.keyboard.press("Escape");
 
     // 16. And the canvas still draws once the library is closed.
@@ -601,20 +597,5 @@ async function ringAngles(window: Page): Promise<readonly number[]> {
  * only if the library is not yet up.
  */
 async function openLibraryFrom(window: Page, target: Locator): Promise<void> {
-  const library = window.getByTestId("radial-brush-library");
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await target.click();
-    // Wait for the choreography to settle before judging what the press did: a
-    // collapsing library is still mounted, so counting elements mid-flight
-    // would mistake "closing" for "already open".
-    await expect
-      .poll(async () =>
-        (await library.count()) === 0
-          ? "closed"
-          : ((await library.getAttribute("data-library-phase")) ?? "closed"),
-      )
-      .toMatch(/^(open|closed)$/u);
-    if ((await library.count()) > 0) return;
-  }
-  throw new Error("The Brush Library never opened.");
+  await openDockSlotBrushLibrary(window, target);
 }
