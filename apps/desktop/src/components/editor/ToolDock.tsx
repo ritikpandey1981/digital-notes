@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import type { DrawingToolKind } from "@folio/editor";
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
-import { useTheme } from "../theme/ThemeProvider";
 import type { EditorTool } from "./editor-types";
 import {
   DRAWING_SLOTS,
@@ -24,7 +23,6 @@ import {
   type DrawingSlotDefinition,
 } from "./tool-dock-model";
 import { ToolTooltip } from "./ToolTooltip";
-import { resolveToolDockGlyphContrast, type ToolDockAppearance } from "./tool-dock-color-contrast";
 
 interface ToolDockProps {
   readonly activeTool: EditorTool;
@@ -100,14 +98,6 @@ const dockButtonClassName =
 const dockCapsuleClassName =
   "folio-floating-surface pointer-events-auto flex w-12 flex-col items-center gap-1 p-1";
 
-/**
- * A soft theme-opposite neutral taken entirely from the active Folio surface
- * tokens. At 2.75px only 0.375px can show on either side of the exact 2px
- * artwork stroke, so it reads as silhouette separation rather than a halo.
- */
-const DRAWING_GLYPH_KEYLINE_COLOR =
-  "color-mix(in srgb, var(--folio-ink) 68%, var(--folio-surface))";
-
 export function ToolDock({
   activeTool,
   activeDrawingSlotId,
@@ -118,7 +108,6 @@ export function ToolDock({
   onSelectDrawingSlot,
   onSelectTool,
 }: ToolDockProps) {
-  const { theme } = useTheme();
   const dockRef = useRef<HTMLDivElement | null>(null);
   const renderCountRef = useRef(0);
   useLayoutEffect(() => {
@@ -195,7 +184,6 @@ export function ToolDock({
             active={activeSlotId === slot.id}
             tabbable={tabbableSlotId === slot.id}
             drawingColor={slotDrawingColors[slot.id] ?? null}
-            appearance={theme}
             onActivate={activateSlotId}
           />
         ))}
@@ -228,7 +216,6 @@ function DockButton({
   active,
   tabbable,
   drawingColor,
-  appearance,
   onActivate,
 }: {
   readonly slot: DockSlotDefinition;
@@ -243,7 +230,6 @@ function DockButton({
   readonly active: boolean;
   readonly tabbable: boolean;
   readonly drawingColor?: string | null | undefined;
-  readonly appearance?: ToolDockAppearance | undefined;
   readonly onActivate: (slotId: string) => void;
 }) {
   const Icon =
@@ -257,20 +243,13 @@ function DockButton({
       : `Brush slot ${position}, ${brushName}`;
   const tooltipLabel = brushName ?? slot.label;
   const opticalOffset = SLOT_OPTICAL_OFFSETS[slot.id];
-  const drawingContrast =
-    family !== undefined && drawingColor != null && appearance !== undefined
-      ? resolveToolDockGlyphContrast(drawingColor, appearance, active)
-      : null;
   return (
     <div className="relative">
       <button
         type="button"
         className={cn(
           dockButtonClassName,
-          active &&
-            (family === undefined
-              ? "bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft"
-              : "rounded-[6px] bg-transparent text-[var(--folio-icon-neutral)] hover:bg-transparent"),
+          active && "bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft",
         )}
         aria-label={accessibleName}
         aria-pressed={active}
@@ -283,65 +262,23 @@ function DockButton({
         data-dock-slot={slot.id}
         data-slot-family={family ?? ""}
         data-slot-brush={brushId ?? ""}
-        data-drawing-slot-selection={
-          family === undefined ? undefined : active ? "flat" : "inactive"
-        }
         data-interaction-motion="selection-140ms"
         // One press, whatever modifiers are held. What it means is decided by
         // the workspace from which slot is already active.
         onClick={() => onActivate(slot.id)}
       >
-        {active && family !== undefined ? (
-          <span
-            className="pointer-events-none absolute inset-y-0 -inset-x-1 rounded-[6px] bg-folio-surface-muted"
-            aria-hidden="true"
-            data-testid="drawing-slot-selected-surface"
-          >
-            <span className="absolute right-0 top-2 bottom-2 w-px rounded-full bg-folio-accent opacity-60" />
-          </span>
-        ) : null}
-        {family === undefined ? (
-          <Icon
-            className={cn("size-[17px]", opticalOffset)}
-            aria-hidden="true"
-            data-optical-alignment={opticalOffset === undefined ? "centered" : "down-right-1px"}
-          />
-        ) : (
-          <span
-            className="pointer-events-none relative grid size-[21px] place-items-center"
-            aria-hidden="true"
-            data-drawing-slot-glyph-frame={slot.id}
-          >
-            {drawingContrast?.needsKeyline === true ? (
-              <Icon
-                className="pointer-events-none absolute size-[17px]"
-                style={{ color: DRAWING_GLYPH_KEYLINE_COLOR }}
-                strokeWidth={2.75}
-                aria-hidden="true"
-                data-testid="drawing-slot-contrast-keyline"
-                data-drawing-slot-glyph-keyline={slot.id}
-              />
-            ) : null}
-            <Icon
-              className="relative z-[1] size-[17px]"
-              // Every drawing glyph reads its own slot's canonical resolved
-              // colour. Contrast is supplied around it, never by changing its
-              // stroke, scale, geometry or exact artwork colour.
-              style={drawingColor != null ? { color: drawingColor } : undefined}
-              strokeWidth={2}
-              data-drawing-slot-glyph={slot.id}
-              data-drawing-slot-glyph-active={active}
-              data-drawing-slot-glyph-color={drawingColor ?? ""}
-              data-drawing-slot-glyph-contrast={
-                drawingContrast?.needsKeyline === true ? "keylined" : "direct"
-              }
-              data-drawing-slot-glyph-contrast-ratio={
-                drawingContrast?.contrastRatio.toFixed(2) ?? ""
-              }
-              data-optical-alignment="centered"
-            />
-          </span>
-        )}
+        <Icon
+          className={cn("size-[17px]", opticalOffset)}
+          // Drawing glyphs retain their exact per-slot artwork colour. The
+          // selected button supplies only Folio's earlier control treatment.
+          style={family !== undefined && drawingColor != null ? { color: drawingColor } : undefined}
+          strokeWidth={2}
+          aria-hidden="true"
+          data-drawing-slot-glyph={family === undefined ? undefined : slot.id}
+          data-drawing-slot-glyph-active={family === undefined ? undefined : active}
+          data-drawing-slot-glyph-color={family === undefined ? undefined : (drawingColor ?? "")}
+          data-optical-alignment={opticalOffset === undefined ? "centered" : "down-right-1px"}
+        />
         <ToolTooltip label={tooltipLabel} />
       </button>
     </div>

@@ -143,19 +143,14 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     );
     await expect(
       activePenGlyph,
-      "exact white gets local contrast support in light mode",
-    ).toHaveAttribute("data-drawing-slot-glyph-contrast", "keylined");
+      "the clean rollback adds no contrast metadata to exact white",
+    ).not.toHaveAttribute("data-drawing-slot-glyph-contrast", /.+/);
     await expect(toolDock.getByTestId("drawing-slot-contrast-backplate")).toHaveCount(0);
-    await expect(
-      toolDock
-        .locator('[data-drawing-slot-glyph-frame="pen"]')
-        .getByTestId("drawing-slot-contrast-keyline"),
-    ).toHaveCount(1);
+    await expect(toolDock.getByTestId("drawing-slot-contrast-keyline")).toHaveCount(0);
+    await expect(toolDock.locator('[data-drawing-slot-glyph-frame="pen"]')).toHaveCount(0);
+    await expect(toolDock.locator('button[data-dock-slot="pen"] svg')).toHaveCount(1);
     await hex.fill("#123456");
-    await expect(
-      activePenGlyph,
-      "ordinary dark blue needs no keyline in light mode",
-    ).toHaveAttribute("data-drawing-slot-glyph-contrast", "direct");
+    await expect(activePenGlyph).toHaveAttribute("data-drawing-slot-glyph-color", "#123456");
     await expect(picker.getByRole("spinbutton", { name: "red channel" })).toHaveValue("18");
     await expect(picker.getByRole("spinbutton", { name: "green channel" })).toHaveValue("52");
     await expect(picker.getByRole("spinbutton", { name: "blue channel" })).toHaveValue("86");

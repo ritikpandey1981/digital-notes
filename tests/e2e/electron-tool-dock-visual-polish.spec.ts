@@ -4,7 +4,7 @@ import { activateDockSlot } from "./dock-helpers";
 
 const DRAWING_SLOT_IDS = ["pencil", "pen", "brush-pen", "marker", "highlighter"] as const;
 
-test("keeps every stored drawing colour truthful with calm contrast and selection support", async () => {
+test("restores the earlier Folio selection while keeping every stored drawing colour", async () => {
   test.setTimeout(120_000);
   const repositoryRoot = process.cwd();
   const electronApp = await electron.launch({
@@ -30,10 +30,10 @@ test("keeps every stored drawing colour truthful with calm contrast and selectio
     await expect(window.locator("html")).toHaveAttribute("data-theme", "light");
     const lightColors = {
       pencil: "#ffffff",
-      pen: "#ff7a45",
-      "brush-pen": "#2563eb",
-      marker: "#e5e7eb",
-      highlighter: "#000000",
+      pen: "#16a34a",
+      "brush-pen": "#000000",
+      marker: "#ca8a04",
+      highlighter: "#059669",
     } as const;
     for (const [slotId, color] of Object.entries(lightColors)) {
       await setSlotColor(window, slotId, color);
@@ -42,26 +42,29 @@ test("keeps every stored drawing colour truthful with calm contrast and selectio
 
     await activateDockSlot(window, "brush-pen");
     await expectStoredColors(dock, lightColors);
-    await expectContrastPolicy(dock, {
-      pencil: "keylined",
-      pen: "direct",
-      "brush-pen": "direct",
-      marker: "keylined",
-      highlighter: "direct",
-    });
-    await expectFlatSelection(dock, "brush-pen");
+    await expectEarlierFolioSelection(dock, "brush-pen");
+    await expectSimpleGlyphPresentation(dock);
     await expectPresentationWeightParity(dock);
+    await expectDrawingSelectionCases(window, dock, lightColors, [
+      "highlighter",
+      "brush-pen",
+      "marker",
+    ]);
+    await activateDockSlot(window, "brush-pen");
     await expectLiveActiveColorSequence(window, dock, "brush-pen");
 
     // Switching slots changes selection presentation only. Every inactive
     // glyph remains an exact preview of that slot's canonical drawing colour.
     await activateDockSlot(window, "pen");
     await expectStoredColors(dock, lightColors);
-    await expectFlatSelection(dock, "pen");
+    await expectEarlierFolioSelection(dock, "pen");
     await expect(drawingGlyph(dock, "brush-pen")).toHaveAttribute(
       "data-drawing-slot-glyph-color",
-      "#2563eb",
+      lightColors["brush-pen"],
     );
+    await activateDockSlot(window, "brush-pen");
+    await expectEarlierFolioSelection(dock, "brush-pen");
+    await collapseToolOptions(window);
 
     await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
     await window.getByRole("menuitem", { name: "Use dark appearance", exact: true }).click();
@@ -69,33 +72,24 @@ test("keeps every stored drawing colour truthful with calm contrast and selectio
 
     const darkColors = {
       pencil: "#000000",
-      pen: "#ff7a45",
+      pen: "#22c55e",
       "brush-pen": "#2563eb",
-      marker: "#4b5563",
-      highlighter: "#eab308",
+      marker: "#eab308",
+      highlighter: "#dc2626",
     } as const;
-    await setSlotColor(window, "pencil", darkColors.pencil);
-    await setSlotColor(window, "marker", darkColors.marker);
-    await setSlotColor(window, "highlighter", darkColors.highlighter);
+    for (const [slotId, color] of Object.entries(darkColors)) {
+      await setSlotColor(window, slotId, color);
+    }
     await activateDockSlot(window, "brush-pen");
 
     await expectStoredColors(dock, darkColors);
-    await expectContrastPolicy(dock, {
-      pencil: "keylined",
-      pen: "direct",
-      "brush-pen": "direct",
-      marker: "keylined",
-      highlighter: "direct",
-    });
-    await expectFlatSelection(dock, "brush-pen");
+    await expectEarlierFolioSelection(dock, "brush-pen");
+    await expectSimpleGlyphPresentation(dock);
     await expectPresentationWeightParity(dock);
-    await activateDockSlot(window, "marker");
-    await expect(drawingGlyph(dock, "marker")).toHaveAttribute(
-      "data-drawing-slot-glyph-contrast",
-      "keylined",
-    );
-    await expectFlatSelection(dock, "marker");
+    await expectDrawingSelectionCases(window, dock, darkColors, ["pencil", "pen", "marker"]);
     await activateDockSlot(window, "brush-pen");
+    await expectEarlierFolioSelection(dock, "brush-pen");
+    await collapseToolOptions(window);
 
     // The two panels stay separate hit surfaces in the same foreground band.
     const [drawingCapsuleBox, railBox] = await Promise.all([
@@ -110,6 +104,14 @@ test("keeps every stored drawing colour truthful with calm contrast and selectio
     expect(await ownsItsCenter(window, railButton), "the rail keeps its own pointer target").toBe(
       true,
     );
+
+    const selectButton = dock.locator('button[data-dock-slot="select"]');
+    await selectButton.click();
+    await expect(selectButton).toHaveAttribute("aria-pressed", "true");
+    await expectEarlierFolioSelection(dock, "select");
+    await expectPresentationWeightParity(dock);
+    await activateDockSlot(window, "brush-pen");
+    await expectEarlierFolioSelection(dock, "brush-pen");
 
     await window.setViewportSize({ width: 960, height: 640 });
     await expect(rail).toBeVisible();
@@ -146,6 +148,10 @@ async function expectLiveActiveColorSequence(
   slotId: string,
 ): Promise<void> {
   const activeButton = dock.locator(`button[data-dock-slot="${slotId}"]`);
+  const originalColor = await drawingGlyph(dock, slotId).getAttribute(
+    "data-drawing-slot-glyph-color",
+  );
+  if (originalColor === null) throw new Error("The active slot must expose its stored colour.");
   await expect(activeButton).toHaveAttribute("aria-pressed", "true");
   await collapseToolOptions(window);
   await window
@@ -158,26 +164,14 @@ async function expectLiveActiveColorSequence(
     .getByTestId("canvas-surface")
     .getAttribute("data-history-undo-depth");
 
-  for (const [color, contrast] of [
-    ["#000000", "direct"],
-    ["#ffffff", "keylined"],
-    ["#ca8a04", "direct"],
-    ["#2563eb", "direct"],
-  ] as const) {
+  for (const color of ["#000000", "#ffffff", "#ca8a04", "#2563eb"] as const) {
     await hex.fill(color);
     const glyph = drawingGlyph(dock, slotId);
     await expect(glyph, `${color} reaches the active glyph live`).toHaveAttribute(
       "data-drawing-slot-glyph-color",
       color,
     );
-    await expect(glyph).toHaveAttribute("data-drawing-slot-glyph-contrast", contrast);
-    await expect(
-      dock
-        .locator(`[data-drawing-slot-glyph-frame="${slotId}"]`)
-        .getByTestId("drawing-slot-contrast-keyline"),
-      `${color} toggles only the silhouette keyline`,
-    ).toHaveCount(contrast === "keylined" ? 1 : 0);
-    await expect(dock.getByTestId("drawing-slot-contrast-backplate")).toHaveCount(0);
+    await expectSimpleGlyphPresentation(dock);
     expect(await glyph.evaluate((element) => getComputedStyle(element).color)).toBe(
       rgbCssColor(color),
     );
@@ -190,7 +184,43 @@ async function expectLiveActiveColorSequence(
     "data-history-undo-depth",
     historyBefore ?? "0",
   );
+  await hex.fill(originalColor);
+  await expect(drawingGlyph(dock, slotId)).toHaveAttribute(
+    "data-drawing-slot-glyph-color",
+    originalColor,
+  );
   await commitPickerWithoutCanvas(window, picker);
+}
+
+async function expectDrawingSelectionCases(
+  window: Page,
+  dock: Locator,
+  colors: Readonly<Record<string, string>>,
+  slotIds: readonly string[],
+): Promise<void> {
+  for (const slotId of slotIds) {
+    await activateDockSlot(window, slotId);
+    await expectEarlierFolioSelection(dock, slotId);
+    const glyph = drawingGlyph(dock, slotId);
+    await expect(glyph).toHaveAttribute("data-drawing-slot-glyph-color", colors[slotId]);
+    const style = await glyph.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        filter: computed.filter,
+        height: computed.height,
+        strokeWidth: element.getAttribute("stroke-width"),
+        transform: computed.transform,
+        width: computed.width,
+      };
+    });
+    expect(style).toEqual({
+      filter: "none",
+      height: "17px",
+      strokeWidth: "2",
+      transform: "none",
+      width: "17px",
+    });
+  }
 }
 
 async function collapseToolOptions(window: Page): Promise<void> {
@@ -234,60 +264,52 @@ async function expectStoredColors(
   }
 }
 
-async function expectContrastPolicy(
-  dock: Locator,
-  policy: Readonly<Record<string, "keylined" | "direct">>,
-): Promise<void> {
+async function expectSimpleGlyphPresentation(dock: Locator): Promise<void> {
+  await expect(dock.locator("[data-drawing-slot-selection]")).toHaveCount(0);
+  await expect(dock.getByTestId("drawing-slot-selected-surface")).toHaveCount(0);
   await expect(dock.getByTestId("drawing-slot-contrast-backplate")).toHaveCount(0);
-  for (const [slotId, expected] of Object.entries(policy)) {
-    const glyph = drawingGlyph(dock, slotId);
-    await expect(glyph, `${slotId} uses ${expected} contrast`).toHaveAttribute(
+  await expect(dock.getByTestId("drawing-slot-contrast-keyline")).toHaveCount(0);
+  await expect(dock.locator("[data-drawing-slot-glyph-frame]")).toHaveCount(0);
+  await expect(dock.locator("[data-drawing-slot-glyph-keyline]")).toHaveCount(0);
+  for (const slotId of DRAWING_SLOT_IDS) {
+    const button = dock.locator(`button[data-dock-slot="${slotId}"]`);
+    await expect(button.locator("svg")).toHaveCount(1);
+    await expect(drawingGlyph(dock, slotId)).not.toHaveAttribute(
       "data-drawing-slot-glyph-contrast",
-      expected,
+      /.+/,
     );
-    const frame = dock.locator(`[data-drawing-slot-glyph-frame="${slotId}"]`);
-    const keyline = frame.getByTestId("drawing-slot-contrast-keyline");
-    await expect(keyline).toHaveCount(expected === "keylined" ? 1 : 0);
-    if (expected === "keylined") {
-      expect(await keyline.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe(
-        "none",
-      );
-      await expect(keyline).toHaveAttribute("stroke-width", "2.75");
-      await expect(keyline).toHaveAttribute("fill", "none");
-      expect(await keyline.evaluate((element) => element.innerHTML)).toBe(
-        await glyph.evaluate((element) => element.innerHTML),
-      );
-      expect(await keyline.boundingBox()).toMatchObject({ width: 17, height: 17 });
-      expect(await keyline.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
-        "rgba(0, 0, 0, 0)",
-      );
-    }
   }
 }
 
-async function expectFlatSelection(dock: Locator, activeSlotId: string): Promise<void> {
-  await expect(dock.getByTestId("drawing-slot-selected-surface")).toHaveCount(1);
+async function expectEarlierFolioSelection(dock: Locator, activeSlotId: string): Promise<void> {
+  await expectSimpleGlyphPresentation(dock);
+  const activeButton = dock.locator(`button[data-dock-slot="${activeSlotId}"]`);
+  await expect(activeButton).toHaveAttribute("aria-pressed", "true");
+  const expectedAccentSoft = await activeButton.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue(
+      "--folio-accent-soft",
+    );
+    document.body.append(probe);
+    const color = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return color;
+  });
+  await expect(activeButton).toHaveCSS("background-color", expectedAccentSoft);
+  await expect(activeButton).toHaveCSS("border-radius", "9px");
+  await expect(activeButton).toHaveCSS("box-shadow", "none");
+
   for (const slotId of DRAWING_SLOT_IDS) {
     const button = dock.locator(`button[data-dock-slot="${slotId}"]`);
-    await expect(button).toHaveAttribute(
-      "data-drawing-slot-selection",
-      slotId === activeSlotId ? "flat" : "inactive",
+    await expect(button).toHaveAttribute("aria-pressed", String(slotId === activeSlotId));
+    await expect(drawingGlyph(dock, slotId)).toHaveAttribute(
+      "data-drawing-slot-glyph-active",
+      String(slotId === activeSlotId),
     );
+    if (slotId !== activeSlotId) {
+      await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    }
   }
-  const activeButton = dock.locator(`button[data-dock-slot="${activeSlotId}"]`);
-  const styles = await activeButton.evaluate((element) => {
-    const computed = getComputedStyle(element);
-    return {
-      backgroundColor: computed.backgroundColor,
-      borderRadius: computed.borderRadius,
-      boxShadow: computed.boxShadow,
-    };
-  });
-  expect(styles).toEqual({
-    backgroundColor: "rgba(0, 0, 0, 0)",
-    borderRadius: "6px",
-    boxShadow: "none",
-  });
 }
 
 async function expectPresentationWeightParity(dock: Locator): Promise<void> {
