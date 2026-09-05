@@ -167,7 +167,7 @@ export {
   type InkStylePatch,
   type InkStyleValues,
 } from "./InkStyleEdit";
-export { renderPageThumbnail } from "./VectorShapeRendering";
+export { renderPageLayerPreview, renderPageThumbnail } from "./VectorShapeRendering";
 export {
   createAddPageCommand,
   createPageGeometryCommand,

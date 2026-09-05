@@ -1,4 +1,4 @@
-import type { Page } from "@folio/document";
+import type { Layer, Page } from "@folio/document";
 import {
   InkObject,
   isVectorObject,
@@ -231,8 +231,115 @@ export function appendVectorGeometryPath(
   }
 }
 
+/** The centred transform that fits one whole page into a preview box. */
+interface PageFit {
+  readonly scale: number;
+  readonly offsetX: number;
+  readonly offsetY: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 /**
- * Draws one page into a thumbnail context.
+ * Resolves the page-fitting transform shared by every page-scale preview.
+ *
+ * The frame is the *whole page*, never a layer's content bounds, so previews of
+ * different layers of the same page are pixel-aligned with each other and with
+ * the full-page thumbnail.
+ */
+function resolvePageFit(page: Page, size: Readonly<{ width: number; height: number }>): PageFit {
+  const scale = Math.min(size.width / page.geometry.width, size.height / page.geometry.height);
+  const width = page.geometry.width * scale;
+  const height = page.geometry.height * scale;
+  return Object.freeze({
+    scale,
+    width,
+    height,
+    offsetX: (size.width - width) / 2,
+    offsetY: (size.height - height) / 2,
+  });
+}
+
+/** Clips to the fitted page and installs page coordinates. The caller restores. */
+function clipToFittedPage(context: CanvasRenderingContext2D, fit: PageFit): void {
+  context.beginPath();
+  context.rect(fit.offsetX, fit.offsetY, fit.width, fit.height);
+  context.clip();
+  context.translate(fit.offsetX, fit.offsetY);
+  context.scale(fit.scale, fit.scale);
+}
+
+/** Draws the page's ruled, dotted, or isometric paper. Page state, never Layer state. */
+function drawPaperPattern(
+  context: CanvasRenderingContext2D,
+  page: Page,
+  fit: PageFit,
+  theme: Readonly<{ pageLineColor: string }>,
+): void {
+  const spacing = page.paper.spacing;
+  if (page.paper.type === "blank" || spacing === undefined || spacing * fit.scale < 2) return;
+  context.save();
+  context.strokeStyle = theme.pageLineColor;
+  context.fillStyle = theme.pageLineColor;
+  context.lineWidth = 1 / fit.scale;
+  context.beginPath();
+  if (page.paper.type === "dotted") {
+    const radius = Math.min(1.1 / fit.scale, spacing / 6);
+    for (let y = spacing; y < page.geometry.height; y += spacing) {
+      for (let x = spacing; x < page.geometry.width; x += spacing) {
+        context.moveTo(x + radius, y);
+        context.arc(x, y, radius, 0, Math.PI * 2);
+      }
+    }
+    context.fill();
+  } else {
+    for (let y = spacing; y < page.geometry.height; y += spacing) {
+      context.moveTo(0, y);
+      context.lineTo(page.geometry.width, y);
+    }
+    if (page.paper.type !== "ruled") {
+      for (let x = spacing; x < page.geometry.width; x += spacing) {
+        context.moveTo(x, 0);
+        context.lineTo(x, page.geometry.height);
+      }
+    }
+    context.stroke();
+  }
+  context.restore();
+}
+
+/**
+ * Draws one Layer's artwork in canonical order, in page coordinates.
+ *
+ * The single definition of how a Layer becomes marks. Both the whole-page
+ * thumbnail and the single-layer preview go through here, so layer visibility,
+ * layer opacity, object visibility, object dispatch and ordering cannot drift
+ * between them.
+ *
+ * Layer opacity multiplies into `globalAlpha`, exactly as the live compositor
+ * does. That is Folio's real semantic today -- per-object alpha, not an
+ * isolated group composite -- and a preview must show what the canvas shows.
+ */
+function drawLayerArtwork(context: CanvasRenderingContext2D, page: Page, layer: Layer): void {
+  if (!layer.visible) return;
+  context.save();
+  context.globalAlpha *= layer.opacity;
+  // `objectIds` is the Layer's ordered membership, which PageDocument's
+  // constructor guarantees is exactly this layer's slice of canonical order.
+  for (const objectId of layer.objectIds) {
+    const object = page.content.lookup(objectId);
+    if (object === undefined || !object.visible) continue;
+    if (object instanceof InkObject) {
+      drawInkObject(context, object, createStrokeVisual(object.stroke, object.transform.scale));
+    } else if (isVectorObject(object)) {
+      drawVectorObject(context, object);
+    }
+  }
+  context.restore();
+}
+
+/**
+ * Draws one complete page into a thumbnail context.
  *
  * This deliberately reuses the same per-object draw helpers the live compositor
  * uses, so thumbnails cannot drift from the canvas. It is a pure function of the
@@ -244,68 +351,47 @@ export function renderPageThumbnail(
   size: Readonly<{ width: number; height: number }>,
   theme: Readonly<{ pageLineColor: string }>,
 ): void {
-  const scale = Math.min(size.width / page.geometry.width, size.height / page.geometry.height);
-  const width = page.geometry.width * scale;
-  const height = page.geometry.height * scale;
-  const offsetX = (size.width - width) / 2;
-  const offsetY = (size.height - height) / 2;
-
+  const fit = resolvePageFit(page, size);
   context.clearRect(0, 0, size.width, size.height);
   context.save();
   context.fillStyle = page.paper.color;
-  context.fillRect(offsetX, offsetY, width, height);
-  context.beginPath();
-  context.rect(offsetX, offsetY, width, height);
-  context.clip();
-  context.translate(offsetX, offsetY);
-  context.scale(scale, scale);
+  context.fillRect(fit.offsetX, fit.offsetY, fit.width, fit.height);
+  clipToFittedPage(context, fit);
+  drawPaperPattern(context, page, fit, theme);
+  for (const layer of page.content.layers) drawLayerArtwork(context, page, layer);
+  context.restore();
+}
 
-  const spacing = page.paper.spacing;
-  if (page.paper.type !== "blank" && spacing !== undefined && spacing * scale >= 2) {
-    context.save();
-    context.strokeStyle = theme.pageLineColor;
-    context.fillStyle = theme.pageLineColor;
-    context.lineWidth = 1 / scale;
-    context.beginPath();
-    if (page.paper.type === "dotted") {
-      const radius = Math.min(1.1 / scale, spacing / 6);
-      for (let y = spacing; y < page.geometry.height; y += spacing) {
-        for (let x = spacing; x < page.geometry.width; x += spacing) {
-          context.moveTo(x + radius, y);
-          context.arc(x, y, radius, 0, Math.PI * 2);
-        }
-      }
-      context.fill();
-    } else {
-      for (let y = spacing; y < page.geometry.height; y += spacing) {
-        context.moveTo(0, y);
-        context.lineTo(page.geometry.width, y);
-      }
-      if (page.paper.type !== "ruled") {
-        for (let x = spacing; x < page.geometry.width; x += spacing) {
-          context.moveTo(x, 0);
-          context.lineTo(x, page.geometry.height);
-        }
-      }
-      context.stroke();
-    }
-    context.restore();
-  }
-
-  for (const layer of page.content.layers) {
-    if (!layer.visible) continue;
-    context.save();
-    context.globalAlpha *= layer.opacity;
-    for (const objectId of layer.objectIds) {
-      const object = page.content.lookup(objectId);
-      if (object === undefined || !object.visible) continue;
-      if (object instanceof InkObject) {
-        drawInkObject(context, object, createStrokeVisual(object.stroke, object.transform.scale));
-      } else if (isVectorObject(object)) {
-        drawVectorObject(context, object);
-      }
-    }
-    context.restore();
-  }
+/**
+ * Draws exactly one Layer's artwork onto a transparent surface.
+ *
+ * Paper is Page state, not Layer state, so this paints no paper colour, no
+ * paper pattern and no background fill: the surface keeps real alpha wherever
+ * the layer has no marks. That is what lets several of these be stacked over a
+ * single paper base and reproduce the page, instead of each upper layer's
+ * opaque paper hiding everything beneath it.
+ *
+ * The coordinate frame is the whole page rather than the layer's content
+ * bounds, so previews of different layers line up exactly.
+ *
+ * Pure: it reads the page and draws. No History, no document mutation, no
+ * session state, and no dependence on which Layer happens to be active -- the
+ * caller names the Layer, because a stack renders many of them at once.
+ *
+ * @throws LayerMembershipError when the page owns no Layer with this id. An
+ * unknown id is never treated as "every layer".
+ */
+export function renderPageLayerPreview(
+  context: CanvasRenderingContext2D,
+  page: Page,
+  layerId: string,
+  size: Readonly<{ width: number; height: number }>,
+): void {
+  const layer = page.content.requireLayer(layerId);
+  const fit = resolvePageFit(page, size);
+  context.clearRect(0, 0, size.width, size.height);
+  context.save();
+  clipToFittedPage(context, fit);
+  drawLayerArtwork(context, page, layer);
   context.restore();
 }
