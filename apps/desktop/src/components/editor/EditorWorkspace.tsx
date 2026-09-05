@@ -35,6 +35,7 @@ import { FullColorPicker } from "./FullColorPicker";
 import { QuickColorRail } from "./QuickColorRail";
 import { WorkspaceUtilityRail } from "./WorkspaceUtilityRail";
 import { createContinuousColorTarget } from "./color-target-adapters";
+import { resolveCreationColorSession } from "./creation-color-session";
 import { registerCanvasEscape } from "./floating-dismissal-stack";
 import { useColorPickerSession } from "./useColorPickerSession";
 import type { DrawingSlotDefinition } from "./tool-dock-model";
@@ -274,6 +275,11 @@ export function EditorWorkspace({
   }, []);
   const selectedVectorTargetId =
     shapeEditingSnapshot === null ? null : `selected-vector-${shapeEditingSnapshot.objectId}`;
+  // The abort path, and only that. A session whose target has genuinely gone --
+  // the selected object was deleted or deselected, the workspace tore down --
+  // is cancelled, which restores the value the picker opened on. Deliberate
+  // ownership changes never reach here: they are committed first, at the
+  // activation boundary below.
   useEffect(() => {
     const activeSession = colorPicker.snapshot;
     if (activeSession === null) return;
@@ -331,6 +337,51 @@ export function EditorWorkspace({
       openPickerSession({ target: colorTarget, source, anchor, ownerScope });
     },
     [clearEyedropperState, colorTarget, openPickerSession],
+  );
+  /**
+   * Resolves an open creation-colour session before tool ownership moves.
+   *
+   * Every surface that replaces the creation colour target routes through here
+   * first, so the colour the artist just chose is committed rather than left
+   * for the valid-target guard to abort. No stroke is required to make a
+   * creation colour stick, and no second colour store is involved: the slot
+   * already holds the previewed value, and commit merely ends the transaction
+   * that would otherwise restore over it.
+   */
+  const resolveCreationColorForOwnershipChange = useCallback((): void => {
+    const resolution = resolveCreationColorSession(
+      colorPicker.snapshot?.target.id ?? null,
+      colorTarget?.id ?? null,
+    );
+    if (resolution === "commit") commitColorPicker();
+  }, [colorPicker.snapshot, colorTarget?.id, commitColorPicker]);
+  const handleSelectDrawingSlot = useCallback(
+    (slot: DrawingSlotDefinition): void => {
+      resolveCreationColorForOwnershipChange();
+      onSelectDrawingSlot(slot);
+    },
+    [onSelectDrawingSlot, resolveCreationColorForOwnershipChange],
+  );
+  const handleSelectTool = useCallback(
+    (tool: EditorTool): void => {
+      resolveCreationColorForOwnershipChange();
+      onSelectTool(tool);
+    },
+    [onSelectTool, resolveCreationColorForOwnershipChange],
+  );
+  const handleSelectLibraryBrush = useCallback(
+    (brushId: string): void => {
+      resolveCreationColorForOwnershipChange();
+      selectLibraryBrush(brushId);
+    },
+    [resolveCreationColorForOwnershipChange, selectLibraryBrush],
+  );
+  const handleSelectShape = useCallback(
+    (shape: ShapeToolKind): void => {
+      resolveCreationColorForOwnershipChange();
+      onSelectShape(shape);
+    },
+    [onSelectShape, resolveCreationColorForOwnershipChange],
   );
   // Derived on every render from the brush the editor already resolved, so the
   // rail cannot drift from the active preset and owns no state of its own.
@@ -405,7 +456,7 @@ export function EditorWorkspace({
         open={brushLibraryOpen}
         anchorSlotId={activeDockSlotId}
         selectedBrushId={activeSlotBrushId}
-        onSelectBrush={selectLibraryBrush}
+        onSelectBrush={handleSelectLibraryBrush}
         onDismiss={onDismissBrushLibrary}
       />
       <ToolDock
@@ -415,8 +466,8 @@ export function EditorWorkspace({
         slotBrushIds={slotBrushIds}
         slotBrushNames={slotBrushNames}
         slotDrawingColors={slotDrawingColors}
-        onSelectDrawingSlot={onSelectDrawingSlot}
-        onSelectTool={onSelectTool}
+        onSelectDrawingSlot={handleSelectDrawingSlot}
+        onSelectTool={handleSelectTool}
       />
       <PageNavigator
         open={pageNavigatorOpen}
@@ -444,7 +495,7 @@ export function EditorWorkspace({
       <ShapesWidget
         open={activeTool === "Shapes" && activeFloatingWidget === "shapes"}
         activeShape={activeShape}
-        onSelectShape={onSelectShape}
+        onSelectShape={handleSelectShape}
         onDismiss={onDismissFloatingWidget}
       />
       <ShapeEditingToolbar
