@@ -61,6 +61,7 @@ interface ControllerOwnableHistoryManager {
 class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<TDocument> {
   readonly #documentSession: HistoryDocumentSession<TDocument>;
   readonly #historyLimit: number;
+  readonly #onRetainedCommandsChange: ((commandIds: readonly string[]) => void) | undefined;
   readonly #undoStack: BoundedCommandStack<HistoryEntry<TDocument>>;
   readonly #redoStack: BoundedCommandStack<HistoryEntry<TDocument>>;
   #historyVersion = 0;
@@ -93,6 +94,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
     const resolved = resolveManagerOptions(options);
     this.#documentSession = resolved.documentSession;
     this.#historyLimit = resolved.historyLimit;
+    this.#onRetainedCommandsChange = options.onRetainedCommandsChange;
     this.#undoStack = new BoundedCommandStack(this.#historyLimit);
     this.#redoStack = new BoundedCommandStack(this.#historyLimit);
   }
@@ -135,6 +137,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       throw failure;
     } finally {
       this.#executionState = IDLE_HISTORY_EXECUTION_STATE;
+      this.#publishRetainedCommands();
     }
   }
 
@@ -169,6 +172,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       throw failure;
     } finally {
       this.#executionState = IDLE_HISTORY_EXECUTION_STATE;
+      this.#publishRetainedCommands();
     }
   }
 
@@ -203,6 +207,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       throw failure;
     } finally {
       this.#executionState = IDLE_HISTORY_EXECUTION_STATE;
+      this.#publishRetainedCommands();
     }
   }
 
@@ -213,6 +218,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
     this.#undoStack.clear();
     this.#redoStack.clear();
     if (changed) this.#historyVersion += 1;
+    this.#publishRetainedCommands();
     return this.getHistoryState();
   }
 
@@ -280,6 +286,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       throw transactionFailure("commit", transaction.metadata, error);
     } finally {
       this.#transactionOperation = null;
+      this.#publishRetainedCommands();
     }
   }
 
@@ -300,6 +307,21 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       throw transactionFailure("roll back", transaction.metadata, error);
     } finally {
       this.#transactionOperation = null;
+      this.#publishRetainedCommands();
+    }
+  }
+
+  /** Publishes identities, never commands, closures, or document snapshots. */
+  #publishRetainedCommands(): void {
+    if (this.#onRetainedCommandsChange === undefined) return;
+    const ids = new Set<string>();
+    for (const entry of this.#undoStack.entries()) ids.add(entry.metadata.id);
+    for (const entry of this.#redoStack.entries()) ids.add(entry.metadata.id);
+    if (this.#activeTransaction !== null) ids.add(this.#activeTransaction.metadata.id);
+    try {
+      this.#onRetainedCommandsChange(Object.freeze([...ids]));
+    } catch {
+      // Companion bookkeeping cannot interrupt the generic History lifecycle.
     }
   }
 
@@ -413,6 +435,15 @@ function resolveManagerOptions<TDocument>(options: EditorHistoryManagerOptions<T
       "INVALID_HISTORY_LIMIT",
       "History limit must be a positive safe integer.",
       { details: Object.freeze({ historyLimit }) },
+    );
+  }
+  if (
+    options.onRetainedCommandsChange !== undefined &&
+    typeof options.onRetainedCommandsChange !== "function"
+  ) {
+    throw new HistoryError(
+      "INVALID_HISTORY_MANAGER",
+      "History retained-command observers must be functions.",
     );
   }
   return Object.freeze({ documentSession, historyLimit });

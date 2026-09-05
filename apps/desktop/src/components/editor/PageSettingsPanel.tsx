@@ -11,7 +11,7 @@ import type { PageActions, PagesSnapshot } from "@folio/editor";
 import { cn } from "@folio/ui";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   floatingSurfaceMotion,
   useFloatingSurfaceMotion,
@@ -30,14 +30,40 @@ export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSe
   const motionPreset = useFloatingSurfaceMotion();
   const boundaryRef = useRef<HTMLElement | null>(null);
   const page = snapshot.pages.find((candidate) => candidate.id === snapshot.activePageId) ?? null;
-  const floatingWidgetScope = useFloatingWidgetDismissal(open, onDismiss, boundaryRef, {
+  const pageId = page?.id ?? null;
+  const cancelAndDismiss = useCallback((): void => {
+    actions?.cancelPaperColorEdit();
+    onDismiss();
+  }, [actions, onDismiss]);
+  const commitAndDismiss = useCallback((): void => {
+    actions?.commitPaperColorEdit();
+    onDismiss();
+  }, [actions, onDismiss]);
+  const floatingWidgetScope = useFloatingWidgetDismissal(open, commitAndDismiss, boundaryRef, {
     outsidePointerDismissal: "canvas",
-    onEscape: () => {
-      actions?.cancelPaperColorEdit();
-      onDismiss();
-    },
+    onEscape: cancelAndDismiss,
   });
   const outsideBounds = page !== null && actions?.hasArtworkOutsideBounds(page.id) === true;
+
+  // Programmatic closes (top-bar toggle, competing panel, parent teardown)
+  // cannot rely on a native color input delivering blur before it disappears.
+  useEffect(() => {
+    if (!open) actions?.cancelPaperColorEdit();
+  }, [actions, open]);
+  useEffect(
+    () => () => {
+      actions?.cancelPaperColorEdit();
+    },
+    [actions, pageId],
+  );
+  useEffect(() => {
+    if (!open) return;
+    const cancelForWindowBlur = (): void => {
+      actions?.cancelPaperColorEdit();
+    };
+    window.addEventListener("blur", cancelForWindowBlur);
+    return () => window.removeEventListener("blur", cancelForWindowBlur);
+  }, [actions, open]);
 
   return (
     <div className="pointer-events-none absolute right-[76px] top-2 z-30">
@@ -63,10 +89,10 @@ export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSe
                 className="grid size-6 place-items-center rounded-lg text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
                 aria-label="Close page settings"
                 data-testid="page-settings-close"
-                onClick={() => {
-                  actions?.cancelPaperColorEdit();
-                  onDismiss();
-                }}
+                // Cancel on pointer-down, before native focus transfer can
+                // turn the input's later blur into a commit.
+                onPointerDown={() => actions?.cancelPaperColorEdit()}
+                onClick={cancelAndDismiss}
               >
                 <X className="size-3.5" aria-hidden="true" />
               </button>

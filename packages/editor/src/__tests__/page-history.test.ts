@@ -1,6 +1,9 @@
 import { DEFAULT_PAPER_COLOR, InkObject, SketchbookDocument } from "@folio/document";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createEditorHistoryCoordinator } from "../history/editor-history-coordinator";
+import {
+  createEditorHistoryCoordinator,
+  resolveHistoryPageContext,
+} from "../history/editor-history-coordinator";
 import { InkDocumentSession } from "../InkDocumentSession";
 
 const TIMESTAMP = "2026-08-26T09:00:00.000Z";
@@ -17,13 +20,38 @@ function createSession(): InkDocumentSession {
   });
 }
 
-function createCoordinator(session: InkDocumentSession) {
+function createCoordinator(session: InkDocumentSession, historyLimit?: number) {
   let tick = 0;
   return createEditorHistoryCoordinator({
     documentSession: session,
     now: () => new Date(Date.parse(TIMESTAMP) + (tick += 1)).toISOString(),
     onDocumentChange: () => undefined,
+    ...(historyLimit === undefined ? {} : { historyLimit }),
   });
+}
+
+function createPageAwareCoordinator(session: InkDocumentSession, historyLimit?: number) {
+  let tick = 0;
+  const coordinator = createEditorHistoryCoordinator({
+    documentSession: session,
+    now: () => new Date(Date.parse(TIMESTAMP) + (tick += 1)).toISOString(),
+    onDocumentChange: () => undefined,
+    onHistoryChange: (notification) => {
+      if (
+        notification.outcome !== "succeeded" ||
+        (notification.operation !== "undo" && notification.operation !== "redo")
+      ) {
+        return;
+      }
+      const target = resolveHistoryPageContext(
+        coordinator.pageContextForCommand(notification.command.id),
+        session.sketchbook,
+      );
+      if (target !== null) session.setActivePageId(target);
+    },
+    ...(historyLimit === undefined ? {} : { historyLimit }),
+  });
+  return coordinator;
 }
 
 function rectangleOn(
@@ -331,6 +359,216 @@ describe("Phase 21 page History", () => {
     expect(
       session.collection.objects.every((current) => current instanceof InkObject === false),
     ).toBe(true);
+  });
+
+  it("associates every page command family with its affected page", () => {
+    const first = session.activePageId;
+    const commandPage = (): string | null => {
+      const id = coordinator.controller.getHistoryState().lastCommand?.id;
+      return id === undefined ? null : coordinator.pageForCommand(id);
+    };
+
+    coordinator.executePagePaper(first, { type: "grid" });
+    expect(commandPage(), "paper").toBe(first);
+    coordinator.executePageGeometry(first, { width: 900, height: 700 });
+    expect(commandPage(), "geometry").toBe(first);
+    coordinator.executePageRename(first, "First");
+    expect(commandPage(), "rename").toBe(first);
+
+    const { pageId: added } = coordinator.executeAddPage();
+    expect(commandPage(), "add").toBe(added);
+    expect(
+      coordinator.pageContextForCommand(coordinator.controller.getHistoryState().lastCommand!.id),
+    ).toMatchObject({ pageId: added, fallbackPageId: first });
+    const { pageId: duplicate } = coordinator.executeDuplicatePage(first);
+    expect(commandPage(), "duplicate").toBe(duplicate);
+    expect(
+      coordinator.pageContextForCommand(coordinator.controller.getHistoryState().lastCommand!.id),
+    ).toMatchObject({ pageId: duplicate, fallbackPageId: first });
+    coordinator.executeReorderPage(duplicate, 0);
+    expect(commandPage(), "reorder").toBe(duplicate);
+    coordinator.executeRemovePage(duplicate);
+    expect(commandPage(), "remove").toBe(duplicate);
+    expect(
+      coordinator.pageContextForCommand(coordinator.controller.getHistoryState().lastCommand!.id),
+    ).toMatchObject({ pageId: duplicate, fallbackPageId: first });
+
+    session.setActivePageId(added);
+    rectangleOn(session, coordinator);
+    expect(commandPage(), "artwork").toBe(added);
+  });
+
+  it.each([
+    {
+      family: "paper",
+      execute: (active: ReturnType<typeof createEditorHistoryCoordinator>, pageId: string) =>
+        active.executePagePaper(pageId, { type: "grid" }),
+      read: (active: InkDocumentSession, pageId: string) =>
+        active.sketchbook.requirePage(pageId).paper.type,
+      before: "blank",
+      after: "grid",
+    },
+    {
+      family: "geometry",
+      execute: (active: ReturnType<typeof createEditorHistoryCoordinator>, pageId: string) =>
+        active.executePageGeometry(pageId, { width: 900, height: 700 }),
+      read: (active: InkDocumentSession, pageId: string) =>
+        active.sketchbook.requirePage(pageId).geometry.width,
+      before: 1123,
+      after: 900,
+    },
+    {
+      family: "rename",
+      execute: (active: ReturnType<typeof createEditorHistoryCoordinator>, pageId: string) =>
+        active.executePageRename(pageId, "Studies"),
+      read: (active: InkDocumentSession, pageId: string) =>
+        active.sketchbook.requirePage(pageId).name,
+      before: "",
+      after: "Studies",
+    },
+  ])(
+    "restores cross-page context for $family Undo and Redo",
+    ({ execute, read, before, after }) => {
+      const activeSession = createSession();
+      const activeCoordinator = createPageAwareCoordinator(activeSession);
+      const first = activeSession.activePageId;
+      const { pageId: second } = activeCoordinator.executeAddPage();
+      activeSession.setActivePageId(first);
+      execute(activeCoordinator, first);
+      const depthAfterCommand = activeCoordinator.controller.getHistoryState().undoDepth;
+      activeSession.setActivePageId(second);
+
+      activeCoordinator.undo();
+      expect(read(activeSession, first)).toBe(before);
+      expect(activeSession.activePageId).toBe(first);
+      expect(activeCoordinator.controller.getHistoryState().undoDepth).toBe(depthAfterCommand - 1);
+
+      activeCoordinator.redo();
+      expect(read(activeSession, first)).toBe(after);
+      expect(activeSession.activePageId).toBe(first);
+      expect(activeCoordinator.controller.getHistoryState().undoDepth).toBe(depthAfterCommand);
+    },
+  );
+
+  it("restores cross-page context for artwork without changing its command path", () => {
+    const activeSession = createSession();
+    const activeCoordinator = createPageAwareCoordinator(activeSession);
+    const first = activeSession.activePageId;
+    const { pageId: second } = activeCoordinator.executeAddPage();
+    activeSession.setActivePageId(first);
+    const object = rectangleOn(activeSession, activeCoordinator);
+    activeSession.setActivePageId(second);
+
+    activeCoordinator.undo();
+    expect(activeSession.sketchbook.requirePage(first).content.lookup(object.id)).toBeUndefined();
+    expect(activeSession.activePageId).toBe(first);
+    activeCoordinator.redo();
+    expect(activeSession.sketchbook.requirePage(first).content.lookup(object.id)).toBeDefined();
+    expect(activeSession.activePageId).toBe(first);
+  });
+
+  it("uses source and created-page contexts for Add and Duplicate", () => {
+    const addSession = createSession();
+    const addCoordinator = createPageAwareCoordinator(addSession);
+    const addSource = addSession.activePageId;
+    const { pageId: added } = addCoordinator.executeAddPage();
+    addSession.setActivePageId(addSource);
+    addCoordinator.undo();
+    expect(addSession.sketchbook.page(added)).toBeUndefined();
+    expect(addSession.activePageId).toBe(addSource);
+    addCoordinator.redo();
+    expect(addSession.sketchbook.page(added)).toBeDefined();
+    expect(addSession.activePageId).toBe(added);
+
+    const duplicateSession = createSession();
+    const duplicateCoordinator = createPageAwareCoordinator(duplicateSession);
+    const source = duplicateSession.activePageId;
+    const { pageId: elsewhere } = duplicateCoordinator.executeAddPage();
+    duplicateSession.setActivePageId(source);
+    const { pageId: duplicate } = duplicateCoordinator.executeDuplicatePage(source);
+    duplicateSession.setActivePageId(elsewhere);
+    duplicateCoordinator.undo();
+    expect(duplicateSession.sketchbook.page(duplicate)).toBeUndefined();
+    expect(duplicateSession.activePageId).toBe(source);
+    duplicateCoordinator.redo();
+    expect(duplicateSession.sketchbook.page(duplicate)).toBeDefined();
+    expect(duplicateSession.activePageId).toBe(duplicate);
+  });
+
+  it("restores the moved page context for Reorder", () => {
+    const activeSession = createSession();
+    const activeCoordinator = createPageAwareCoordinator(activeSession);
+    const first = activeSession.activePageId;
+    const { pageId: second } = activeCoordinator.executeAddPage();
+    activeSession.setActivePageId(second);
+    const { pageId: third } = activeCoordinator.executeAddPage();
+    activeCoordinator.executeReorderPage(second, 2);
+    activeSession.setActivePageId(first);
+
+    activeCoordinator.undo();
+    expect(activeSession.sketchbook.pages.map(({ id }) => id)).toEqual([first, second, third]);
+    expect(activeSession.activePageId).toBe(second);
+    activeCoordinator.redo();
+    expect(activeSession.sketchbook.pages.map(({ id }) => id)).toEqual([first, third, second]);
+    expect(activeSession.activePageId).toBe(second);
+  });
+
+  it("activates a restored removed page and its surviving neighbor on Redo", () => {
+    const activeSession = createSession();
+    const activeCoordinator = createPageAwareCoordinator(activeSession);
+    const first = activeSession.activePageId;
+    const { pageId: removed } = activeCoordinator.executeAddPage();
+    activeSession.setActivePageId(removed);
+    const { pageId: next } = activeCoordinator.executeAddPage();
+    activeCoordinator.executeRemovePage(removed);
+    activeSession.setActivePageId(first);
+
+    activeCoordinator.undo();
+    expect(activeSession.sketchbook.page(removed)).toBeDefined();
+    expect(activeSession.activePageId).toBe(removed);
+    activeCoordinator.redo();
+    expect(activeSession.sketchbook.page(removed)).toBeUndefined();
+    expect(activeSession.activePageId).toBe(next);
+  });
+
+  it("prunes page metadata on redo invalidation, capacity eviction, clear, and destroy", () => {
+    coordinator.destroy();
+    coordinator = createPageAwareCoordinator(session, 2);
+    const first = session.activePageId;
+    const { pageId: second } = coordinator.executeAddPage();
+    session.setActivePageId(first);
+
+    coordinator.executePageRename(first, "A");
+    const commandA = coordinator.controller.getHistoryState().lastCommand!.id;
+    coordinator.executePageRename(first, "B");
+    const commandB = coordinator.controller.getHistoryState().lastCommand!.id;
+    coordinator.undo();
+    coordinator.executePageRename(first, "C");
+    const commandC = coordinator.controller.getHistoryState().lastCommand!.id;
+
+    expect(coordinator.pageForCommand(commandB), "discarded redo branch").toBeNull();
+    coordinator.executePageRename(first, "D");
+    const commandD = coordinator.controller.getHistoryState().lastCommand!.id;
+    expect(coordinator.pageForCommand(commandA), "capacity-evicted command").toBeNull();
+    expect(coordinator.pageForCommand(commandC)).toBe(first);
+    expect(coordinator.pageForCommand(commandD)).toBe(first);
+
+    session.setActivePageId(second);
+    coordinator.undo();
+    expect(session.activePageId, "retained metadata still restores context after eviction").toBe(
+      first,
+    );
+    coordinator.redo();
+    expect(session.activePageId).toBe(first);
+
+    coordinator.controller.clearHistory();
+    expect(coordinator.pageForCommand(commandC), "cleared command").toBeNull();
+    expect(coordinator.pageForCommand(commandD), "cleared command").toBeNull();
+
+    coordinator.executePageRename(first, "E");
+    const commandE = coordinator.controller.getHistoryState().lastCommand!.id;
+    coordinator.destroy();
+    expect(coordinator.pageForCommand(commandE), "destroyed coordinator").toBeNull();
   });
 });
 

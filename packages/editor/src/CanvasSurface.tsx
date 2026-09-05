@@ -97,6 +97,7 @@ import { createEditorGroupManipulationPlan, transformGroupBounds } from "./Edito
 import { EditorSelectionGeometry } from "./EditorSelectionGeometry";
 import { EditorSelectionSet } from "./EditorSelectionSet";
 import { ContinuousLayerOpacityEdit } from "./ContinuousLayerOpacityEdit";
+import { ContinuousPaperColorEdit } from "./ContinuousPaperColorEdit";
 import { ContinuousSelectionStyleEdit } from "./ContinuousSelectionStyleEdit";
 import {
   marqueeActivated,
@@ -113,6 +114,7 @@ import {
 import { createEditorToolRegistry, type EditorToolRegistry } from "./tools/editor-tool-registry";
 import {
   createEditorHistoryCoordinator,
+  resolveHistoryPageContext,
   type EditorHistoryCoordinator,
 } from "./history/editor-history-coordinator";
 import {
@@ -706,6 +708,7 @@ export function CanvasSurface({
     let historyCoordinator: EditorHistoryCoordinator | null = null;
     let continuousVectorStyleEdit: ContinuousVectorStyleEdit | null = null;
     let continuousSelectionStyleEdit: ContinuousSelectionStyleEdit | null = null;
+    let continuousPaperColorEdit: ContinuousPaperColorEdit | null = null;
     let toolRegistry: EditorToolRegistry | null = null;
     let uninstallHistoryShortcuts: (() => void) | null = null;
     let uninstallEditingShortcuts: (() => void) | null = null;
@@ -1514,10 +1517,13 @@ export function CanvasSurface({
             notification.outcome === "succeeded" &&
             (notification.operation === "undo" || notification.operation === "redo")
           ) {
-            const targetPageId = historyCoordinator?.pageForCommand(notification.command.id);
+            const pageContext = historyCoordinator?.pageContextForCommand(notification.command.id);
+            const targetPageId = resolveHistoryPageContext(
+              pageContext ?? null,
+              documentSession.sketchbook,
+            );
             if (
               targetPageId !== null &&
-              targetPageId !== undefined &&
               targetPageId !== documentSession.activePageId &&
               documentSession.sketchbook.page(targetPageId) !== undefined
             ) {
@@ -1924,6 +1930,7 @@ export function CanvasSurface({
       const releaseTransientInteractions = (): void => {
         cancelContinuousStyleEdit();
         activeLayerOpacityEdit.cancel();
+        continuousPaperColorEdit?.cancel();
         activeManipulationController.cancelManipulation();
         releaseManipulationPointerCapture();
         activeVectorInteractionRenderer.setMarquee(null);
@@ -1952,11 +1959,23 @@ export function CanvasSurface({
           return null;
         }
       };
-      const continuousPaperColorEdit = {
-        pageId: null as string | null,
-        initialColor: "",
-        currentColor: "",
-      };
+      continuousPaperColorEdit = new ContinuousPaperColorEdit({
+        documentSession,
+        commit: (pageId, finalColor) => {
+          const state = activeHistoryCoordinator.executePagePaper(
+            pageId,
+            { color: finalColor },
+            "Change paper color",
+          );
+          if (state !== null) updateHistoryDiagnostics(state);
+          return state;
+        },
+        onPreviewDocumentChange: (pageId) => {
+          if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
+          else publishPages();
+        },
+      });
+      const activePaperColorEdit = continuousPaperColorEdit;
       const pageActions: PageActions = Object.freeze({
         setActivePage: (pageId: string): boolean => switchToPage(pageId),
         addPage: (): string | null =>
@@ -2047,68 +2066,14 @@ export function CanvasSurface({
             else publishPages();
             return true;
           }, "Changing paper failed.") ?? false,
-        beginPaperColorEdit: (pageId: string): boolean => {
-          const page = documentSession.sketchbook.page(pageId);
-          if (page === undefined) return false;
-          continuousPaperColorEdit.pageId = pageId;
-          continuousPaperColorEdit.initialColor = page.paper.color;
-          continuousPaperColorEdit.currentColor = page.paper.color;
-          return true;
-        },
-        previewPaperColor: (color: string): boolean => {
-          const pageId = continuousPaperColorEdit.pageId;
-          if (pageId === null) return false;
-          const page = documentSession.sketchbook.page(pageId);
-          if (page === undefined) return false;
-          const next = page.withPaper({ color });
-          if (next === page) return false;
-          // Paper previews replace the page outside History, mirroring the
-          // proven continuous-edit lifecycle used elsewhere in the editor.
-          documentSession.replaceDocument(documentSession.sketchbook.replacePage(next));
-          continuousPaperColorEdit.currentColor = next.paper.color;
-          if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
-          else publishPages();
-          return true;
-        },
-        commitPaperColorEdit: (): boolean => {
-          const pageId = continuousPaperColorEdit.pageId;
-          continuousPaperColorEdit.pageId = null;
-          if (pageId === null) return false;
-          const finalColor = continuousPaperColorEdit.currentColor;
-          const initialColor = continuousPaperColorEdit.initialColor;
-          if (finalColor === initialColor) return false;
-          return (
-            runPageOperation(() => {
-              const restored = documentSession.sketchbook.requirePage(pageId).withPaper({
-                color: initialColor,
-              });
-              documentSession.replaceDocument(documentSession.sketchbook.replacePage(restored));
-              const state = activeHistoryCoordinator.executePagePaper(
-                pageId,
-                { color: finalColor },
-                "Change paper color",
-              );
-              if (state === null) return false;
-              updateHistoryDiagnostics(state);
-              if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
-              else publishPages();
-              return true;
-            }, "Changing paper color failed.") ?? false
-          );
-        },
-        cancelPaperColorEdit: (): boolean => {
-          const pageId = continuousPaperColorEdit.pageId;
-          continuousPaperColorEdit.pageId = null;
-          if (pageId === null) return false;
-          const page = documentSession.sketchbook.page(pageId);
-          if (page === undefined) return false;
-          const restored = page.withPaper({ color: continuousPaperColorEdit.initialColor });
-          if (restored === page) return false;
-          documentSession.replaceDocument(documentSession.sketchbook.replacePage(restored));
-          if (pageId === documentSession.activePageId) applyActivePageToViewport(true);
-          else publishPages();
-          return true;
-        },
+        beginPaperColorEdit: (pageId: string): boolean => activePaperColorEdit.begin(pageId),
+        previewPaperColor: (color: string): boolean => activePaperColorEdit.update(color),
+        commitPaperColorEdit: (): boolean =>
+          runPageOperation(
+            () => activePaperColorEdit.commit() !== null,
+            "Changing paper color failed.",
+          ) ?? false,
+        cancelPaperColorEdit: (): boolean => activePaperColorEdit.cancel(),
         hasArtworkOutsideBounds: (pageId: string): boolean =>
           documentSession.sketchbook.page(pageId)?.hasArtworkOutsideBounds() ?? false,
         getPage: (pageId: string): Page | null => documentSession.sketchbook.page(pageId) ?? null,
@@ -3922,6 +3887,7 @@ export function CanvasSurface({
 
     return () => {
       continuousVectorStyleEdit?.cancel();
+      continuousPaperColorEdit?.cancel();
       themeObserver?.disconnect();
       for (const [type, listener] of editorPointerListeners) {
         inkLayer?.canvas.removeEventListener(type, listener, true);

@@ -20,6 +20,11 @@ export class BoundedCommandStack<TEntry> {
     return this.#entries.pop();
   }
 
+  /** Immutable shallow view used only for command-retention bookkeeping. */
+  entries(): readonly TEntry[] {
+    return Object.freeze([...this.#entries]);
+  }
+
   push(entry: TEntry): void {
     this.#entries.push(entry);
     const overflow = this.#entries.length - this.limit;

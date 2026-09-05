@@ -164,6 +164,38 @@ describe("generic editor History manager", () => {
     expect(defaults.getHistoryState()).toMatchObject({ historyLimit: 100, undoDepth: 100 });
   });
 
+  it("reports only command identities still retained by bounded History", () => {
+    const fixture = createDocumentSessionFixture();
+    const retained: (readonly string[])[] = [];
+    const manager = createEditorHistoryManager({
+      documentSession: fixture.session,
+      historyLimit: 2,
+      onRetainedCommandsChange: (ids) => retained.push(ids),
+    });
+
+    manager.executeCommand(createCounterCommand({ id: "one" }));
+    manager.executeCommand(createCounterCommand({ id: "two" }));
+    manager.undo();
+    manager.executeCommand(createCounterCommand({ id: "three" }));
+    expect(retained.at(-1)).toEqual(["one", "three"]);
+
+    manager.executeCommand(createCounterCommand({ id: "four" }));
+    expect(retained.at(-1), "capacity eviction removes one").toEqual(["three", "four"]);
+
+    manager.beginTransaction({ id: "group", description: "Grouped change" });
+    manager.executeCommand(createCounterCommand({ id: "child" }));
+    expect(retained.at(-1), "the retained unit is the group, not its child").toEqual([
+      "three",
+      "four",
+      "group",
+    ]);
+    manager.rollbackTransaction();
+    expect(retained.at(-1)).toEqual(["three", "four"]);
+
+    manager.clearHistory();
+    expect(retained.at(-1), "clear removes every retained identity").toEqual([]);
+  });
+
   it("clears both stacks without changing the active document", () => {
     const fixture = createDocumentSessionFixture();
     const manager = createEditorHistoryManager({ documentSession: fixture.session });

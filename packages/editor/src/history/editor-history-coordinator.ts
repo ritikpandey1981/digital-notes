@@ -60,6 +60,26 @@ interface EditorHistoryCoordinatorOptions {
   readonly onError?: (error: Error) => void;
 }
 
+/** Minimal editor context retained beside one History command identity. */
+export interface HistoryPageContext {
+  readonly pageId: string;
+  /** Existing page to show when the command's primary page no longer exists. */
+  readonly fallbackPageId: string | null;
+}
+
+/** Resolves the page that can actually be shown after a command lifecycle step. */
+export function resolveHistoryPageContext(
+  context: HistoryPageContext | null,
+  sketchbook: SketchbookDocument,
+): string | null {
+  if (context === null) return null;
+  if (sketchbook.page(context.pageId) !== undefined) return context.pageId;
+  if (context.fallbackPageId !== null && sketchbook.page(context.fallbackPageId) !== undefined) {
+    return context.fallbackPageId;
+  }
+  return null;
+}
+
 /** Package-private editor boundary around one manager/controller lifetime. */
 export interface EditorHistoryCoordinator {
   readonly controller: IHistoryController<SketchbookDocument>;
@@ -71,6 +91,7 @@ export interface EditorHistoryCoordinator {
    * user cannot see.
    */
   readonly pageForCommand: (commandId: string) => string | null;
+  readonly pageContextForCommand: (commandId: string) => HistoryPageContext | null;
   readonly executeStroke: (object: InkObject) => IHistoryState;
   readonly executeObjectCreation: (object: PageObject) => IHistoryState;
   readonly executeVectorStyleUpdate: (
@@ -141,8 +162,13 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
   readonly #documentSession: InkDocumentSession;
   readonly #now: () => string;
   readonly #unsubscribe: () => void;
-  /** Command identity to the page it changed, for page-aware Undo and Redo. */
-  readonly #commandPages = new Map<string, string>();
+  /**
+   * Command identity to its minimal page context.
+   *
+   * The generic History manager reports the identities it still retains, so
+   * this companion map has exactly the same bounded lifecycle as its commands.
+   */
+  readonly #commandPages = new Map<string, HistoryPageContext>();
   #destroyed = false;
 
   constructor(options: EditorHistoryCoordinatorOptions) {
@@ -151,6 +177,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const manager = createEditorHistoryManager({
       documentSession: this.#documentSession,
       ...(options.historyLimit === undefined ? {} : { historyLimit: options.historyLimit }),
+      onRetainedCommandsChange: (commandIds) => this.#pruneCommandPages(commandIds),
     });
     this.controller = createHistoryController({ manager });
     this.#unsubscribe = this.controller.subscribe((notification) => {
@@ -500,6 +527,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.#unsubscribe();
+    this.#commandPages.clear();
     this.controller.destroy();
   }
 
@@ -511,7 +539,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const page = this.#documentSession.sketchbook.requirePage(pageId);
     const next = page.withGeometry(geometry);
     if (next === page) return null;
-    return this.controller.executeCommand(
+    return this.#executeCommandForPage(
       createPageGeometryCommand({
         pageId,
         initialGeometry: page.geometry,
@@ -519,6 +547,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
         timestamp: this.#now(),
         ...(description === undefined ? {} : { description }),
       }),
+      pageId,
     );
   }
 
@@ -530,7 +559,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const page = this.#documentSession.sketchbook.requirePage(pageId);
     const next = page.withPaper(paper);
     if (next === page) return null;
-    return this.controller.executeCommand(
+    return this.#executeCommandForPage(
       createPagePaperCommand({
         pageId,
         initialPaper: page.paper,
@@ -538,6 +567,7 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
         timestamp: this.#now(),
         ...(description === undefined ? {} : { description }),
       }),
+      pageId,
     );
   }
 
@@ -545,13 +575,14 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const page = this.#documentSession.sketchbook.requirePage(pageId);
     const trimmed = name.trim();
     if (trimmed === page.name) return null;
-    return this.controller.executeCommand(
+    return this.#executeCommandForPage(
       createPageRenameCommand({
         pageId,
         initialName: page.name,
         finalName: trimmed,
         timestamp: this.#now(),
       }),
+      pageId,
     );
   }
 
@@ -560,21 +591,22 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const page = this.#documentSession.createInheritedPage();
     const index = sketchbook.pageIndex(this.#documentSession.activePageId) + 1;
     const command = createAddPageCommand({ page, index, timestamp: this.#now() });
-    this.#rememberCommandPage(command.id, page.id);
-    const state = this.controller.executeCommand(command);
+    const state = this.#executeCommandForPage(command, page.id, this.#documentSession.activePageId);
     return Object.freeze({ pageId: page.id, state });
   }
 
   executeDuplicatePage(pageId: string): Readonly<{ pageId: string; state: IHistoryState }> {
     const sketchbook = this.#documentSession.sketchbook;
     const duplicate = this.#documentSession.duplicatePageById(pageId);
-    const state = this.controller.executeCommand(
+    const state = this.#executeCommandForPage(
       createAddPageCommand({
         page: duplicate,
         index: sketchbook.pageIndex(pageId) + 1,
         timestamp: this.#now(),
         description: "Duplicate page",
       }),
+      duplicate.id,
+      pageId,
     );
     return Object.freeze({ pageId: duplicate.id, state });
   }
@@ -589,12 +621,14 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     }
     const neighbor = sketchbook.neighborPageId(pageId);
     if (neighbor === null) throw new Error("No neighboring page is available.");
-    const state = this.controller.executeCommand(
+    const state = this.#executeCommandForPage(
       createRemovePageCommand({
         page,
         index: sketchbook.pageIndex(pageId),
         timestamp: this.#now(),
       }),
+      pageId,
+      neighbor,
     );
     return Object.freeze({
       nextActivePageId: neighbor,
@@ -608,30 +642,55 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     const fromIndex = sketchbook.pageIndex(pageId);
     const toIndex = Math.min(Math.max(targetIndex, 0), sketchbook.pageCount - 1);
     if (fromIndex === toIndex) return null;
-    return this.controller.executeCommand(
+    return this.#executeCommandForPage(
       createReorderPagesCommand({ pageId, fromIndex, toIndex, timestamp: this.#now() }),
+      pageId,
     );
   }
 
   pageForCommand(commandId: string): string | null {
+    return this.pageContextForCommand(commandId)?.pageId ?? null;
+  }
+
+  pageContextForCommand(commandId: string): HistoryPageContext | null {
     return this.#commandPages.get(commandId) ?? null;
   }
 
   /** Records which page a command changed so Undo and Redo can return there. */
-  #rememberCommandPage(commandId: string, pageId: string): void {
-    this.#commandPages.set(commandId, pageId);
+  #rememberCommandPage(commandId: string, pageId: string, fallbackPageId?: string): void {
+    this.#commandPages.set(
+      commandId,
+      Object.freeze({ pageId, fallbackPageId: fallbackPageId ?? null }),
+    );
+  }
+
+  /** Removes every companion entry whose command has left bounded History. */
+  #pruneCommandPages(commandIds: readonly string[]): void {
+    const retained = new Set(commandIds);
+    for (const commandId of this.#commandPages.keys()) {
+      if (!retained.has(commandId)) this.#commandPages.delete(commandId);
+    }
+  }
+
+  /** Associates a sketchbook command with its visible page context before execution. */
+  #executeCommandForPage(
+    command: EditorCommand<SketchbookDocument>,
+    pageId: string,
+    fallbackPageId?: string,
+  ): IHistoryState {
+    this.#rememberCommandPage(command.id, pageId, fallbackPageId);
+    return this.controller.executeCommand(command);
   }
 
   /** Executes one page-scoped command against the active page. */
   #executePageCommand(command: EditorCommand<PageDocument>): IHistoryState {
     const pageId = this.#documentSession.activePageId;
-    this.#rememberCommandPage(command.id, pageId);
-    return this.controller.executeCommand(liftPageCommand(command, pageId));
+    return this.#executeCommandForPage(liftPageCommand(command, pageId), pageId);
   }
 
   #runTransaction(id: string, description: string, execute: () => void): IHistoryState {
-    this.#rememberCommandPage(id, this.#documentSession.activePageId);
     this.controller.beginTransaction({ id, timestamp: this.#now(), description });
+    this.#rememberCommandPage(id, this.#documentSession.activePageId);
     try {
       execute();
       return this.controller.commitTransaction();
