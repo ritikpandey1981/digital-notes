@@ -501,9 +501,11 @@ export function EditorWorkspace({
         page={pageActions?.getPage(pagesSnapshot.activePageId) ?? null}
         snapshot={layersSnapshot}
         revision={thumbnailRevision}
+        actions={layerActions}
         onActivateLayer={handleActivateStackLayer}
         onShowList={() => onShowLayersView("list")}
         onDismiss={onDismissLayers}
+        onNotify={notifyLayerDeleted}
       />
       <RadialBrushLibrary
         open={brushLibraryOpen}

@@ -1,15 +1,28 @@
 import {
   renderPageLayerPreview,
   renderPagePaperPreview,
+  type LayerActions,
   type LayersSnapshot,
   type Page,
 } from "@folio/editor";
 import { cn } from "@folio/ui";
-import { EyeOff, Layers3, Lock, Rows3 } from "lucide-react";
+import { Eye, EyeOff, Layers3, Lock, LockOpen, Pencil, Plus, Rows3, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSettlingValue } from "../../motion/settling-value";
 import { useTransientPresentation } from "../../motion/transient-presentation";
+import { ContinuousSlider } from "./ContinuousSlider";
 import { pushDismissal } from "./floating-dismissal-stack";
+import { describeDeletedLayer, normalizeLayerName } from "./layers-panel-model";
+import {
+  controlsInteractive,
+  resolveDisclosureShift,
+  resolveDisclosureSide,
+  resolveSpatialControls,
+  sheetShowsControls,
+  SPATIAL_CONTROL_METRICS,
+  SPATIAL_CONTROL_ROW_WIDTH,
+  type SpatialControlState,
+} from "./spatial-layer-controls-model";
 import { ToolTooltip } from "./ToolTooltip";
 import {
   accumulateWheelNavigation,
@@ -31,9 +44,18 @@ interface SpatialLayersViewProps {
   readonly snapshot: LayersSnapshot;
   /** Bumped by the workspace on every committed document change. */
   readonly revision: number;
+  /**
+   * The one Layer mutation surface, shared with the list presentation.
+   *
+   * The stack is a second presentation of the same model: it owns no layer
+   * commands of its own, no opacity transaction of its own, and no copy of any
+   * layer field. Everything it can do, the list can already do.
+   */
+  readonly actions: LayerActions | null;
   readonly onActivateLayer: (layerId: string) => void;
   readonly onShowList: () => void;
   readonly onDismiss: () => void;
+  readonly onNotify: (message: string) => void;
 }
 
 /** Chrome the stack must stay clear of: dock plus property rail, and the utility rail. */
@@ -77,13 +99,29 @@ export function SpatialLayersView({
   page,
   snapshot,
   revision,
+  actions,
   onActivateLayer,
   onShowList,
   onDismiss,
+  onNotify,
 }: SpatialLayersViewProps) {
   const boundsRef = useRef<HTMLDivElement | null>(null);
   const paperCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const layerCanvases = useRef(new Map<string, HTMLCanvasElement>());
+  /**
+   * Ephemeral disclosure state, keyed by layer exactly as the list keeps it.
+   *
+   * Neither holds document truth -- no name, no opacity value -- so there is
+   * nothing here that can disagree with the snapshot. Storing the layer id
+   * rather than a boolean is what makes navigating away close them: the derived
+   * flags below simply stop matching, with no effect to run and no moment where
+   * the previous sheet's disclosure is still showing on the new one.
+   */
+  const [renamingLayerId, setRenamingLayerId] = useState<string | null>(null);
+  const [opacityLayerId, setOpacityLayerId] = useState<string | null>(null);
+  // Only ever open on the sheet that is actually focused.
+  const renaming = renamingLayerId !== null && renamingLayerId === snapshot.activeLayerId;
+  const opacityOpen = opacityLayerId !== null && opacityLayerId === snapshot.activeLayerId;
   const [bounds, setBounds] = useState<Readonly<{ width: number; height: number }>>({
     width: 0,
     height: 0,
@@ -133,12 +171,74 @@ export function SpatialLayersView({
     return () => observer.disconnect();
   }, [mounted]);
 
-  // Escape joins the editor's existing LIFO transient-surface stack rather than
-  // installing a competing global key listener.
+  /**
+   * Escape unwinds the innermost thing first, then closes the stack.
+   *
+   * One registration on the editor's existing LIFO stack, not a second global
+   * key listener: the opacity disclosure is transient state owned by this
+   * surface, so this surface resolves it before giving the key up. Rename
+   * resolves nearer still -- its input cancels the key itself, which the shared
+   * handler already respects -- so it never reaches here.
+   */
+  const handleEscape = useCallback((): void => {
+    if (renaming) {
+      setRenamingLayerId(null);
+      return;
+    }
+    if (opacityOpen) {
+      actions?.cancelLayerOpacityEdit();
+      setOpacityLayerId(null);
+      return;
+    }
+    onDismiss();
+  }, [actions, onDismiss, opacityOpen, renaming]);
+
   useEffect(() => {
     if (!open) return;
-    return pushDismissal("spatial-layers-stack", onDismiss);
-  }, [onDismiss, open]);
+    return pushDismissal("spatial-layers-stack", handleEscape);
+  }, [handleEscape, open]);
+
+  /**
+   * An open opacity disclosure always owns a live transaction boundary.
+   *
+   * The cleanup is the single place every ending resolves through: closing the
+   * disclosure, navigating to another sheet, deleting the layer being adjusted,
+   * closing the stack, or unmounting the view. Committing rather than
+   * cancelling matches the list, where putting the disclosure away keeps the
+   * value the artist dialled in, and `commit` is idempotent -- it returns null
+   * when no edit is live, so an ending that carries no transaction costs
+   * nothing. Without this, a stack closed mid-adjustment would leave a preview
+   * document installed with no owner left to resolve it.
+   */
+  useEffect(() => {
+    if (opacityLayerId === null) return;
+    return () => {
+      actions?.commitLayerOpacityEdit();
+    };
+  }, [actions, opacityLayerId]);
+
+  /**
+   * Transient control state is discarded the moment it stops being current.
+   *
+   * Two endings, one adjustment, made during render rather than in an effect --
+   * the same shape the list panel uses. Clearing the id is what runs the
+   * cleanup above, so this is also how the opacity transaction resolves.
+   *
+   * The second condition matters as much as the first: hiding the disclosure
+   * because the derived flag stopped matching would leave the id still pointing
+   * at the previous sheet, and an interrupted transaction would then sit
+   * unresolved until something happened to reopen it.
+   */
+  const staleControlState =
+    renamingLayerId !== snapshot.activeLayerId || opacityLayerId !== snapshot.activeLayerId;
+  if ((!open || staleControlState) && (renamingLayerId !== null || opacityLayerId !== null)) {
+    if (renamingLayerId !== null && (!open || renamingLayerId !== snapshot.activeLayerId)) {
+      setRenamingLayerId(null);
+    }
+    if (opacityLayerId !== null && (!open || opacityLayerId !== snapshot.activeLayerId)) {
+      setOpacityLayerId(null);
+    }
+  }
 
   // Focus returns to the Layers trigger, matching the Radial Library.
   useEffect(() => {
@@ -304,7 +404,33 @@ export function SpatialLayersView({
   // Sheets take presses only once they have stopped moving. A plane that is
   // still arriving must not catch a click aimed at where it is going, and the
   // root keeps blocking the canvas throughout.
-  const interactive = presentation.phase === "open";
+  const interactive = controlsInteractive(presentation.phase);
+
+  /**
+   * The focused sheet and what its controls may currently do.
+   *
+   * Read straight from the live snapshot every render, so an icon can never
+   * show a state the document does not have. Nothing is cached and nothing is
+   * copied -- the cluster is a projection of the same rows the list renders.
+   */
+  const candidate = displayLayers[focusedIndex];
+  // Controls appear for the genuinely active Layer only. `focusedIndex` falls
+  // back to the top sheet when the active id is momentarily absent, which is
+  // right for the arrangement but must not put a control cluster on a sheet
+  // that is not wearing the accent.
+  const focused =
+    candidate !== undefined && sheetShowsControls(candidate.id, snapshot.activeLayerId)
+      ? candidate
+      : null;
+  const focusedPlane = frame.layers[focusedIndex];
+  const controls = resolveSpatialControls({
+    name: focused?.name ?? "",
+    visible: focused?.visible ?? true,
+    locked: focused?.locked ?? false,
+    opacity: focused?.opacity ?? 1,
+    layerCount,
+    opacityOpen,
+  });
 
   const groupHeight = layout.planeHeight + layout.paper.translateY;
   /**
@@ -343,6 +469,31 @@ export function SpatialLayersView({
    */
   const cornerOf = (plane: SpatialStackPlane): { readonly x: number; readonly y: number } =>
     projectSheetCorner(layout, plane, frame.tiltDegrees);
+
+  /**
+   * Keeps the opacity disclosure inside the workspace at a small window.
+   *
+   * Measured against the same projected corner the cluster hangs from, in the
+   * bounds' own coordinates: the sheet group is centred in the space left after
+   * the label column, so the cluster's distance from the right edge depends on
+   * the page shape and the sheet's depth. The disclosure slides along its
+   * anchor; the arrangement never moves to make room for it.
+   */
+  const disclosureAnchorBottom =
+    focusedPlane === undefined
+      ? 0
+      : focusedPlane.translateY + layout.planeHeight / 2 + cornerOf(focusedPlane).y - offset;
+  const disclosureSide = resolveDisclosureSide(disclosureAnchorBottom, bounds.height);
+  const disclosureShift =
+    focusedPlane === undefined
+      ? 0
+      : resolveDisclosureShift(
+          (bounds.width - LABEL_COLUMN - layout.planeWidth) / 2 +
+            layout.planeWidth / 2 +
+            cornerOf(focusedPlane).x +
+            LABEL_GAP,
+          bounds.width,
+        );
 
   return (
     // Owns the workspace while open: pointer events stop here rather than
@@ -415,6 +566,29 @@ export function SpatialLayersView({
         >
           <Rows3 className="size-4" aria-hidden="true" />
           <ToolTooltip label="List view" side="bottom" />
+        </button>
+        {/*
+          Add belongs to the experience, not to one sheet.
+
+          The list keeps it in its header for exactly the same reason, and this
+          is the same action reached from the other view -- same wording, same
+          command, same result. The test id is view-specific because both
+          presentations are briefly mounted together while one is closing, and
+          an ambiguous locator there is a flake waiting to happen.
+
+          The new layer becomes active, and the derived focus carries the
+          arrangement to it. Nothing here touches the offset.
+        */}
+        <span className="mx-0.5 my-1 w-px self-stretch bg-folio-border" aria-hidden="true" />
+        <button
+          type="button"
+          className="group relative grid size-7 place-items-center rounded-[7px] text-[var(--folio-icon-neutral)] transition-colors hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+          aria-label="Add layer"
+          data-testid="spatial-layers-add"
+          onClick={() => actions?.addLayer()}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          <ToolTooltip label="Add layer" side="bottom" />
         </button>
       </div>
       <div
@@ -564,15 +738,20 @@ export function SpatialLayersView({
                 aria-hidden="true"
               >
                 {[
-                  ...displayLayers.map((layer, displayIndex) => ({
-                    key: layer.id,
-                    plane: frame.layers[displayIndex],
-                    name: layer.name,
-                    active: layer.id === snapshot.activeLayerId,
-                    hidden: !layer.visible,
-                    locked: layer.locked,
-                    testId: `spatial-layer-label-${layer.id}`,
-                  })),
+                  ...displayLayers
+                    // The focused sheet's name lives in the interactive cluster
+                    // below, so it is not drawn twice. Everything else keeps the
+                    // approved quiet label exactly as it was.
+                    .filter((layer) => !sheetShowsControls(layer.id, snapshot.activeLayerId))
+                    .map((layer) => ({
+                      key: layer.id,
+                      plane: frame.layers[displayLayers.indexOf(layer)],
+                      name: layer.name,
+                      active: false,
+                      hidden: !layer.visible,
+                      locked: layer.locked,
+                      testId: `spatial-layer-label-${layer.id}`,
+                    })),
                   {
                     key: "__paper",
                     plane: frame.paper,
@@ -625,11 +804,324 @@ export function SpatialLayersView({
                   ),
                 )}
               </div>
+
+              {/*
+                The focused sheet's own label, and only its controls.
+
+                A separate overlay from the quiet labels above because this one
+                is interactive and must reach the accessibility tree, while
+                those stay aria-hidden behind the sheets' own names. It hangs
+                off the same projected corner, so the cluster sits beside the
+                artwork rather than over it, and it is upright: perspective
+                buttons would be both unreadable and untouchable.
+              */}
+              {focusedPlane === undefined || focused === null ? null : (
+                <div
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: layout.planeWidth / 2 + cornerOf(focusedPlane).x + LABEL_GAP,
+                    top:
+                      focusedPlane.translateY + layout.planeHeight / 2 + cornerOf(focusedPlane).y,
+                    transform: "translateY(-100%)",
+                    zIndex: layout.layers[0]!.zIndex + 2,
+                    // Tracks its sheet through the choreography like any other
+                    // label, so the cluster never floats free of the plane it
+                    // belongs to.
+                    opacity: emphasisOf(focusedPlane),
+                  }}
+                  data-testid="spatial-layer-controls"
+                  data-layer-controls-for={focused.id}
+                  data-layer-controls-interactive={interactive}
+                >
+                  {/*
+                    The label and the control row are the cluster's whole
+                    height. Opening the disclosure must not push them upward off
+                    their own sheet corner, so the disclosure hangs below from
+                    outside the flow -- activation feedback never moves layout.
+                  */}
+                  <div className="relative flex flex-col items-start gap-1">
+                    {renaming ? (
+                      <SpatialRenameInput
+                        name={focused.name}
+                        onCommit={(draft) => {
+                          const name = normalizeLayerName(draft, focused.name);
+                          // An unchanged or empty draft is discarded by the
+                          // shared rule, so a rename that changes nothing
+                          // creates no History entry.
+                          if (name !== null) actions?.renameLayer(focused.id, name);
+                          setRenamingLayerId(null);
+                        }}
+                        onCancel={() => setRenamingLayerId(null)}
+                      />
+                    ) : (
+                      <span
+                        className="pointer-events-none whitespace-nowrap text-[11px] font-semibold text-folio-ink"
+                        data-testid={`spatial-layer-label-${focused.id}`}
+                      >
+                        {focused.name}
+                      </span>
+                    )}
+                    <div
+                      className={cn(
+                        "folio-floating-surface flex items-center gap-0 p-0.5",
+                        interactive ? "pointer-events-auto" : "pointer-events-none",
+                      )}
+                      role="group"
+                      aria-label={`${focused.name} layer controls`}
+                      data-testid="spatial-layer-control-row"
+                      style={{ minWidth: SPATIAL_CONTROL_ROW_WIDTH }}
+                    >
+                      <ControlButton
+                        state={controls.visibility}
+                        testId={`spatial-layer-visibility-${focused.id}`}
+                        onPress={() => actions?.setLayerVisible(focused.id, !focused.visible)}
+                      >
+                        {focused.visible ? (
+                          <Eye className="size-3.5" aria-hidden="true" />
+                        ) : (
+                          <EyeOff className="size-3.5" aria-hidden="true" />
+                        )}
+                      </ControlButton>
+                      <ControlButton
+                        state={controls.lock}
+                        testId={`spatial-layer-lock-${focused.id}`}
+                        onPress={() => actions?.setLayerLocked(focused.id, !focused.locked)}
+                      >
+                        {focused.locked ? (
+                          <Lock className="size-3.5" aria-hidden="true" />
+                        ) : (
+                          <LockOpen className="size-3.5" aria-hidden="true" />
+                        )}
+                      </ControlButton>
+                      <ControlButton
+                        state={controls.opacity}
+                        testId={`spatial-layer-opacity-${focused.id}`}
+                        onPress={() => {
+                          // Closing commits, exactly as the list disclosure
+                          // does. Commit is a no-op when no drag ever began.
+                          if (opacityOpen) {
+                            setOpacityLayerId(null);
+                            return;
+                          }
+                          setOpacityLayerId(focused.id);
+                        }}
+                      >
+                        <OpacityGlyph />
+                      </ControlButton>
+                      <ControlButton
+                        state={controls.rename}
+                        testId={`spatial-layer-rename-${focused.id}`}
+                        onPress={() => setRenamingLayerId(focused.id)}
+                      >
+                        <Pencil className="size-3.5" aria-hidden="true" />
+                      </ControlButton>
+                      <ControlButton
+                        state={controls.delete}
+                        testId={`spatial-layer-delete-${focused.id}`}
+                        danger
+                        onPress={() => {
+                          // A layer that is going away cannot be committed to,
+                          // so an open adjustment is abandoned rather than
+                          // patched onto a row that will not exist. This is
+                          // cancel's exact meaning: the target is genuinely
+                          // gone.
+                          if (opacityOpen) actions?.cancelLayerOpacityEdit();
+                          const removed = actions?.deleteLayer(focused.id);
+                          if (removed !== null && removed !== undefined) {
+                            onNotify(describeDeletedLayer(focused.name, removed));
+                          }
+                        }}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden="true" />
+                      </ControlButton>
+                      {/*
+                        Only a changed value earns space in the row, matching
+                        the list. The percentage is always announced through the
+                        opacity control's own name.
+                      */}
+                      {focused.opacity < 1 ? (
+                        <span
+                          className="px-1 text-[10px] tabular-nums text-folio-muted"
+                          data-testid={`spatial-layer-opacity-value-${focused.id}`}
+                        >
+                          {Math.round(focused.opacity * 100)}%
+                        </span>
+                      ) : null}
+                    </div>
+                    {opacityOpen ? (
+                      <div
+                        className={cn(
+                          "folio-floating-surface p-1",
+                          interactive ? "pointer-events-auto" : "pointer-events-none",
+                        )}
+                        style={{
+                          position: "absolute",
+                          left: disclosureShift,
+                          width: SPATIAL_CONTROL_METRICS.disclosureWidth,
+                          ...(disclosureSide === "above"
+                            ? {
+                                bottom: "100%",
+                                marginBottom: SPATIAL_CONTROL_METRICS.disclosureGap,
+                              }
+                            : { top: "100%", marginTop: SPATIAL_CONTROL_METRICS.disclosureGap }),
+                        }}
+                        data-testid={`spatial-layer-opacity-panel-${focused.id}`}
+                        data-disclosure-shift={Math.round(disclosureShift)}
+                        data-disclosure-side={disclosureSide}
+                        // The stack navigates on wheel. Ownership genuinely
+                        // transfers here, so this one surface keeps its wheel
+                        // instead of scrolling the arrangement out from under
+                        // the control being adjusted.
+                        onWheel={(event) => event.stopPropagation()}
+                      >
+                        <ContinuousSlider
+                          descriptor={{
+                            key: `spatial-layer-opacity-${focused.id}`,
+                            type: "number",
+                            displayName: "Opacity",
+                            value: focused.opacity,
+                            defaultValue: 1,
+                            unit: "%",
+                            constraints: { minimum: 0, maximum: 1, step: 0.01 },
+                            displayScale: 100,
+                            precision: 0,
+                            validate: (value) =>
+                              typeof value === "number" && value >= 0 && value <= 1,
+                          }}
+                          onChange={(value) => actions?.previewLayerOpacity(value)}
+                          onInteractionStart={() => actions?.beginLayerOpacityEdit(focused.id)}
+                          onInteractionCommit={() => actions?.commitLayerOpacityEdit()}
+                          onInteractionCancel={() => actions?.cancelLayerOpacityEdit()}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Folio's opacity glyph: a disc filled to exactly half.
+ *
+ * The same mark the Drawing Property Rail uses, so one property reads the same
+ * wherever it appears -- this is layer opacity rather than stroke opacity, but
+ * it is still opacity. Fixed at half on purpose: it names the property, it does
+ * not report the value, which the adjacent percentage and the control's own
+ * accessible name already do.
+ *
+ * Redrawn here rather than imported because the rail is a frozen surface this
+ * phase must not edit. If a third surface ever needs it, that is the moment to
+ * lift all three into one shared icon.
+ */
+function OpacityGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden="true" focusable="false">
+      <path d="M8 1.75 A6.25 6.25 0 0 0 8 14.25 Z" fill="currentColor" />
+      <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+/**
+ * One contextual control on the focused sheet.
+ *
+ * Deliberately the compact dock-button language rather than a new one: quiet by
+ * default, state carried by colour, and no surface of its own. Delete earns its
+ * destructive treatment only on hover and focus, which is the same restraint
+ * the list row uses -- it must not read as loudly as visibility or lock.
+ */
+function ControlButton({
+  state,
+  testId,
+  danger,
+  onPress,
+  children,
+}: {
+  readonly state: SpatialControlState;
+  readonly testId: string;
+  readonly danger?: boolean;
+  readonly onPress: () => void;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "grid shrink-0 place-items-center rounded-[6px] text-[var(--folio-icon-neutral)] transition-colors duration-100 hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent disabled:pointer-events-none disabled:opacity-35",
+        state.pressed === true && "text-folio-ink",
+        danger === true && "hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400",
+      )}
+      style={{
+        width: SPATIAL_CONTROL_METRICS.buttonSize,
+        height: SPATIAL_CONTROL_METRICS.buttonSize,
+      }}
+      aria-label={state.label}
+      {...(state.pressed === undefined ? {} : { "aria-pressed": state.pressed })}
+      disabled={state.disabled}
+      data-testid={testId}
+      // The cluster is a sibling overlay above the sheets, so a press here never
+      // reaches a plane and nothing has to be stopped to protect focus. Only the
+      // canvas underneath is blocked, and the root already does that.
+      onClick={onPress}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Owns one rename draft, mounted on demand so the draft resets naturally.
+ *
+ * Same lifecycle as the list: Enter commits, Escape cancels and restores, blur
+ * commits. Escape cancels the key event itself, which is what keeps it from
+ * reaching the shared dismissal stack and closing the whole arrangement while
+ * the artist is only abandoning a name. Arrow keys, Home, End and Space are the
+ * field's own -- the stack's navigation listener is on an ancestor, so stopping
+ * propagation here is what makes typing a space type a space.
+ */
+function SpatialRenameInput({
+  name,
+  onCommit,
+  onCancel,
+}: {
+  readonly name: string;
+  readonly onCommit: (draft: string) => void;
+  readonly onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  return (
+    <input
+      className="pointer-events-auto w-[168px] rounded-[6px] border border-folio-border bg-folio-surface px-1.5 py-0.5 text-[11px] text-folio-ink outline-none focus:ring-2 focus:ring-folio-accent"
+      aria-label={`Rename ${name}`}
+      data-testid="spatial-layer-rename-input"
+      autoFocus
+      value={draft}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onBlur={() => onCommit(draft)}
+      onWheel={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onCommit(draft);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onCancel();
+          return;
+        }
+        // Every other key belongs to the text field, including the ones the
+        // stack navigates with.
+        event.stopPropagation();
+      }}
+    />
   );
 }
 

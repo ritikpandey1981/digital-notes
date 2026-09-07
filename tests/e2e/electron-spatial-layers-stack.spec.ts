@@ -780,3 +780,734 @@ test("navigates immediately under reduced motion", async () => {
     await app.close();
   }
 });
+
+/**
+ * Phase 3: contextual actions on the focused sheet.
+ *
+ * The stack is a second presentation of the same Layer model, so these specs
+ * check that it reaches the existing actions with the existing semantics -- and
+ * that only the focused sheet ever carries controls.
+ */
+
+const controlCluster = (window: Page): Locator => window.getByTestId("spatial-layer-controls");
+
+async function activeLayerId(window: Page): Promise<string> {
+  return (await surfaceOf(window).getAttribute("data-active-layer-id")) ?? "";
+}
+
+const planeOf = (view: Locator, layerId: string): Locator =>
+  view.getByTestId(`spatial-layer-plane-${layerId}`);
+
+/** Focuses a sheet by pressing it, and waits for the activation to land. */
+async function focusSheet(view: Locator, window: Page, layerId: string): Promise<void> {
+  await view.locator(`[data-layer-plane="${layerId}"]`).click();
+  await expect.poll(() => activeLayerId(window)).toBe(layerId);
+  await expect(controlCluster(window)).toHaveAttribute("data-layer-controls-for", layerId);
+}
+
+test("gives contextual controls to the focused sheet and to no other", async () => {
+  test.setTimeout(240_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const order = await layerOrder(window);
+    const active = await activeLayerId(window);
+
+    // Exactly one cluster exists, and it belongs to the active sheet.
+    await expect(controlCluster(window)).toHaveCount(1);
+    await expect(controlCluster(window)).toHaveAttribute("data-layer-controls-for", active);
+    await expect(window.getByTestId(`spatial-layer-visibility-${active}`)).toBeVisible();
+
+    // Neighbours keep their quiet label and passive markers, nothing more.
+    for (const layerId of order.filter((id) => id !== active)) {
+      await expect(window.getByTestId(`spatial-layer-label-${layerId}`)).toBeAttached();
+      await expect(window.getByTestId(`spatial-layer-visibility-${layerId}`)).toHaveCount(0);
+      await expect(window.getByTestId(`spatial-layer-lock-${layerId}`)).toHaveCount(0);
+      await expect(window.getByTestId(`spatial-layer-delete-${layerId}`)).toHaveCount(0);
+      await expect(window.getByTestId(`spatial-layer-rename-${layerId}`)).toHaveCount(0);
+    }
+
+    // The cluster follows the focus rather than being duplicated onto it.
+    const neighbour = order.find((id) => id !== active) ?? "";
+    await focusSheet(view, window, neighbour);
+    await expect(controlCluster(window)).toHaveCount(1);
+    await expect(window.getByTestId(`spatial-layer-visibility-${active}`)).toHaveCount(0);
+    await expect(window.getByTestId(`spatial-layer-label-${active}`)).toBeAttached();
+  } finally {
+    await app.close();
+  }
+});
+
+test("toggles visibility and lock through the existing layer actions", async () => {
+  test.setTimeout(240_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const order = await layerOrder(window);
+    const target = order[0] ?? "";
+    await focusSheet(view, window, target);
+
+    // Artwork is really there before hiding.
+    expect(await canvasIsBlank(view, target)).toBe(false);
+
+    const beforeVisibility = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await expect(planeOf(view, target)).toHaveAttribute("data-layer-visible", "false");
+    // One logical entry, and the artwork actually disappears from the preview.
+    expect(Number(await historyDepth(window))).toBe(beforeVisibility + 1);
+    await expect.poll(() => canvasIsBlank(view, target)).toBe(true);
+
+    // A hidden focused layer stays manageable: the control that turns it back
+    // on is still there, still named for the action it performs.
+    const showAgain = window.getByTestId(`spatial-layer-visibility-${target}`);
+    await expect(showAgain).toBeVisible();
+    await expect(showAgain).toHaveAttribute("aria-label", /^Show /u);
+    await showAgain.click();
+    await expect(planeOf(view, target)).toHaveAttribute("data-layer-visible", "true");
+    await expect.poll(() => canvasIsBlank(view, target)).toBe(false);
+
+    // Undo restores the layer action exactly, same as the list.
+    await window.keyboard.press("Control+z");
+    await expect(planeOf(view, target)).toHaveAttribute("data-layer-visible", "false");
+    await window.keyboard.press("Control+y");
+    await expect(planeOf(view, target)).toHaveAttribute("data-layer-visible", "true");
+
+    // Lock is the same contract, and a locked layer never becomes unlockable.
+    const beforeLock = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    await expect(planeOf(view, target)).toHaveAttribute("data-layer-locked", "true");
+    expect(Number(await historyDepth(window))).toBe(beforeLock + 1);
+    const unlock = window.getByTestId(`spatial-layer-lock-${target}`);
+    await expect(unlock).toBeEnabled();
+    await expect(unlock).toHaveAttribute("aria-label", /^Unlock /u);
+    await unlock.click();
+    await expect(planeOf(view, target)).toHaveAttribute("data-layer-locked", "false");
+  } finally {
+    await app.close();
+  }
+});
+
+test("renames the focused layer, and restores it on Escape", async () => {
+  test.setTimeout(240_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const target = await activeLayerId(window);
+    const label = window.getByTestId(`spatial-layer-label-${target}`);
+
+    // Commit.
+    const beforeRename = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    const input = window.getByTestId("spatial-layer-rename-input");
+    await expect(input).toBeFocused();
+    await input.fill("Underdrawing");
+    await input.press("Enter");
+    await expect(label).toHaveText("Underdrawing");
+    expect(Number(await historyDepth(window))).toBe(beforeRename + 1);
+
+    // Typing must not navigate: the focused sheet is unchanged.
+    expect(await activeLayerId(window)).toBe(target);
+
+    // Escape restores the original and leaves the stack open.
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Discarded");
+    await window.getByTestId("spatial-layer-rename-input").press("Escape");
+    await expect(window.getByTestId("spatial-layer-rename-input")).toHaveCount(0);
+    await expect(label).toHaveText("Underdrawing");
+    await expect(view).toBeVisible();
+
+    // An unchanged name is not a document change.
+    const beforeNoop = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").press("Enter");
+    await expect(window.getByTestId("spatial-layer-rename-input")).toHaveCount(0);
+    expect(Number(await historyDepth(window))).toBe(beforeNoop);
+
+    // The name the artist gave it survives the round trip to the list.
+    await view.getByTestId("layers-view-list").click();
+    await expect(window.getByTestId(`layer-name-${target}`)).toContainText("Underdrawing");
+  } finally {
+    await app.close();
+  }
+});
+
+test("adjusts layer opacity as one transaction", async () => {
+  test.setTimeout(240_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const target = await activeLayerId(window);
+    const disclosure = window.getByTestId(`spatial-layer-opacity-panel-${target}`);
+
+    await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+    await expect(disclosure).toBeVisible();
+
+    // One drag is one History entry, however many preview frames it produced.
+    const slider = disclosure.getByRole("slider");
+    const track = (await slider.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+    const beforeDrag = Number(await historyDepth(window));
+    await window.mouse.move(track.x + track.width * 0.9, track.y + track.height / 2);
+    await window.mouse.down();
+    // Several moves, so a per-frame command would be caught by the count below.
+    for (const share of [0.75, 0.6, 0.5, 0.42, 0.35]) {
+      await window.mouse.move(track.x + track.width * share, track.y + track.height / 2);
+    }
+    const previewed = Number(await slider.inputValue());
+    expect(previewed, "the preview reaches the live layer").toBeLessThan(1);
+    await window.mouse.up();
+    expect(Number(await historyDepth(window)), "one gesture, one entry").toBe(beforeDrag + 1);
+
+    // The exact value is set through the numeric field, which commits once too.
+    const beforeCommit = Number(await historyDepth(window));
+    const field = disclosure.getByRole("spinbutton");
+    await field.fill("40");
+    await field.press("Enter");
+    await expect(window.getByTestId(`spatial-layer-opacity-value-${target}`)).toHaveText("40%");
+    expect(Number(await historyDepth(window))).toBe(beforeCommit + 1);
+    await expect(window.getByTestId(`spatial-layer-opacity-${target}`)).toHaveAttribute(
+      "aria-label",
+      /40 percent/u,
+    );
+
+    // Escape cancels the open disclosure without closing the stack, and the
+    // committed value is what survives.
+    await window.keyboard.press("Escape");
+    await expect(disclosure).toHaveCount(0);
+    await expect(view).toBeVisible();
+    await expect(window.getByTestId(`spatial-layer-opacity-value-${target}`)).toHaveText("40%");
+
+    // The list agrees, because there is only one opacity.
+    await view.getByTestId("layers-view-list").click();
+    await expect(window.getByTestId(`layer-opacity-value-${target}`)).toHaveText("40%");
+  } finally {
+    await app.close();
+  }
+});
+
+test("adds and deletes layers through the existing fallback rules", async () => {
+  test.setTimeout(240_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+
+    const view = await openStack(window);
+
+    // A single-layer document cannot lose its last layer.
+    const only = await activeLayerId(window);
+    await expect(window.getByTestId(`spatial-layer-delete-${only}`)).toBeDisabled();
+
+    // Add makes the new layer active, and the arrangement follows the derived
+    // focus without anything setting an offset.
+    const beforeAdd = Number(await historyDepth(window));
+    await window.getByTestId("spatial-layers-add").click();
+    await expect.poll(() => activeLayerId(window)).not.toBe(only);
+    const added = await activeLayerId(window);
+    expect(Number(await historyDepth(window))).toBe(beforeAdd + 1);
+    await expect(view).toHaveAttribute("data-layer-count", "2");
+    await expect(controlCluster(window)).toHaveAttribute("data-layer-controls-for", added);
+
+    // Delete is now allowed, and the surviving layer becomes active and focused.
+    await expect(window.getByTestId(`spatial-layer-delete-${added}`)).toBeEnabled();
+    const beforeDelete = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-delete-${added}`).click();
+    await expect(view).toHaveAttribute("data-layer-count", "1");
+    expect(Number(await historyDepth(window))).toBe(beforeDelete + 1);
+    await expect.poll(() => activeLayerId(window)).toBe(only);
+    await expect(controlCluster(window)).toHaveAttribute("data-layer-controls-for", only);
+    await expect(window.getByTestId(`spatial-layer-delete-${only}`)).toBeDisabled();
+  } finally {
+    await app.close();
+  }
+});
+
+test("keeps navigation and the canvas working around the controls", async () => {
+  test.setTimeout(240_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const order = await layerOrder(window);
+    const scroller = view.getByTestId("spatial-layers-scroller");
+
+    // Using a control must not move the arrangement.
+    const target = await activeLayerId(window);
+    const offsetBefore = await scroller.getAttribute("data-stack-offset");
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    expect(await activeLayerId(window)).toBe(target);
+    expect(await scroller.getAttribute("data-stack-offset")).toBe(offsetBefore);
+
+    // Wheel over the opacity disclosure adjusts the control, never the stack.
+    await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+    const disclosure = window.getByTestId(`spatial-layer-opacity-panel-${target}`);
+    await expect(disclosure).toBeVisible();
+    const box = (await disclosure.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+    await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await window.mouse.wheel(0, 400);
+    expect(await activeLayerId(window)).toBe(target);
+    await window.keyboard.press("Escape");
+    await expect(disclosure).toHaveCount(0);
+
+    // Keyboard navigation still works after using the controls.
+    await view.locator(`[data-layer-plane="${target}"]`).focus();
+    await window.keyboard.press("ArrowDown");
+    await expect.poll(() => activeLayerId(window)).not.toBe(target);
+    await window.keyboard.press("Home");
+    await expect.poll(() => activeLayerId(window)).toBe(order[order.length - 1]);
+
+    // Closing after control use must not swallow the next stroke.
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    const before = Number(await objectCount(window));
+    await drawStroke(window, 300);
+    expect(Number(await objectCount(window))).toBe(before + 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("keeps stack and list showing the same layer state", async () => {
+  test.setTimeout(240_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const target = await activeLayerId(window);
+
+    // Mutations made in the stack are visible in the list.
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    await view.getByTestId("layers-view-list").click();
+    const panel = window.getByTestId("layers-panel");
+    await expect(panel.getByTestId(`layer-visibility-${target}`)).toHaveAttribute(
+      "aria-label",
+      /^Show /u,
+    );
+    await expect(panel.getByTestId(`layer-lock-${target}`)).toHaveAttribute(
+      "aria-label",
+      /^Unlock /u,
+    );
+
+    // Mutations made in the list are visible in the stack.
+    await panel.getByTestId(`layer-visibility-${target}`).click();
+    await panel.getByTestId("layers-view-stack").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveAttribute(
+      "data-stack-phase",
+      "open",
+    );
+    await expect(window.getByTestId(`spatial-layer-visibility-${target}`)).toHaveAttribute(
+      "aria-label",
+      /^Hide /u,
+    );
+    await expect(window.getByTestId(`spatial-layer-lock-${target}`)).toHaveAttribute(
+      "aria-label",
+      /^Unlock /u,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Every way an opacity adjustment and a rename can end.
+ *
+ * The transaction owner is shared with the list, so what is being checked here
+ * is that the stack reaches every exit -- close, Escape, navigation, view
+ * switch, page change, deletion, teardown -- and that each one resolves exactly
+ * once with the semantics the list already defines.
+ */
+
+/** Drags the disclosure's track to a value below full, without releasing. */
+async function dragOpacity(window: Page, disclosure: Locator, share: number): Promise<void> {
+  const track = (await disclosure.getByRole("slider").boundingBox()) ?? {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  };
+  await window.mouse.move(track.x + track.width * 0.95, track.y + track.height / 2);
+  await window.mouse.down();
+  await window.mouse.move(track.x + track.width * share, track.y + track.height / 2);
+  await window.mouse.up();
+}
+
+/**
+ * Waits for the arrangement to stop moving.
+ *
+ * Navigation settles toward its target rather than jumping, so a press issued
+ * straight after an activation can land where a control used to be. Two
+ * matching reads of the offset is the product's own "arrived" signal.
+ */
+async function settleStack(window: Page): Promise<void> {
+  const scroller = window.getByTestId("spatial-layers-scroller");
+  let previous: string | null = null;
+  await expect
+    .poll(
+      async () => {
+        const current = await scroller.getAttribute("data-stack-offset");
+        const stable = previous !== null && current === previous;
+        previous = current;
+        return stable;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+}
+
+async function openOpacity(window: Page, layerId: string): Promise<Locator> {
+  await settleStack(window);
+  await window.getByTestId(`spatial-layer-opacity-${layerId}`).click();
+  const disclosure = window.getByTestId(`spatial-layer-opacity-panel-${layerId}`);
+  await expect(disclosure).toBeVisible();
+  return disclosure;
+}
+
+/** Percentage the layer actually holds, read from the control's own name. */
+async function opacityPercent(window: Page, layerId: string): Promise<number> {
+  const label =
+    (await window.getByTestId(`spatial-layer-opacity-${layerId}`).getAttribute("aria-label")) ?? "";
+  return Number(/(\d+) percent/u.exec(label)?.[1] ?? Number.NaN);
+}
+
+test("resolves an opacity adjustment exactly once on every exit", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const target = await activeLayerId(window);
+
+    // A. adjust, then close the disclosure normally -> commit, one entry.
+    let disclosure = await openOpacity(window, target);
+    let before = Number(await historyDepth(window));
+    await dragOpacity(window, disclosure, 0.6);
+    const committed = await opacityPercent(window, target);
+    expect(committed).toBeLessThan(100);
+    await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+    await expect(disclosure).toHaveCount(0);
+    expect(Number(await historyDepth(window)), "A: one entry for the gesture").toBe(before + 1);
+    expect(await opacityPercent(window, target)).toBe(committed);
+
+    // I. reopen, change nothing, close -> zero History.
+    disclosure = await openOpacity(window, target);
+    before = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+    await expect(disclosure).toHaveCount(0);
+    expect(Number(await historyDepth(window)), "I: an unchanged value is not a change").toBe(
+      before,
+    );
+    expect(await opacityPercent(window, target)).toBe(committed);
+
+    // B. adjust, then Escape -> the committed drag stands, the stack stays open.
+    disclosure = await openOpacity(window, target);
+    before = Number(await historyDepth(window));
+    await dragOpacity(window, disclosure, 0.3);
+    const afterSecondDrag = await opacityPercent(window, target);
+    await window.keyboard.press("Escape");
+    await expect(disclosure).toHaveCount(0);
+    await expect(view).toBeVisible();
+    expect(Number(await historyDepth(window)), "B: Escape adds nothing of its own").toBe(
+      before + 1,
+    );
+    expect(await opacityPercent(window, target)).toBe(afterSecondDrag);
+
+    // C. adjust, then focus another layer -> resolved, and the disclosure does
+    // not follow the focus onto the new sheet.
+    disclosure = await openOpacity(window, target);
+    before = Number(await historyDepth(window));
+    await dragOpacity(window, disclosure, 0.5);
+    const beforeNavigate = await opacityPercent(window, target);
+    const order = await layerOrder(window);
+    const neighbour = order.find((id) => id !== target) ?? "";
+    await view.locator(`[data-layer-plane="${neighbour}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(neighbour);
+    await expect(window.getByTestId(`spatial-layer-opacity-panel-${neighbour}`)).toHaveCount(0);
+    expect(Number(await historyDepth(window)), "C: navigating adds no entry of its own").toBe(
+      before + 1,
+    );
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+    expect(await opacityPercent(window, target)).toBe(beforeNavigate);
+
+    // D. adjust, then close the whole stack -> resolved, nothing left behind.
+    disclosure = await openOpacity(window, target);
+    before = Number(await historyDepth(window));
+    await dragOpacity(window, disclosure, 0.7);
+    const beforeClose = await opacityPercent(window, target);
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    expect(Number(await historyDepth(window)), "D: closing adds no entry of its own").toBe(
+      before + 1,
+    );
+    await openStack(window);
+    expect(await opacityPercent(window, target)).toBe(beforeClose);
+    await expect(window.getByTestId(`spatial-layer-opacity-panel-${target}`)).toHaveCount(0);
+
+    // E. adjust, then switch to the list -> resolved, and the list agrees.
+    disclosure = await openOpacity(window, target);
+    before = Number(await historyDepth(window));
+    await dragOpacity(window, disclosure, 0.45);
+    const beforeSwitch = await opacityPercent(window, target);
+    await view.getByTestId("layers-view-list").click();
+    await expect(window.getByTestId("layers-panel")).toBeVisible();
+    expect(Number(await historyDepth(window)), "E: switching view adds no entry").toBe(before + 1);
+    await expect(window.getByTestId(`layer-opacity-value-${target}`)).toHaveText(
+      `${beforeSwitch}%`,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("resolves an opacity adjustment across page switch and layer deletion", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+
+    await openStack(window);
+    let target = await activeLayerId(window);
+
+    // F. adjust, then switch page -> the stack ends, the value is kept, and the
+    // page it belonged to still holds it.
+    let disclosure = await openOpacity(window, target);
+    let before = Number(await historyDepth(window));
+    await dragOpacity(window, disclosure, 0.55);
+    const beforePageSwitch = await opacityPercent(window, target);
+    await window.getByTestId("pages-toggle").click();
+    await window.getByTestId("page-add").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    // Adding a page is its own entry; the opacity commit is the one before it.
+    expect(Number(await historyDepth(window)), "F: opacity committed, then the page add").toBe(
+      before + 2,
+    );
+    const pages = JSON.parse(
+      (await surfaceOf(window).getAttribute("data-page-order")) ?? "[]",
+    ) as string[];
+    await window.getByTestId(`page-select-${pages[0]}`).click();
+    await window.getByTestId("pages-toggle").click();
+    await openStack(window);
+    expect(await opacityPercent(window, target)).toBe(beforePageSwitch);
+
+    // G. adjust, then delete the layer being adjusted -> the layer goes, and no
+    // transaction is left pointing at it. Deleting is its own single entry.
+    target = await activeLayerId(window);
+    disclosure = await openOpacity(window, target);
+    await dragOpacity(window, disclosure, 0.4);
+    before = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-delete-${target}`).click();
+    await expect.poll(() => activeLayerId(window)).not.toBe(target);
+    const survivor = await activeLayerId(window);
+    expect(Number(await historyDepth(window)), "G: the delete, and nothing else").toBe(before + 1);
+    await expect(window.getByTestId(`spatial-layer-opacity-panel-${survivor}`)).toHaveCount(0);
+
+    // The survivor is fully manageable, and its own opacity is untouched.
+    expect(await opacityPercent(window, survivor)).toBe(100);
+    const reopened = await openOpacity(window, survivor);
+    await expect(reopened).toBeVisible();
+    await window.keyboard.press("Escape");
+
+    // J. repeated close signals resolve once, not once each.
+    const repeat = await openOpacity(window, survivor);
+    await dragOpacity(window, repeat, 0.65);
+    before = Number(await historyDepth(window));
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    await openStack(window);
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    expect(Number(await historyDepth(window)), "J: one resolution, however many signals").toBe(
+      before,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("resolves a rename on every exit the way the list does", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const target = await activeLayerId(window);
+    const label = window.getByTestId(`spatial-layer-label-${target}`);
+    const startingName = (await label.textContent()) ?? "";
+
+    // blur commits, exactly as the list's rename input does.
+    let before = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Blurred");
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    await expect(window.getByTestId("spatial-layer-rename-input")).toHaveCount(0);
+    await expect(label).toHaveText("Blurred");
+    // The rename commit plus the lock press that caused the blur.
+    expect(Number(await historyDepth(window)), "blur commits the draft").toBe(before + 2);
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+
+    // An empty draft is discarded by the shared normalisation, keeping the name.
+    before = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("   ");
+    await window.getByTestId("spatial-layer-rename-input").press("Enter");
+    await expect(label).toHaveText("Blurred");
+    expect(Number(await historyDepth(window)), "an empty name is not a rename").toBe(before);
+
+    // Focusing another layer ends the rename by blurring it, which commits --
+    // the same thing pressing anything else in the list does. One entry for the
+    // rename, one for the activation being a selection rather than a command.
+    const order = await layerOrder(window);
+    const neighbour = order.find((id) => id !== target) ?? "";
+    before = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Committed by blur");
+    await view.locator(`[data-layer-plane="${neighbour}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(neighbour);
+    await expect(window.getByTestId("spatial-layer-rename-input")).toHaveCount(0);
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+    await expect(label).toHaveText("Committed by blur");
+    expect(
+      Number(await historyDepth(window)),
+      "blur commits once; activating a layer is not a command",
+    ).toBe(before + 1);
+
+    // Closing the stack resolves the rename the same way, and reopening starts
+    // clean rather than resurrecting the field.
+    before = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Closed while editing");
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    await openStack(window);
+    await expect(window.getByTestId("spatial-layer-rename-input")).toHaveCount(0);
+    await expect(window.getByTestId(`spatial-layer-label-${target}`)).toHaveText(
+      "Closed while editing",
+    );
+    expect(Number(await historyDepth(window)), "one rename, however it ended").toBe(before + 1);
+
+    // Escape is the one exit that discards, and it still leaves the stack open.
+    before = Number(await historyDepth(window));
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Discarded");
+    await window.getByTestId("spatial-layer-rename-input").press("Escape");
+    await expect(view).toBeVisible();
+    await expect(label).toHaveText("Closed while editing");
+    expect(Number(await historyDepth(window)), "Escape discards the draft").toBe(before);
+
+    // Switching to the list resolves it too, and the list shows the same name.
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Seen by the list");
+    await window.getByTestId("spatial-layers-view").getByTestId("layers-view-list").click();
+    await expect(window.getByTestId("layers-panel")).toBeVisible();
+    await expect(window.getByTestId(`layer-name-${target}`)).toContainText("Seen by the list");
+    expect(startingName.length).toBeGreaterThan(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("keeps the focused controls inside a minimum window", async () => {
+  test.setTimeout(240_000);
+  // The project's minimum supported window, chrome included.
+  const { app, window } = await launchFolio(900, 640);
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320, 12, 380, 20);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const target = await activeLayerId(window);
+    const band = view.getByTestId("spatial-layers-bounds");
+    const bandBox = (await band.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+
+    /** Everything the artist has to reach must stay inside the free band. */
+    const assertContained = async (control: Locator, what: string): Promise<void> => {
+      const rect = (await control.boundingBox()) ?? { x: -1, y: -1, width: 0, height: 0 };
+      expect(rect.x, `${what}: clear of the dock and property rail`).toBeGreaterThanOrEqual(
+        bandBox.x - 1,
+      );
+      expect(rect.x + rect.width, `${what}: clear of the utility rail`).toBeLessThanOrEqual(
+        bandBox.x + bandBox.width + 1,
+      );
+      expect(rect.y, `${what}: below the top chrome`).toBeGreaterThanOrEqual(0);
+      expect(rect.y + rect.height, `${what}: inside the window`).toBeLessThanOrEqual(640);
+    };
+
+    await assertContained(window.getByTestId("spatial-layer-control-row"), "control row");
+
+    // The disclosure slides along its anchor and flips to whichever side fits,
+    // rather than the arrangement moving to accommodate it.
+    await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+    const disclosure = window.getByTestId(`spatial-layer-opacity-panel-${target}`);
+    await expect(disclosure).toBeVisible();
+    await assertContained(disclosure, "opacity disclosure");
+    await expect(disclosure).toHaveAttribute("data-disclosure-side", /above|below/u);
+    await window.keyboard.press("Escape");
+
+    // The rename field stays reachable and inside at the same size.
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    const input = window.getByTestId("spatial-layer-rename-input");
+    await expect(input).toBeFocused();
+    await assertContained(input, "rename field");
+    await input.press("Escape");
+
+    // Nothing here scrolls: not the page, and not the arrangement.
+    const overflow = await window.evaluate(() => ({
+      horizontal: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      vertical: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+    }));
+    expect(overflow.horizontal, "no horizontal page scrollbar").toBe(false);
+    expect(overflow.vertical, "no vertical page scrollbar").toBe(false);
+    // The arrangement is deliberately taller than its container -- sheets keep
+    // their size and are navigated. What must stay true is that this never
+    // becomes a scroll: no gutter, no scrollbar, and a pinned scroll position.
+    const gutter = await view.getByTestId("spatial-layers-scroller").evaluate((node) => ({
+      horizontal: node.offsetHeight - node.clientHeight,
+      vertical: node.offsetWidth - node.clientWidth,
+      overflowY: getComputedStyle(node).overflowY,
+      scrollTop: node.scrollTop,
+    }));
+    expect(gutter.vertical, "no vertical scrollbar gutter").toBe(0);
+    expect(gutter.horizontal, "no horizontal scrollbar gutter").toBe(0);
+    expect(gutter.overflowY).toBe("hidden");
+    expect(gutter.scrollTop, "the offset is the only authority on position").toBe(0);
+  } finally {
+    await app.close();
+  }
+});
