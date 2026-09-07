@@ -10,6 +10,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useReducedMotionPreference } from "../../motion/floating-surface-motion";
+import {
+  useTransientPresentation,
+  type TransientPresentation,
+} from "../../motion/transient-presentation";
 import type { BrushLibraryFamily } from "./brush-library-catalogue";
 import {
   RADIAL_OPEN_MOTION,
@@ -137,77 +141,15 @@ export function RadialBrushLibrary({
   );
 }
 
-interface RadialPresentation {
-  readonly phase: RadialPresentationPhase;
-  /** Linear position of the unfolding, 0 collapsed to 1 fully open. */
-  readonly progress: number;
-}
-
 /**
- * Drives one linear progress value between collapsed and open.
+ * This instrument's own timing, driven by the shared presentation clock.
  *
- * Deliberately linear: easing is applied per ring at render time. Reversing a
- * half-finished gesture then simply changes the direction of travel from
- * wherever it had got to, which is what makes a rapid toggle continuous — there
- * is no second clock to restart and no eased value to invert.
- *
- * The frame loop exists only while the value is actually travelling.
+ * The clock is deliberately not per-surface: two independent rAF loops for
+ * "how far open is this" is exactly how two surfaces end up reversing
+ * differently under a rapid toggle.
  */
-function useRadialPresentation(requested: boolean): RadialPresentation {
-  const reducedMotion = useReducedMotionPreference();
-  const [state, setState] = useState<RadialPresentation>(() => ({
-    phase: requested ? "open" : "closed",
-    progress: requested ? 1 : 0,
-  }));
-  const frameRef = useRef<number | null>(null);
-  const progressRef = useRef(state.progress);
-
-  useEffect(() => {
-    const cancel = (): void => {
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-    };
-    cancel();
-    // Reduced motion gets the instrument, not the performance: it arrives and
-    // leaves at its final geometry with no unfolding at all.
-    if (reducedMotion) {
-      progressRef.current = requested ? 1 : 0;
-      setState({ phase: requested ? "open" : "closed", progress: progressRef.current });
-      return cancel;
-    }
-    const settled = requested ? 1 : 0;
-    if (progressRef.current === settled) {
-      setState({ phase: requested ? "open" : "closed", progress: settled });
-      return cancel;
-    }
-    const durationMs = requested
-      ? RADIAL_OPEN_MOTION.openMilliseconds
-      : RADIAL_OPEN_MOTION.closeMilliseconds;
-    setState({ phase: requested ? "opening" : "closing", progress: progressRef.current });
-    let lastFrameMs = performance.now();
-    const step = (frameMs: number): void => {
-      const elapsedMs = Math.max(0, frameMs - lastFrameMs);
-      lastFrameMs = frameMs;
-      const travel = durationMs > 0 ? elapsedMs / durationMs : 1;
-      const next = requested
-        ? Math.min(1, progressRef.current + travel)
-        : Math.max(0, progressRef.current - travel);
-      progressRef.current = next;
-      if (next === settled) {
-        frameRef.current = null;
-        setState({ phase: requested ? "open" : "closed", progress: settled });
-        return;
-      }
-      setState({ phase: requested ? "opening" : "closing", progress: next });
-      frameRef.current = requestAnimationFrame(step);
-    };
-    frameRef.current = requestAnimationFrame(step);
-    return cancel;
-  }, [reducedMotion, requested]);
-
-  return state;
+function useRadialPresentation(requested: boolean): TransientPresentation {
+  return useTransientPresentation(requested, RADIAL_OPEN_MOTION);
 }
 
 /** One in-flight rotation gesture. */
