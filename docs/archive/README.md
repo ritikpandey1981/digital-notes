@@ -15,6 +15,12 @@ when the user asks for history or current sources cannot resolve a contradiction
   codebase; both are superseded by `AGENTS.md` and the active documents below.
 - `architecture-snapshots/`: large point-in-time architecture manuals retained for
   archaeology.
+- `screenshots/`: historical visual evidence captured during earlier work, kept after
+  the reports that referenced it were retired. These images record what the application
+  looked like on the day they were taken, not what it should look like now. Never treat
+  one as a current design requirement or a visual baseline; current product and design
+  truth comes from the active documents together with current source and tests. The
+  phase names in the subdirectories are historical labels only.
 
 Use the active documentation instead:
 
