@@ -1,65 +1,73 @@
 # Folio
 
-Folio is a Windows-first, offline-first digital notebook focused on a calm and
-responsive writing experience.
+Folio is a Windows-first, offline-first professional sketchbook built with Electron,
+React, TypeScript, and Canvas 2D.
 
-The repository currently contains the implemented foundation through Phase 14.1:
+The repository contains a live multi-page, multi-layer editor with immutable Ink and
+vector objects, command-based undo/redo, selection and manipulation, drawing tools,
+color workflows, and Electron integration. The current persistence package serves an
+older notebook model and is not yet connected to the live sketchbook; see the roadmap
+before assuming Open/Save is complete.
 
-- Electron/React desktop shell and reusable UI primitives
-- immutable notebook domain and folder-based persistence
-- Canvas 2D rendering, viewport, and ink infrastructure
-- immutable editor document objects
-- transform-aware selection and hit testing plus translation, rotation, and scale manipulation
-- legacy notebook History plus generic editor undo/redo, transactions, and keyboard integration
-- generalized immutable manipulation results and editor adapters for Move, Rotate, Scale, Delete, and Duplicate commands
-- one-entry stroke undo/redo, universal Select-tool move/scale/rotate targeting, forgiving bounds selection, deterministic duplicate offset, and Pen-driven selection clearing
-- session-scoped copy, cut, paste, duplicate, delete, and Select All workflows with grouped multi-object undo/redo
-- fresh paste identities, deterministic repeated-paste offsets, editor-owned logical multi-selection, editing shortcuts, and a capability-aware desktop context menu
-- combined logical-selection bounds, grouped move/scale/rotate transactions, manipulation cursors, and constant-width transformed ink
-- simplified handle-driven tooling, smooth cached cubic ink paths, rotation-specific cursor feedback, grab/grabbing move feedback, and more usable selection handles
-- a lifecycle-owned tool registry, persistent Pen and Highlighter presets, unified hex/RGB colors, configurable width and opacity, transactional whole-stroke erasing, and backend property descriptors
-- a fixed vertical Tool Dock, descriptor-driven Context Tool Palette, continuous width and opacity controls, HiDPI Canvas2D stroke preview, usage-driven recent colors, distinct capped-opacity highlighting, and reload-safe Electron shortcuts
-- ESLint, Prettier, Vitest, and Playwright configuration
-- Package-oriented project structure
-
-## Prerequisites
+## Requirements
 
 - Node.js 22.12 or newer
 - pnpm 11 or newer
+- Windows for the packaged desktop target
 
-## Development
+## Start developing
 
 ```powershell
 pnpm install
 pnpm dev
 ```
 
-## Quality checks
+## Common checks
 
 ```powershell
-pnpm format
 pnpm format:check
-pnpm typecheck
 pnpm lint
+pnpm typecheck
 pnpm test
 pnpm build
 pnpm test:e2e
 ```
 
-## Desktop packaging
+Use `pnpm format` only when a broad formatting rewrite is intentional. Package an
+unpacked Windows application with:
 
 ```powershell
 pnpm package
 ```
 
-Project requirements and engineering decisions are maintained in `docs/`. See
-`docs/architecture/PHASE11_HISTORY_ARCHITECTURE.md` for the current History
-architecture and developer guide, and
-`docs/architecture/PHASE12_MANIPULATION_FRAMEWORK.md` for the manipulation
-extension boundary. Phase 13 clipboard behavior is documented in
-`docs/interaction/PHASE13_CLIPBOARD_WORKFLOW.md`; subsequent interaction polish is documented in
-`docs/interaction/PHASE13_1_INTERACTION_POLISH.md` and
-`docs/interaction/PHASE13_2_FINAL_EDITOR_UX_POLISH.md`.
-The additive rich-editing foundation is documented in
-`docs/architecture/PHASE14_EDITOR_FOUNDATION.md`; its interaction refinement is documented in
-`docs/interaction/PHASE14_1_UX_POLISH.md`.
+## Repository shape
+
+| Path                                      | Purpose                                                   |
+| ----------------------------------------- | --------------------------------------------------------- |
+| `apps/desktop`                            | Electron host, React workspace, and product UI            |
+| `packages/document`                       | Live pages, layers, and artwork objects                   |
+| `packages/editor`                         | Sessions, tools, commands, selection workflows, and color |
+| `packages/history`                        | Generic command History and compatibility History         |
+| `packages/ink`                            | Pointer capture, strokes, brushes, and ink geometry       |
+| `packages/rendering`                      | Canvas, viewport, compositor, and overlays                |
+| `packages/selection`                      | Low-level selection and hit testing                       |
+| `packages/manipulation`                   | Model-neutral object transformations                      |
+| `packages/domain`, `packages/persistence` | Older notebook persistence path                           |
+| `packages/ui`                             | Shared React primitives                                   |
+| `tests/e2e`                               | Playwright Electron tests                                 |
+
+## Documentation
+
+Start with [`AGENTS.md`](AGENTS.md) for repository rules, then route by task:
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — implemented system and boundaries
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — durable engineering choices
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — verified gaps and future work
+- [`docs/design/folio-design-system.md`](docs/design/folio-design-system.md) — visual,
+  spatial, motion, and interaction rules
+- [`docs/design/drawing-tool-system.md`](docs/design/drawing-tool-system.md) — drawing
+  slots, brushes, properties, shapes, and color behavior
+- [`docs/archive/README.md`](docs/archive/README.md) — non-authoritative historical
+  material
+
+Package-level contracts are summarized in each substantive package's `README.md`.

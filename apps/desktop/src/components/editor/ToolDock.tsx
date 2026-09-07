@@ -61,11 +61,10 @@ interface ToolDockProps {
  * Per-slot iconography.
  *
  * Utilities are semantic icons because they are stable categories. Drawing
- * slots use the closest honest tool glyph as a deliberately temporary stand-in:
- * `docs/design/drawing-tool-system.md` §5 makes a representative stroke the
- * slot's real identity, and that preview is its own piece of work. A
- * hand-drawn approximation here would imply brush behaviour the engine does not
- * have yet.
+ * slots use the closest honest tool glyph as a deliberately temporary stand-in,
+ * as recorded in `docs/design/drawing-tool-system.md`. A brush-accurate preview
+ * is its own piece of work; a hand-drawn approximation here would imply brush
+ * behaviour the engine does not have yet.
  */
 const SLOT_ICONS: Readonly<Record<string, LucideIcon>> = Object.freeze({
   select: MousePointer2,

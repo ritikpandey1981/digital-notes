@@ -1,0 +1,270 @@
+# Folio engineering decisions
+
+This log records durable choices that constrain future work. It is intentionally
+compact: implementation detail belongs in [`ARCHITECTURE.md`](ARCHITECTURE.md), and
+unresolved work belongs in [`ROADMAP.md`](ROADMAP.md).
+
+## D-001 — One live sketchbook document authority
+
+**Status:** accepted
+
+The live editor uses `SketchbookDocument -> Page -> PageDocument`. Each `PageDocument`
+owns both ordered Layers and one canonical flattened `ObjectCollection`.
+
+Layers own ordered object IDs. `PageObject` does not carry a page ID or `layerId`.
+Flattened array position is the canonical mixed-object render order; object `zIndex` is
+derived from it. Constructors reject layer membership/order drift.
+
+**Consequence:** features must update layers and the flattened collection atomically.
+Do not add another ownership field or ordering system for UI convenience.
+
+## D-002 — Immutable replacement and command-based History
+
+**Status:** accepted
+
+Artwork mutations produce immutable successors and execute through commands. The
+generic History layer stores bounded command stacks and supports non-nested,
+all-or-nothing transactions.
+
+Interactive previews may install temporary immutable replacements, but a completed
+gesture produces one logical command. Cancel restores the exact prior state.
+
+**Consequence:** components and renderers never directly mutate canonical document
+objects, and frame-rate input must not become frame-rate History.
+
+## D-003 — Session state stays outside artwork
+
+**Status:** accepted
+
+Active page, active layer, per-page viewport, selection, clipboard, tools, preferences,
+and transient UI are editor-session state. They are not PageObjects and do not enter
+document History.
+
+**Consequence:** persistence of a preference, if later required, needs an explicit
+settings boundary rather than placing it in the sketchbook model.
+
+## D-004 — Page and Layer ownership are independent of objects
+
+**Status:** accepted
+
+An immutable PageObject can be cloned, moved, and reused without embedding container
+identity. Page and Layer containers establish ownership. Paper is Page state beneath
+artwork, not a Layer or PageObject.
+
+**Consequence:** clipboard and duplication create fresh object identities, then insert
+them through the destination page/layer command boundary.
+
+## D-005 — One coordinate and viewport authority
+
+**Status:** accepted
+
+Rendering owns camera/viewport transforms and the conversion path between screen,
+canvas, world, and page coordinates. Selection and manipulation consume adapters to
+that path.
+
+The viewport preserves a 64-CSS-pixel recoverable portion of the page.
+
+**Consequence:** packages must not invent local coordinate math or store viewport
+transforms in document objects.
+
+## D-006 — One request-driven compositor
+
+**Status:** accepted
+
+The Canvas 2D compositor paints paper and the canonical mixed-object order. Rendering
+is invalidation-driven and frame-coalesced. Immutable Ink geometry is cached by stroke
+identity and object scale with bounded scale variants.
+
+**Consequence:** new object kinds extend the compositor; they do not create a parallel
+canvas or continuous render loop. Presentation invalidation must remain explicit.
+
+## D-007 — Preserve exact Ink input
+
+**Status:** accepted
+
+Committed strokes retain exact useful source/process samples, including timing,
+pressure, tilt, twist, buttons, and device information. Smoothing and fitted geometry
+are derived views. Existing centerline and outline strategies are the rendering
+boundary.
+
+**Consequence:** an optimization may change derived caches but not discard canonical
+source samples or change old strokes when a preset changes.
+
+## D-008 — Low-level selection, editor-owned workflows
+
+**Status:** accepted
+
+`@folio/selection` remains the single-primary-selection and hit-testing foundation.
+Logical multi-selection, marquee, overlap cycling, combined bounds, clipboard, and
+group commands live in `@folio/editor`.
+
+`@folio/manipulation` emits model-neutral discriminated results; the editor adapts
+them to document commands.
+
+**Consequence:** richer editing does not widen lower packages with product workflow or
+document dependencies.
+
+## D-009 — Clipboard is session-local
+
+**Status:** accepted
+
+The current clipboard stores immutable PageObject references within the mounted editor
+session. It is not serialized and does not use the operating-system clipboard. Copy is
+History-free; cut, paste, duplicate, and delete use grouped commands.
+
+**Consequence:** cross-application clipboard support is a separate format/security
+design, not an incremental extension of the session clipboard.
+
+## D-010 — Stable drawing slots, replaceable brushes
+
+**Status:** accepted
+
+The main dock exposes five stable physical drawing slots plus Select, Eraser, and
+Shapes. A slot can hold any catalogue brush. Activating an inactive slot selects it;
+activating the selected slot opens its brush library.
+
+Tool preferences remain session state. Selecting a brush adopts its preset defaults
+while retaining the slot color.
+
+**Consequence:** do not couple slot position to a permanent family or put tool
+preferences in document History.
+
+## D-011 — Color targets own current color
+
+**Status:** accepted
+
+Artwork color is canonical lowercase six-digit RGB hex. The active creation tool or
+selected-object target owns current color. `EditorColorSystem` owns recents, favorites,
+palette definitions, and the active palette, but never a parallel current color.
+
+Picker and eyedropper interaction uses `begin`, `preview`, `commit`, and `cancel`.
+
+**Consequence:** creation-tool changes are History-free; selected-object changes use
+one continuous edit command. New color surfaces adapt to this boundary.
+
+## D-012 — Concepts is a reference, not a dependency
+
+**Status:** accepted
+
+Approved Concepts interactions may inform spatial placement, density, gestures, and
+workflow. Folio adapts them to its visual identity, desktop constraints, pages, and
+protected architecture. Third-party trademarks, assets, and unknown internals are not
+copied.
+
+**Consequence:** an approved interaction is implemented faithfully, but an apparent
+reference behavior never justifies breaking Folio's document, History, or input
+invariants. Conflicts are reported for a product decision.
+
+## D-013 — Floating surfaces share dismissal and motion rules
+
+**Status:** accepted
+
+Floating UI participates in an owner-aware, topmost-first dismissal stack. Page
+presses may dismiss and continue as canvas input; workspace-surround presses may be
+dismissal-only. Exiting surfaces stop accepting pointer events immediately.
+
+The common motion is restrained and honors reduced-motion settings.
+
+**Consequence:** new popovers and portals integrate with the shared ownership contract
+instead of adding document-level outside-click listeners.
+
+## D-014 — Legacy persistence remains isolated pending migration
+
+**Status:** accepted constraint; replacement decision pending
+
+`@folio/persistence` correctly serves the older `@folio/domain` Notebook model, while
+the live editor uses `@folio/document`. It is not connected to the live desktop
+session.
+
+**Consequence:** do not present current placeholder file UI as durable save support.
+Before live persistence is implemented, decide whether to migrate the existing format
+or introduce a versioned SketchbookDocument format, and define Ink/Layer recovery and
+compatibility. Do not create a third canonical model.
+
+## D-015 — Teaching and AI are transient until accepted
+
+**Status:** accepted
+
+Future lesson state, analysis, coaching, and guides do not become artwork by default.
+Only an explicit user acceptance may convert a suggestion through a normal command and
+History entry.
+
+**Consequence:** future systems consume editor/document context through adapters and
+cannot silently mutate PageObjects or establish parallel editor authorities.
+
+## D-016 — Page context travels with commands; companion metadata stays bounded
+
+**Status:** accepted
+
+Every page command family — geometry, paper, rename, add, duplicate, remove, reorder —
+and every lifted artwork command records which page it changed, plus a fallback for when
+that page no longer exists. Undo and Redo activate the affected page instead of silently
+changing a page the artist cannot see. Add falls back to the previously active page,
+Duplicate to its source, Remove to the surviving neighbour.
+
+The active page itself remains editor session state, and activating a page creates no
+History. Command context is metadata beside a command, not document state.
+
+Companion metadata is bounded by the commands History actually retains. History reports
+its retained command identities, and the coordinator prunes the companion map against
+that set, so capacity eviction, redo invalidation, rollback, clear, and destroy leave
+nothing behind. Only identities cross that boundary, inside a guard, so companion
+bookkeeping can never interrupt the History lifecycle.
+
+**Consequence:** a new command family must record its page context, and any future
+per-command companion map must be pruned the same way. Do not solve page-aware Undo by
+making the active page part of the document.
+
+## D-017 — Deliberate ownership change commits an open creation-color session
+
+**Status:** accepted
+
+Choosing another drawing slot, utility tool, library brush, or shape replaces the
+creation color target. That is a deliberate end to the color edit, not an abort: the
+session is committed before ownership moves.
+
+Resolution is narrow. Only the session whose target is the one being replaced commits;
+everything else is left to the existing rules. A selected-object session can never match
+a creation target, so selected-artwork editing keeps its own transaction semantics.
+Cancel keeps its exact meaning — the target is genuinely gone, or the artist aborted —
+and still restores the original value.
+
+**Consequence:** a chosen color survives switching tools without drawing first, with no
+stroke required, no History entry, and no second color store. A new surface that replaces
+the creation target must resolve the open session at that boundary rather than leaving
+the valid-target guard to cancel it.
+
+## D-018 — The focused Layer is the active Layer
+
+**Status:** accepted
+
+Spatial Layers derives the focused sheet from the session's active Layer id. There is no
+second focus authority.
+
+Two pieces of state would be two things that can disagree, and the disagreement is
+exactly the confusing case: one sheet in the focus position while another wears the
+accent. Deriving it makes that unrepresentable and means an activation from anywhere —
+a press, a key, the wheel, or something outside the view entirely — moves the
+arrangement through one path.
+
+Navigation changes the active Layer. Active-layer and focus changes are session state
+and create no document History.
+
+**Consequence:** new navigation affordances call the same focus path instead of adding
+local selection state, and deleting the focused Layer cannot leave a stale focus index.
+
+## D-019 — One Layers experience; Stack is modal, List is not
+
+**Status:** accepted
+
+There is one Layers entry point. Stack is a modal structural mode that owns page input
+while open. List is the existing Layers panel with ordinary floating-panel behavior and
+does not inherit that modality. The view switch belongs inside the experience.
+
+A closing Stack releases pointer ownership immediately, while it is still visibly
+collapsing. Motion must never delay interaction: holding the grip through the collapse
+swallowed the first stroke after dismissal.
+
+**Consequence:** do not add a second Layers trigger, and do not give the List modal
+ownership. Any future structural mode follows the same rule — visible exit, immediate
+release.

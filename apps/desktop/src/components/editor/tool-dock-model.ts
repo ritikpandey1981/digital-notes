@@ -6,7 +6,7 @@ import type { EditorTool } from "./editor-types";
  *
  * Folio's tool dock is one logical toolbar rendered as two capsules: five
  * configurable drawing preset slots, then the three permanent utilities. The
- * grouping is the product decision (`docs/design/drawing-tool-system.md` §2);
+ * grouping is the product decision (`docs/design/drawing-tool-system.md`);
  * this module owns only the identity and resolution rules so they can be tested
  * without a window.
  */
@@ -37,9 +37,9 @@ export interface DrawingSlotDefinition extends DockSlotDefinition {
    * Pinning exists only to keep two slots that share one brush family honestly
    * distinct: without it, Pen and Brush Pen would be the same button twice. A
    * family hosting a single slot is left alone, so choosing a preset from Tool
-   * Options keeps behaving exactly as it does today. Genuine per-slot width,
-   * opacity and colour need the slot-keyed preference layer that
-   * `docs/design/drawing-tool-system.md` §26 records as future work.
+   * Options keeps behaving exactly as it does today. Complete per-slot
+   * preferences are owned by the slot-keyed store documented in
+   * `docs/design/drawing-tool-system.md`.
    */
   readonly presetId: string | null;
 }

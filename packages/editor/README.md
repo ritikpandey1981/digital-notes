@@ -1,178 +1,54 @@
 # @folio/editor
 
-`@folio/editor` is Folio's application-facing composition layer. `CanvasSurface` is the thin React lifecycle adapter around rendering, ink, immutable document objects, selection, manipulation, the Phase 11 generic History controller, and the Phase 13 session clipboard workflow.
+Application orchestration for Folio's live sketchbook editor.
 
-React supplies the host lifecycle and callbacks. It does not calculate transforms, build strokes, perform hit testing, own viewport math, manage History stacks, or draw pixels.
+## Responsibilities
 
-## Public API
+- Mount `CanvasSurface` and connect document, History, rendering, input, selection, and
+  manipulation controllers.
+- Implement `InkDocumentSession` for `SketchbookDocument` plus active-page,
+  active-layer, and per-page viewport session state.
+- Adapt manipulation and editing outcomes into immutable document commands.
+- Coordinate page, layer, stroke, vector-style, transform, and lifecycle History.
+- Own editor-local multi-selection, marquee, overlap cycling, clipboard, shortcuts,
+  context menu, measurements, and creation drafts.
+- Provide tool registry, drawing-slot state, brush presets, property descriptors, color
+  conversion, palettes, color targets, and sampling helpers.
 
-- `CanvasSurface` is the package's only runtime export.
-- `CanvasSurfaceProps` documents interaction mode, lifecycle, diagnostics, selection, manipulation, History, and error callbacks.
-- `CanvasInteractionMode` additively includes `"line"`, `"rectangle"`, and `"ellipse"` beside the existing select, transform, ink, highlighter, eraser, and disabled modes.
-- `ObjectLifecycleActions` is a session-scoped type-only action boundary for deleting or duplicating the editor's logical selection; the desktop toolbar receives it through `onObjectLifecycleActionsReady`.
-- `ShapeEditingActions`, `ShapeEditingSnapshot`, and `ShapeStylePatch` are additive type-only boundaries that let desktop composition present selected-vector properties without exposing editor implementation classes.
+## Mutation boundary
 
-The additive History callbacks are:
-
-- `onHistoryControllerReady(controller)`, which exposes the session's interface-oriented `IHistoryController<ObjectCollection>` for programmatic operations; and
-- `onHistoryChange(notification)`, which receives immutable post-execute/undo/redo notifications.
-
-`InkDocumentSession`, all concrete commands, the manipulation command adapter, `EditorHistoryCoordinator`, the clipboard and logical-selection models, shortcut adapters, context menu, interaction hit policies, and coordinate mappers are package-internal. They are not exported from the package barrel. A public-API test locks this boundary.
-
-## Editor composition
-
-```mermaid
-flowchart TD
-    Host["Desktop CanvasHost"] --> Surface["CanvasSurface"]
-    Surface --> Rendering["@folio/rendering"]
-    Surface --> Ink["@folio/ink"]
-    Surface --> Document["InkDocumentSession and @folio/document"]
-    Surface --> Selection["@folio/selection"]
-    Surface --> LogicalSelection["Editor logical selection set"]
-    Surface --> Clipboard["Session clipboard"]
-    Surface --> Manipulation["@folio/manipulation"]
-    Manipulation --> Result["ManipulationResult"]
-    Result --> Coordinator["EditorHistoryCoordinator"]
-    Surface --> Coordinator
-    Ink --> StrokeCommand["Private AddStroke command"]
-    Clipboard --> InsertCommand["Private insert command"]
-    StrokeCommand --> Coordinator
-    InsertCommand --> Coordinator
-    Coordinator --> Adapter["Manipulation command adapter"]
-    Adapter --> Commands["Private Move, Rotate, Scale, Delete, or Duplicate command"]
-    Commands --> History["@folio/history public factories and interfaces"]
-    History --> Document
-    Document --> Refresh["Permanent ink/vector and selection refresh"]
-    Rendering --> Refresh
+```text
+UI/input -> editor action -> command/coordinator -> History -> document successor
 ```
 
-`CanvasSurface` mounts one base `CanvasController`, ink overlay, vector-interaction overlay, selection overlay, manipulation-preview overlay, shape-creation preview overlay, document session, selection subsystem, editor logical-selection set, session clipboard, manipulation subsystem, History manager/controller pair, shortcut listeners, and context-menu bridge. Teardown removes listeners, temporary measurements, previews, pointer capture, editor-local state, subscriptions, and rendering resources. Tool changes do not remount the canvas or recreate History.
+The editor may install immutable preview state during an active gesture. Commit must
+produce one logical command; cancel restores the retained original. Creation-tool
+preference changes remain History-free. Selected vector and Ink style edits use the
+continuous-edit boundary.
 
-## Manipulation and History
+## Selection and clipboard
 
-The editor is the only adapter between Manipulation and History:
+`@folio/selection` remains the low-level primary-selection authority. This package adds
+an ordered logical identity set for multi-selection and projects its final identity to
+the primary controller.
 
-```mermaid
-flowchart LR
-    Pointer["Pointer or lifecycle action"] --> Manipulation["Continuous transform or discrete lifecycle result"]
-    Manipulation --> Result["Discriminated ManipulationResult"]
-    Result --> Coordinator["EditorHistoryCoordinator"]
-    Coordinator --> Adapter["Editor command adapter"]
-    Adapter --> Command["Move, Rotate, Scale, Delete, or Duplicate command"]
-    Command --> Controller["History controller"]
-    Controller --> Session["Immutable ObjectCollection successor"]
-    Session --> Sync["Render and selection synchronization"]
-```
+The clipboard is session-only and stores ordered immutable PageObject references. Copy
+does not enter History. Cut, paste, duplicate, and delete group object commands in one
+transaction. Paste creates fresh identities and uses a common 20-page-unit offset per
+paste ordinal. There is no operating-system clipboard integration.
 
-The private commands implement `EditorCommand<ObjectCollection>` over supported immutable PageObjects. Transform and lifecycle commands require a visible, unlocked target and store only their operation-specific state. `AddStrokeCommand` remains ink-specific; the existing insert command adds one completed vector object as one History entry. Delete, Duplicate, Move, Rotate, Scale, clipboard, and paste use the same commands for ink and vectors. Commands contain no rendering, selection, manipulation-session, or History-stack behavior.
+## Color
 
-`DuplicateCommand` validates the clone's complete logical immutable state rather than requiring heap-reference equality. This allows a later transform to execute and undo before the duplication itself is undone, while still rejecting stale or mismatched clone state.
+Artwork color is canonical lowercase RGB hex. Current color belongs to the active
+creation or selection target. `EditorColorSystem` owns only recents, favorites, palette
+definitions, and active-palette selection. Picker and eyedropper behavior goes through
+`ColorTargetAdapter` begin/preview/commit/cancel.
 
-The private command adapter exhaustively maps `translation`, `rotation`, `scale`, `delete`, and `duplicate` to their matching commands. `EditorHistoryCoordinator` owns one manager/controller pair, executes adapted manipulation commands and completed-stroke commands, and listens for successful transitions. `CanvasSurface` projects the complete ordered object collection into permanent ink visuals, clears invalid selection identities, and selects a newly duplicated object after the initiating action. A failed command leaves the current document and selection consistent.
+## Public surface
 
-Duplicate creation and its fixed `{ x: 10, y: 10 }` page-space translation execute as one existing History transaction. The frozen `DuplicateCommand` and `MoveCommand` remain unchanged; redo replays their stored deterministic values and undo removes the duplicate in one step.
+The package exports `CanvasSurface`, editor viewport/page/layer actions, color and
+palette models, drawing slots and presets, property/tool registries, selected-Ink style
+helpers, marquee/selection helpers, and selected rendering/History utilities.
 
-## Clipboard and logical selection
-
-Phase 13 keeps clipboard ownership entirely inside the mounted editor session. Copy stores an immutable ordered group of existing document-object references and creates no History entry. Paste clones every stored object through `ObjectFactory`, assigns fresh identities, preserves stroke/style/metadata and relative spacing, and applies a common page-space offset of `{ x: 20, y: 20 }` per paste ordinal. A new copy or cut resets the ordinal; editor teardown clears the clipboard.
-
-The frozen Selection package remains the primary pointer authority for one object. An editor-owned logical selection set adds the minimum multi-object state required by Select All and grouped editor actions without changing `SelectionState`. The primary object is the final logical-selection identity. For a group, the editor caches the union of every selected object bound and supplies that single combined rectangle to the existing overlay renderer. Diagnostics expose the complete ordered identity set, combined bounds, and immutable transforms. Pointer selection collapses the logical set to one object. Document replacement reconciles removed identities.
-
-Cut copies first and executes one transaction containing existing delete commands. Paste executes one transaction containing private insert commands. Multi-object Duplicate reuses existing Duplicate and Move commands in one transaction. Delete uses existing Delete commands. Each operation is one undo/redo step, selection is updated only by the editor, and the clipboard never changes during undo or redo.
-
-## Select tool interaction
-
-Select is the universal object-manipulation tool. Ink retains its forgiving bounds-oriented editor policy; lines use their actual path with a larger thin-line tolerance, while rectangles and ellipses are selectable anywhere inside their transformed geometry. Results remain top-most-first. Rectangles and ellipses retain four scale handles and one rotation handle. A selected line instead displays its highlighted path with endpoint and midpoint handles and no rectangular selection box. Pointer targeting is editor-owned: dragging inside the selected bounds starts translation, dragging a supported corner starts uniform scale, and dragging the upper handle starts rotation. Each route delegates to the existing manipulation controller and unchanged command adapter. The legacy Move, Rotate, and Scale modes remain compatible, but they are not required for normal manipulation.
-
-Switching to Pen clears selection immediately without remounting the canvas, recreating History, or affecting the document. Ink rendering remains live during pointer movement; only the completed immutable stroke is submitted to History.
-
-Continuous transforms use one generalized manipulation-preview renderer. All five operations use the same document replacement, rendering projection, and selection synchronization path. Future interaction types add an immutable result variant and an editor command-adapter branch. They do not change History, the coordinator lifecycle, document installation, notifications, or canvas synchronization.
-
-## Interaction polish
-
-The Select tool resolves cursor feedback with the same page-space hit regions used to start manipulation. The group interior uses the platform open-hand `grab` cursor and changes to `grabbing` while translation owns the pointer. Opposing corners use `nwse-resize` or `nesw-resize`; the rotation handle uses a lightweight circular-arrow cursor with `crosshair` fallback. All other page space immediately restores `default`. Hover is editor presentation state only: it neither changes selection nor enters History. Cursor calculation is skipped while an active manipulation owns the pointer.
-
-Move, Rotate, and Scale are handle-driven and no longer appear as desktop toolbar buttons. Their compatible `CanvasInteractionMode` values remain intact; this is a composition-only toolbar simplification. Selection handles retain their established square/circular style and 28-pixel rotation spacing, with 10-pixel visuals and a separate 12-pixel hit radius for easier targeting.
-
-Logical groups reuse the editor-owned selection set without changing the Selection package. A cached combined bound becomes the manipulation target and the one overlay rectangle. Translation expands to one existing Move command per selected object. Scale expands to existing Scale commands plus Move commands that reposition each object around the combined center. Rotation similarly combines existing Rotate and Move commands around the group center. Every expansion executes inside one existing History transaction, preserving relative spacing and one-step undo/redo.
-
-Permanent ink continues to project immutable strokes and transforms into `StrokeRenderer`. During transformed drawing, the renderer keeps the existing geometry transform but divides only its internal rendered width by the object scale. Canvas scaling therefore restores the original effective pen width. Document stroke styles, `Transform`, `ScaleCommand`, bounds, History, and object identity remain unchanged.
-
-Ink paths use the adaptive multi-point cubic Bézier fitter documented by `@folio/ink`. Live segments draw incrementally; finalization replaces the preview once with the complete cached curve. Finalized geometry is reused by redraw, move, rotation, scale, clipboard, and History-driven document replacement.
-
-## Professional tool foundation
-
-Phase 14 adds an interface-oriented `EditorToolRegistry`. A tool owns activation, deactivation, pointer events, keyboard events, cursor state, temporary rendering, and cleanup. `CanvasSurface` delegates through one registry while retaining its original interaction-mode API. The optional drawing-style input is sampled only when a new stroke begins, so changing presets never mutates existing ink.
-
-The built-in registry contains Select, legacy Move/Rotate/Scale adapters, Pen, Highlighter, whole-object Eraser, Line, Rectangle, Ellipse, and Disabled. Pen and Highlighter activate the same `PointerInputController`, document factory, History coordinator, curve cache, and renderer. Their only difference is immutable stroke style. Eraser hit-tests complete objects and executes existing Delete commands inside one History transaction per pointer gesture. It never edits points or splits paths.
-
-`PenPresetStore` retains independent Pen and Highlighter choices. Presets contain a generic `EditableStyle`, pressure settings, and a future-compatible brush identifier. `EditorColorSystem` provides one validated hex/RGB representation, a shared preset palette, and bounded recent colors. Widths are presets rather than a closed enum, so arbitrary positive values remain valid.
-
-The backend-only `PropertyDescriptorRegistry` maps `PageObject.type` to providers. Ink, Line, Rectangle, and Ellipse providers describe color, width, and opacity without embedding UI or tool behavior in `PageObject`. Future object types register their own providers; a future panel renders descriptors rather than branching on concrete classes.
-
-## Phase 14.1 desktop UX policy
-
-The desktop uses a permanent 48-pixel-wide, content-sized vertical Tool Dock at the left center of the workspace. Equal top and bottom padding frame the controls without a reserved footer, and the dock never expands, scrolls, or moves in response to tool state. Pen and Highlighter settings appear in a separate 304-pixel Context Tool Palette immediately beside it, so tool switching and setting changes cannot affect the dock.
-
-The desktop options adapter reuses the public `EditablePropertyDescriptor` shape without changing the editor Tool Registry or property-descriptor backend. A registry of option providers describes Pen and Highlighter, and reusable property renderers consume those descriptors. Vector creation has no Context Tool Palette; vector properties are edited after selection.
-
-The Context Tool Palette fades and slides horizontally over 180 milliseconds. It remains mounted when switching directly between Pen and Highlighter; only its descriptor-driven contents update with a 150-millisecond transition. Selecting a tool without configurable properties or pressing anywhere outside the palette, including the rendered page and surrounding workspace, animates it out. Page input still reaches the active editor tool; empty gray workspace presses are consumed so dismissing Pen options cannot create an accidental dot.
-
-Color selection only updates the active immutable preset. The desktop observes the existing successful add-stroke History notification and then records that stroke color in the shared `EditorColorSystem`. Recent colors therefore describe committed editing use, remain deduplicated and most-recent-first, and are ready for later object adapters without coupling the color system to Ink.
-
-Width is continuously adjustable from 0.5–30 pixels and retains floating-point values. Pen and Highlighter both present a complete 10–100% opacity control. The Highlighter control normalizes that display range onto the unchanged 0.10–0.45 model range, so 100% in the widget still renders at the existing 0.45 opacity ceiling and preserves its wide, pressure-independent, translucent identity without changing Stroke, rendering, or document semantics. Both premium continuous controls include an enlarged hit target, animated thumb, immediately synchronized numeric input, keyboard and Shift+Arrow adjustment, hovered-wheel adjustment, and a HiDPI Canvas2D preview that mirrors finalized-stroke style and cubic-path drawing semantics. Double-click has no special behavior.
-
-The desktop adapter applies purpose-specific pointer feedback without changing editor interaction contracts: Pen, Highlighter, and Eraser use distinct custom cursors, the unified Shapes tool uses one crosshair for every shape kind, and Select/Move/Rotate/Scale retain the editor engine's dynamic cursors.
-
-## Phase 15R shape workflow
-
-The desktop Tool Dock exposes one Shapes entry. Its small floating Shapes widget contains only Line, Rectangle, and Ellipse and preserves the selected shape kind between creations. The underlying additive `CanvasInteractionMode` values remain unchanged, so this is a desktop-composition refinement rather than a tool-registry redesign. Shape creation continues to use pointer-down, live preview, pointer-up commit, and one existing insert command. Shift constraints are evaluated throughout the gesture, not only on its first event.
-
-The mounted shape-editing toolbar is visible only for one selected vector and remains mounted while selection changes between supported vector types. Its content-sized horizontal surface is clamped to the viewport and chooses an above- or below-object placement to minimize obstruction. Stroke color, width, and opacity route through a private immutable style-update command and the existing `EditorHistoryCoordinator`; Duplicate and Delete reuse existing session lifecycle actions. The toolbar therefore owns no document mutations, History stacks, rendering behavior, or selection state. Its More control is intentionally a disabled placeholder.
-
-Width and Opacity use the same `ContinuousSlider` as Pen and Highlighter. A reusable controlled expansion component supplies each trigger, animated panel, focus semantics, Escape/outside dismissal, and stable absolute layout. Numeric trigger summaries reserve one fixed tabular-width field capable of displaying values through `1000.0 px`, so value changes cannot resize or horizontally reposition the toolbar. Future controls can use that same mechanism without adding new expansion behavior. The panel is outside normal layout flow, so opening it does not resize or shift the toolbar.
-
-Desktop composition preserves the toolbar's viewport anchor during style-only object replacement. Document bounds and selection geometry still update normally; only the floating toolbar presentation retains its position until the object itself moves, transforms, changes selection, or the viewport changes. The Shapes widget uses a 56-by-126-pixel surface with 36-pixel actions, reducing visual weight while keeping comfortable desktop targets.
-
-Selection presentation is configured through existing renderer style inputs and the editor-owned vector interaction overlay. The final palette uses a less saturated accent, thinner outline, and lower highlight opacity while preserving handle size and hit targets. During active shape creation, Shift key events prevent Chromium's default behavior and update constraints without repeated renders; Windows' operating-system Sticky Keys accessibility shortcut remains under system control.
-
-The editor-owned vector interaction overlay is invalidation-driven. It draws temporary hover emphasis and the selected-line path/endpoint/midpoint presentation, then becomes idle until pointer, selection, viewport, or document state changes. No continuous render loop, serialized presentation state, or new package dependency is introduced.
-
-An outside pointer press—including one on the rendered page or surrounding workspace—dismisses the Context Tool Palette without changing the active tool or its retained settings. Selecting that tool again reopens the palette. The existing Radix More menu retains the same workspace-dismiss behavior.
-
-Electron intercepts `Ctrl/Cmd+R` and `F5` before Chromium can reload the renderer. Programmatic reload remains available to tests, while ordinary desktop shortcuts cannot silently discard the session document.
-
-## Keyboard shortcuts
-
-The mounted editor reuses the coordinator's controller for:
-
-- `Ctrl+Z`: undo;
-- `Ctrl+Shift+Z`: redo; and
-- `Ctrl+Y`: redo.
-
-Editor-local workflow shortcuts use the same mounted session:
-
-- `Ctrl+C`: copy the logical selection without History;
-- `Ctrl+X`: copy, then cut as one History transaction;
-- `Ctrl+V`: paste fresh objects as one History transaction;
-- `Ctrl+D`: duplicate the logical selection as one History transaction;
-- `Ctrl+A`: select all visible, unlocked objects; and
-- `Delete` or `Backspace`: delete the logical selection as one History transaction.
-
-The desktop context menu exposes Copy, Cut, Paste, Duplicate, Delete, and Select All through these exact action callbacks. Capability state controls disabled items. Right-clicking an already selected object preserves the logical group; right-clicking another object selects only that object; right-clicking blank page space clears selection while leaving Paste available.
-
-The listeners ignore composing or already-prevented events, Meta/Alt combinations, and editable input/select/textarea/content-editable targets. Browser default behavior is prevented only when the requested History or editing operation is handled. They are installed once per editor lifetime and removed idempotently on teardown. No additional manager or controller is created.
-
-The application currently has no platform shortcut abstraction, so macOS Command-key bindings are not implemented.
-
-## History scope boundary
-
-Translation, rotation, scale, delete, and duplicate use History through the generalized manipulation-result boundary. Finalized ink uses a private `AddStrokeCommand` through the same generic controller, while `InkDocumentSession.completeStroke()` remains available for existing package-internal compatibility tests. The existing direct translation helper remains for Phase 10 source compatibility but is not used by `CanvasSurface`.
-
-The editor still has no notebook persistence or native operating-system clipboard integration. History, clipboard contents, document objects, strokes, selections, and manipulations are session-only and are discarded with the mounted editor session.
-
-## Dependency boundary
-
-Editor may depend on History, Manipulation, Selection, Document, Rendering, Ink, and React because it coordinates them. It imports only public History interfaces and factories. History never imports Editor, and Manipulation, Rendering, Selection, Document, Ink, and Persistence remain unaware of editor History coordination.
-
-See [Phase 11 History Architecture and Developer Guide](../../docs/architecture/PHASE11_HISTORY_ARCHITECTURE.md) for History lifecycle and guarantees, and [Phase 12 Manipulation Framework](../../docs/architecture/PHASE12_MANIPULATION_FRAMEWORK.md) for the generalized result/adaptation boundary.
+See [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) and
+[`../../docs/design/drawing-tool-system.md`](../../docs/design/drawing-tool-system.md).

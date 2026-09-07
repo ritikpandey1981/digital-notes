@@ -4,8 +4,8 @@ import { BRUSH_LIBRARY_CATALOGUE, type BrushLibraryEntry } from "./brush-library
  * Pure polar geometry for the radial Brush Library.
  *
  * The construction borrows the geometric logic of a Copic-style colour wheel,
- * described in `docs/design/concepts-reference.md` §5 as a principle to adapt
- * rather than an artefact to copy:
+ * following the reference-adaptation policy in
+ * `docs/design/folio-design-system.md` rather than copying an artefact:
  *
  *  - the selected drawing preset slot is the centre
  *  - concentric tracks radiate from it with no radial gap between them

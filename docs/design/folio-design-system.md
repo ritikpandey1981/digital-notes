@@ -1,404 +1,276 @@
-# Folio Design System v0.1
-
-This is a **foundation, not a finished specification**. It fixes the principles that
-every Folio UI decision must respect, records the current guidance derived from the
-implementation as it stands today, and is explicit about the values that are still
-open and will be settled per component from exact references.
-
-Three kinds of statement appear throughout, and they are labelled:
-
-- **FIXED** — a principle. Changing it requires an explicit product decision.
-- **CURRENT** — today's guidance, derived from the shipped implementation. Follow it
-  unless an approved component design deliberately changes it.
-- **OPEN** — deliberately unfinalized. Decide per component, from the approved
-  reference, and record the decision in `component-inventory.md`.
-
-Companion documents: `concepts-reference.md` (reference policy),
-`workspace-layout.md` (spatial responsibility), `component-inventory.md` (tracker).
-Engineering constraints live in the repository-root `CLAUDE.md`.
-
----
-
-## 1. Product Character
-
-**FIXED.** Folio should feel:
-
-professional · creative · direct · calm · lightweight · tactile · canvas-first ·
-artist-oriented · efficient · suitable for long drawing sessions
-
-It must **not** feel like:
-
-- a SaaS dashboard
-- Office-style productivity software
-- a Notion clone
-- a OneNote clone
-- a generic web admin UI
-- a collection of ShadCN cards
-- a large modal-driven settings application
-
-Primary UX inspiration is **Concepts**. Folio translates Concepts' professional
-spatial-control philosophy into Folio's own lighter visual identity.
-
----
-
-## 2. Visual Identity
+# Folio design system
+
+This is the active design contract for the desktop editor. It combines Folio's visual
+language, workspace responsibilities, reference policy, motion, accessibility, and UI
+implementation rules. Drawing-specific behavior lives in
+[`drawing-tool-system.md`](drawing-tool-system.md).
+
+## Product character
 
-**CURRENT direction:**
-
-- light-neutral workspace
-- warm/light paper
-- restrained floating surfaces
-- muted indigo/violet accent
-- neutral typography
-- artwork provides most of the visual color
-- minimal decorative chrome
-- high canvas visibility
-- direct manipulation
+Folio should feel like a calm, precise instrument for making marks:
 
-**FIXED:** Do not imitate Concepts' dark palette directly. The *interaction*
-philosophy is Concepts-inspired; the *visual identity* stays Folio's own. Folio ships
-both light and dark themes; light is the reference identity and dark is a faithful
-translation of it, not a separate design.
+- canvas-first rather than dashboard-first;
+- compact rather than sparse or oversized;
+- warm and tactile without imitating physical skeuomorphism;
+- quiet in neutral states and decisive in selected states;
+- professional enough for long sessions, not playful at the cost of control;
+- spatial: controls live near the work they affect and transient UI yields to artwork.
+
+Clean does not mean putting every cluster in a large white card. Use hierarchy,
+alignment, proximity, and occupied space before adding containers.
 
----
+## Reference policy
+
+Concepts is the primary professional interaction reference for approved Folio UI work.
+It is a source for spatial placement, density, discoverability, and interaction
+patterns—not a product dependency or a pixel-for-pixel target.
+
+For each significant component:
 
-## 3. Color Roles
-
-Semantic tokens already exist in `apps/desktop/src/styles.css`, defined per theme on
-`:root` / `[data-theme="light"]` / `[data-theme="dark"]` and exposed to Tailwind via
-`@theme inline`. **Reuse them.** Do not introduce component-level hardcoded colors.
-
-| Role                  | Token                                          |
-| --------------------- | ---------------------------------------------- |
-| workspace/background  | `--folio-workspace`                            |
-| top bar               | `--folio-topbar`                                |
-| paper (page)          | `--folio-paper`, `--folio-page`                 |
-| area around the page  | `--folio-paper-surround`                        |
-| primary surface       | `--folio-surface`                               |
-| subtle surface        | `--folio-surface-muted`                         |
-| elevated/floating     | `--folio-glass` + `--folio-shadow-floating`     |
-| primary text/ink      | `--folio-ink`                                   |
-| secondary text        | `--folio-muted`                                 |
-| neutral icon          | `--folio-icon-neutral`                          |
-| border                | `--folio-border`                                |
-| accent                | `--folio-accent`                                |
-| accent hover          | `--folio-accent-hover`                          |
-| selected background   | `--folio-accent-soft`, `--folio-surface-active` |
-| hover background      | `--folio-surface-hover` / `--folio-hover`       |
-| selection chrome      | `--folio-selection`                             |
-
-**OPEN.** Folio does not yet have dedicated tokens for every role a mature editor
-needs. The following are **required to be defined before the components that need
-them are frozen**, and must be added as semantic tokens rather than inline values:
-
-- tertiary text
-- strong border
-- focus ring (currently drawn from `--folio-accent`)
-- destructive / destructive hover
-- warning
-- success
-- disabled foreground and disabled surface
-
-**FIXED distinctions that must never blur:**
-
-- **Artwork color is canonical lowercase hex** and belongs to the document. It is
-  never a theme token.
-- **Paper color** is a `Page.paper` property, not a theme token and not a Layer.
-- **Theme tokens** describe chrome only.
-
----
-
-## 4. Typography
-
-**CURRENT.** The repository font is **Inter** (`@fontsource-variable/inter`, exposed
-as `--font-sans`). Keep it unless a deliberate product decision replaces it.
-
-Define type by role rather than by ad-hoc size:
-
-| Role                    | Intent                                                 |
-| ----------------------- | ------------------------------------------------------ |
-| top/app navigation      | compact, quiet, never a page heading                   |
-| panel title             | small, medium weight, clearly subordinate to artwork   |
-| control label           | compact, high legibility at small size                 |
-| compact metadata        | smallest readable size, secondary color                |
-| numeric tool value      | tabular figures, stable width while dragging           |
-| menu item               | comfortable hit target, normal weight                  |
-| tooltip                 | small, single-line by default                          |
-| destructive confirmation| normal weight; emphasis comes from wording, not size   |
-| secondary/status        | secondary color, low prominence                        |
-
-**FIXED.** Professional editor typography is compact and highly legible. Avoid
-oversized dashboard headings inside the editor. Numeric values that change during a
-drag must not reflow their neighbours.
-
-**OPEN.** Exact sizes, weights and line-heights per role are decided per component
-from the approved reference.
-
----
-
-## 5. Spacing
-
-**CURRENT conceptual scale:** `4 · 6 · 8 · 12 · 16 · 24`.
-
-**FIXED:**
-
-- Do not force every component to the same density. Drawing controls may legitimately
-  be denser than dialogs.
-- The canvas area remains dominant.
-- Spacing is a rhythm, not a rule to satisfy — a control cluster that reads correctly
-  at 6px must not be padded to 16px for consistency's sake.
-
----
-
-## 6. Radii
-
-**CURRENT.** Restrained corner radii. `--folio-floating-radius` is `14px` today for
-floating surfaces; small controls sit around 8–10px.
-
-Roles:
-
-| Role                  | Intent                                    |
-| --------------------- | ----------------------------------------- |
-| tiny control          | just enough to soften the corner          |
-| drawing-tool control  | small, consistent across the tool cluster |
-| compact popup         | between control and panel                 |
-| floating panel        | `--folio-floating-radius`                 |
-| dialog                | panel radius or slightly larger           |
-
-**FIXED.** Do not turn every rectangle into a pill. Pill geometry is used only when
-interaction semantics call for it (a track, a segmented control, a chip) or when the
-approved reference uses it.
-
----
-
-## 7. Elevation
-
-**FIXED hierarchy**, lowest to highest:
-
-```
-canvas / workspace  →  floating control  →  panel  →  modal
-```
-
-**CURRENT.** Prefer a **subtle border plus a restrained shadow**
-(`--folio-shadow-quiet`, `--folio-shadow-floating`) over a heavy drop shadow. Avoid
-large web-card shadows; elevation should read as "this floats above the artwork", not
-as decoration.
-
----
-
-## 8. Iconography
-
-**CURRENT.** Lucide React, already used throughout the editor.
-
-**FIXED rules:**
-
-- consistent optical size within a cluster (optical, not just box size — the tool dock
-  already carries per-icon optical offsets where a glyph needs them)
-- drawing-tool recognizability matters more than decorative novelty
-- use text when an icon-only meaning is ambiguous
-- custom icons require product justification
-- destructive controls must not dominate the normal interface
-
----
-
-## 9. Motion
-
-**CURRENT baseline**, defined in `apps/desktop/src/motion/`:
-
-- floating surfaces: **160 ms open / 120 ms close**, 5px travel
-  (`FLOATING_SURFACE_MOTION`)
-- hover 100 ms · press 75 ms · selection 140 ms · tooltip 120 ms · content 150 ms
-  (`INTERACTION_MOTION`)
-- shared ease `cubic-bezier(0.22, 1, 0.36, 1)`
-
-**FIXED:**
-
-- Preserve these conventions unless an approved component design deliberately changes
-  them; one shared treatment is why two panels opened in a row read as one application.
-- Prefer subtle translation, opacity, and spatially meaningful motion.
-- **Reduced motion means opacity only** — no spatial travel at all, not a shorter
-  version of it.
-- **Motion must never delay interaction.** An exiting surface drops `pointer-events`
-  immediately; a closing panel that still intercepts presses swallows the first stroke
-  drawn after it.
-- Avoid decorative animation that interrupts drawing.
-
-Direct-manipulation features may later use specialized motion; that is decided per
-component.
-
----
-
-## 10. States
-
-Every interactive component documents its treatment of:
-
-`default` · `hover` · `active` · `selected` · `focused` · `disabled` · `locked` ·
-`hidden` · `dragging` · `previewing` · `destructive`
-
-**FIXED:**
-
-- Selected/active artist state uses the restrained indigo/violet language
-  (`--folio-accent`, `--folio-accent-soft`).
-- **Hover stays quieter than active/selected.** Hover is a neutral wash
-  (`--folio-surface-hover`); accent is reserved for real state.
-- `locked` and `hidden` are Layer/object semantics, not styling moods — they must be
-  legible without color alone.
-- `previewing` (a live continuous edit) must be visually distinguishable from a
-  committed value, because the two differ in History semantics.
-
----
-
-## 11. Direct Manipulation
-
-**FIXED.** Prefer *adjust where the feature lives* over *open a large generic settings
-dialog*.
-
-- tool settings near the drawing tools
-- layer operations in the Layers UI
-- color operations in the color controls
-- transform controls near or around the selection
-- precision values close to the parameter being manipulated
-
----
-
-## 12. UI Density
-
-**FIXED.** Professional drawing software is allowed to be compact. "Clean" does not
-mean oversized. Optimize for:
-
-- high canvas occupancy
-- short pointer travel
-- readable controls
-- quick repetitive use
-
----
-
-## 13. Floating Surfaces
-
-**FIXED.** Not every control cluster should become a large white card. Concepts often
-succeeds because controls are spatially related to what they manipulate.
-
-Use a floating surface only when it improves hierarchy or interaction. When one is
-used it must participate in the existing architecture:
-
-- the shared floating dismissal stack
-- the occupied-zone placement model (`editor-occupied-zones.ts`,
-  `editor-workspace-zones.ts`) — declare the surface as a hard zone
-- pointer pass-through for the non-interactive wrapper
-- the shared floating motion treatment
-
----
-
-## 14. Numeric Precision
-
-**FIXED.** Where a parameter benefits from precision:
-
-```
-direct manipulation first → numeric feedback → optional exact entry
+1. inspect the existing Folio implementation and architecture;
+2. study the exact approved reference or specification;
+3. describe the Folio adaptation;
+4. obtain product approval when the design is not already approved;
+5. implement the approved component in isolation;
+6. verify behavior and compare the real Electron UI visually;
+7. freeze only after the user accepts the result.
+
+Adapt references to Folio's identity, Windows desktop constraints, page model, input
+architecture, and accessibility. Do not copy trademarks, source assets, or imagined
+internals. If a reference interaction conflicts with the protected architecture,
+report the conflict; the reference does not override document or History correctness.
+
+## Workspace responsibilities
+
+The page is the visual priority. Persistent controls occupy predictable edges so the
+center remains a stable artwork region.
+
+| Region | Responsibility |
+| --- | --- |
+| Top | document identity, navigation, and global/window actions |
+| Left | drawing tools and their immediate configuration |
+| Center | page, artwork, direct manipulation, and transient measurements |
+| Right | organization and color workflows such as Pages, Layers, and quick color |
+| Bottom/periphery | viewport/status actions that do not compete with artwork |
+
+Permanent triggers keep stable positions. Opening one feature should not cause nearby
+primary tools to jump. Persistent surfaces declare hard occupied zones; transient
+surfaces use current workspace geometry to avoid important controls and remain inside
+the window.
+
+Non-interactive wrappers pass pointer input through. Interactive surfaces accept it
+only within their visible controls. A surface that starts closing stops accepting
+pointer events immediately.
+
+## Visual foundations
+
+The canonical runtime tokens are in `apps/desktop/src/styles.css`. Reuse them instead
+of introducing component-local color systems.
+
+### Typography
+
+- Primary family: Inter Variable with system sans-serif fallback.
+- Labels and control text are compact and legible; avoid display-scale type in editor
+  chrome.
+- Weight and contrast carry hierarchy before font-size jumps.
+- Numeric values align cleanly and retain readable units.
+
+### Color roles
+
+- `folio-workspace`: surround behind the page.
+- `folio-topbar`: global chrome.
+- `folio-surface` and `folio-surface-muted`: panels and nested controls.
+- `folio-ink` and `folio-muted`: primary and secondary chrome content.
+- `folio-border`: restrained separation.
+- `folio-accent`, `folio-accent-hover`, and `folio-accent-soft`: focus, selection, and
+  active emphasis.
+- `folio-page*`: page-local presentation that remains stable across shell themes.
+- `folio-selection`: artwork selection treatment.
+
+Both light and dark themes are supported. The page is deliberately paper-like in both;
+do not reinterpret shell dark mode as dark artwork paper.
+
+### Shape, elevation, and density
+
+- Primary icon buttons use the established 32-pixel chrome-button footprint.
+- Floating surfaces use the shared 14-pixel radius and floating shadow.
+- Compact surfaces use a 10-pixel radius and quieter shadow.
+- Pill shapes are for continuous ranges, compact mode choices, and values—not a
+  universal container shape.
+- Borders and shadows remain low contrast; active state comes from color and geometry,
+  not heavy elevation.
+
+Exact component dimensions come from its approved specification and neighboring live
+components. Preserve useful density at small windows.
+
+## Interaction states
+
+Every actionable control defines the states that apply to it:
+
+- default;
+- hover;
+- pressed;
+- selected/active;
+- keyboard focus;
+- disabled;
+- open/expanded when it owns a surface.
+
+Selected and keyboard-focused are distinct. Hover cannot be the only indication of an
+available action. Activation feedback must not move layout.
+
+Tooltips are supporting information, not the only label for unfamiliar state. Suppress
+the tooltip immediately after activation so it does not cover the resulting surface.
+Tooltips remain below dialogs in the layer stack and choose a collision-safe side with
+10 pixels of viewport padding and a 12-pixel anchor gap.
+
+## Motion
+
+Use the shared professional easing curve `[0.22, 1, 0.36, 1]` and existing motion
+utilities. Current timing roles are:
+
+| Role | Timing |
+| --- | ---: |
+| Hover | 100 ms |
+| Press | 75 ms |
+| Selection | 140 ms |
+| Generic floating state | 140 ms |
+| Tooltip | 120 ms |
+| Content transition | 150 ms |
+| Floating open / close | 160 ms / 120 ms |
+| Palette open / close | 190 ms / 160 ms |
+
+Floating surfaces travel only 5 pixels toward their anchor. Motion explains state
+change; it does not decorate routine input. Reversals should continue from the current
+position rather than restarting visibly.
+
+When `prefers-reduced-motion` is enabled, remove spatial travel and inertia. Preserve
+immediate state clarity with opacity or an effectively instant transition.
+
+## Floating surfaces and dismissal
+
+Floating UI shares an owner-aware, last-opened-first-dismissed stack. Portaled menus or
+pickers declare the owning surface rather than relying on one-off selectors.
+
+- Escape is handled by the topmost eligible surface only.
+- A page press may dismiss a floating surface and continue as the same canvas action.
+- A workspace-surround press may be dismissal-only when continuing would clear or
+  corrupt an editor interaction.
+- Tool-dock interactions own their activation/toggle behavior.
+- An outgoing surface is visually allowed to finish, but it cannot intercept input.
+
+Placement first tries the preferred relationship to its anchor, then deterministic
+above/below/side fallbacks against occupied controls, a 12-pixel gap, and a 12-pixel
+window inset.
+
+## Canvas and direct-manipulation rules
+
+- Artwork interaction wins over chrome decoration inside the page.
+- Pointer capture remains active for a drag that leaves its starting element.
+- The first stroke, selection click, or shape drag after dismissing a surface must not
+  be swallowed.
+- Control visuals may be screen-space sized, but document geometry is page-space.
+- Selection handles stay visible and usable across zoom.
+- Temporary measurements and previews never become document objects.
+- Cursor changes describe the active affordance and revert on cancellation.
+
+Current Select presentation uses grab/grabbing for interior movement, diagonal resize
+cursors for corner scaling, and a rotation cursor with a safe fallback. Its visible
+handles are 10 viewport pixels with a 12-pixel hit radius.
+
+## Spatial Layers experience
+
+One Layers trigger opens one experience with two presentations. **Stack** is the
+default: a modal structural view of the active page's Layers as separated sheets in
+perspective, over the page's own paper base. **List** is the existing Layers panel and
+behaves like any other floating panel. The view switch lives inside the experience, not
+in the workspace rails.
+
+The Stack is a window onto an arrangement rather than a picture of all of it.
+Approximately **three planes carry the composition**: the focused Layer, the neighbor
+above, and the neighbor below. Sheets further away fade out of the picture instead of
+piling up behind it, and they remain mounted, navigable, and named. Sheets keep their
+size whatever the layer count — a deep document gets a taller arrangement, never smaller
+previews floating in the middle of the workspace.
+
+- The focused Layer is the active Layer. Navigating brings it onto a lower inspection
+  shelf, where its whole surface sits above the fold with the next sheet visible over it.
+- Every sheet keeps a visible boundary, including an empty, hidden, or faintly drawn
+  one — the outline is what says a Layer is there at all. Inactive edges are quiet; the
+  active sheet uses a restrained Folio accent edge.
+- The paper base is the one opaque sheet, and it alone earns a page edge and a base
+  shadow. It sits further from Layer 1 than Layers sit from each other. Paper is Page
+  state and is never presented as a Layer in the document architecture.
+- Labels stay upright and untransformed, hang off their sheet's projected lower-right
+  corner, and carry hidden and locked markers. A label leaves the composition with its
+  sheet.
+- There is no scrollbar and no scrollbar gutter. Wheel, click, arrow keys, and Home/End
+  all move focus between sheets rather than scrolling to arbitrary positions.
+
+### Frozen Spatial Layers v1
+
+These are intentional UX parameters, not incidental implementation numbers. Retuning any
+of them changes the approved look and needs product approval.
+
+| Parameter | Value |
+| --- | ---: |
+| Tilt | 35° |
+| Perspective | 1100 px |
+| Plane width ratio, of free workspace | 0.80 |
+| Sheet scale, of the largest sheet that fits | 0.84 |
+| Layer step / separation, of apparent sheet height | **0.72** |
+| Focused sheet's projected bottom shelf | 0.90 of usable workspace height |
+| Depth safety cap, of perspective distance | 0.24 |
+| Full emphasis held within | ~1.25 gaps of the shelf |
+| Emphasis gone by | ~1.7 gaps of the shelf |
+
+The separation is deliberately large. A value small enough to fit ten Layers on screen
+would produce the compressed overview this view exists to replace. The depth cap exists
+because depth accumulates down the stack; without it a deep document magnifies its
+nearest sheet past the workspace.
+
+The Stack owns its own open and close choreography rather than the shared floating
+timings: one linear progress value drives every sheet, so a reversal changes direction
+from wherever the travel had reached. Navigation settles separately, because its
+destination can change while the value is still moving. Reduced motion arrives at the
+final geometry immediately, for both opening and navigation.
+
+## Accessibility
+
+- Use native elements and semantic roles before custom keyboard simulation.
+- Provide accessible names for icon-only controls and radio semantics for exclusive
+  choices.
+- Use roving tab stops for the tool dock and Arrow/Home/End navigation.
+- Keep focus visible and restore it intentionally after a nested surface closes.
+- Preserve text selection inside `input`, `textarea`, and editable content while
+  suppressing accidental selection on editor chrome.
+- Respect reduced motion and platform high-contrast needs; never encode state by color
+  alone.
+- Minimum window behavior must preserve access to the page and primary controls.
+
+## Architecture boundary
+
+UI is a projection of existing authorities:
+
+```text
+presentation -> controller or target adapter -> command/session -> document
 ```
 
-Do not force text input for ordinary artist workflows. Exact entry is an escape
-hatch, not the primary path.
+Never create a component-local document, History manager, selection authority,
+viewport authority, or current-color store. Tool and viewport preferences remain
+session state. Selected-artwork changes use continuous editing and one command;
+creation-tool preferences remain History-free.
 
----
+See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) and
+[`../DECISIONS.md`](../DECISIONS.md) for the protected engineering model.
 
-## 15. Accessibility
+## Definition of done for UI work
 
-Final components support, where meaningful:
-
-- keyboard operation
-- visible focus
-- correct roles
-- correct state semantics (`aria-pressed`, `aria-expanded`, `aria-selected`)
-- adequate hit targets
-- state communicated by more than color alone
-- reduced motion
-- screen-reader structure **without** excessive noisy tab stops — a dense artist
-  toolbar should be one composite widget with arrow-key traversal, not forty tab stops
-
----
-
-## 16. Minimum Window / Responsive Editor
-
-**FIXED.** The editor remains canvas-first. At constrained window sizes:
-
-- drawing remains possible
-- actionable UI is protected before decorative UI
-- placement fallback is deterministic, not first-fit-by-accident
-- the existing occupied-zone architecture is respected
-- decorative elements must not push important controls into bad placement
-
-**OPEN.** The exact minimum supported window size and the per-component collapse
-order are decided per component and recorded in the inventory.
-
----
-
-## 17. Temporary UI
-
-**FIXED.** Temporary compatibility UI must be explicitly documented — in this
-repository that means a row in `component-inventory.md` marked as temporary, with the
-component it is waiting on.
-
-Once an approved replacement becomes functional, **remove the obsolete temporary UI**.
-Do not leave duplicate permanent controls for the same action indefinitely.
-
----
-
-## 18. Component Lifecycle
-
-**FIXED.** Every significant UI component follows:
-
-```
-reference → analysis → Folio adaptation → approved specification
-  → implementation → automated QA → visual QA → user manual QA
-  → correction → freeze
-```
-
-No major component skips the design step. The skills that operate each stage are
-`.claude/skills/folio-ui` (implementation) and `.claude/skills/folio-ui-qa`
-(validation), with `.claude/skills/folio-architecture-review` auditing that the core
-survived.
-
----
-
-## 19. Claude Design in the Loop
-
-Claude Design may be used as the **visual prototyping stage** between an approved
-reference and implementation:
-
-```
-Concepts screenshot + user requested changes + Folio Design System
-        ↓
-Claude Design prototype/mockup
-        ↓
-user approves visual direction
-        ↓
-Claude Code implementation
-        ↓
-Electron comparison
-        ↓
-user final QA
-```
-
-**FIXED boundaries:**
-
-- Claude Design does **not** override the engineering architecture in `CLAUDE.md`.
-- Claude Code does **not** treat generated mockup internals — its component
-  structure, state handling, or styling approach — as authoritative implementation
-  architecture.
-- **The visual output is the reference. The Folio core remains authoritative
-  underneath.**
-
----
-
-## 20. Open Questions
-
-Decide these only when exact Concepts references are provided:
-
-- final type scale values per role
-- the missing semantic tokens listed in §3
-- exact radii per control class
-- exact minimum supported window size and per-component collapse order
-- whether any direct-manipulation gesture needs motion outside the shared treatment
-- the visual language for future teaching/AI overlays, which must remain visually
-  distinct from artwork
+- The approved scope and reference are named.
+- Current neighbors and relevant tests were inspected.
+- All applicable states, keyboard behavior, dismissal, pointer capture, and reduced
+  motion are implemented.
+- Focused tests pass, followed by the proportionate repository gates.
+- The real Electron UI is compared at standard and constrained window sizes.
+- Placement, dimensions, density, typography, icons, motion, and coexistence with
+  nearby surfaces are evaluated explicitly.
+- The user performs the final visual approval; automated green alone is not a freeze.

@@ -11,10 +11,10 @@ import { DRAWING_SLOTS } from "./tool-dock-model";
  * existing colour target supplies the current colour. Nothing here stores a
  * value; every field is derived on each render from the resolved brush.
  *
- * `docs/design/drawing-tool-system.md` §9 fixes the order — width, opacity,
- * smoothness, then colour — and §11 fixes that the rail is contextual: it
- * belongs to drawing presets and must not present drawing controls for Select,
- * Eraser or Shapes.
+ * `docs/design/drawing-tool-system.md` fixes the order — width, opacity,
+ * smoothness, then colour — and the contextual boundary: the rail belongs to
+ * drawing presets and must not present drawing controls for Select, Eraser or
+ * Shapes.
  */
 
 export type DrawingPropertyKey = "strokeWidth" | "opacity" | "smoothing" | "strokeColor";
