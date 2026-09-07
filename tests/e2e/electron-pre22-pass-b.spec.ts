@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Page } from "@playwright/test";
+import { toggleLayerList } from "./layers-stack-helpers";
 import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 /**
@@ -251,7 +252,7 @@ test("Pass B reorders layers by drag with exact History and valid semantics", as
   const panel = window.getByTestId("layers-panel");
   try {
     // 11. Twelve layers is more than the panel shows at once.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(panel).toBeVisible();
     for (let index = 0; index < 11; index += 1) await window.getByTestId("layers-add").click();
     await expect(panel).toHaveAttribute("data-layer-count", "12");
@@ -760,7 +761,7 @@ test("Pass B places the color picker against the shared occupied-zone model", as
     await window.keyboard.press("Escape");
 
     // 37. The same arrangement with Layers and Pages open.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(window.getByTestId("layers-panel")).toBeVisible();
     await window.getByTestId("selected-vector-color-trigger").click();
     await expect(picker).toBeVisible();
@@ -773,7 +774,7 @@ test("Pass B places the color picker against the shared occupied-zone model", as
       ),
     ).toBe(false);
     await window.keyboard.press("Escape");
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
 
     // 38 & 39. Down to 960x640 and then to the true minimum content size.
     for (const [width, height] of [
@@ -824,12 +825,12 @@ test("Pass B shares one motion treatment and never delays interaction", async ()
       "standard",
     );
     await window.keyboard.press("Escape");
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(window.getByTestId("layers-panel")).toHaveAttribute(
       "data-motion-preset",
       "standard",
     );
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.getByTestId("page-settings-toggle").click();
     await expect(window.getByTestId("page-settings")).toHaveAttribute(
       "data-motion-preset",
@@ -876,7 +877,7 @@ test("Pass B honours reduced motion without changing behaviour", async () => {
     await window.waitForTimeout(200);
 
     // 42. Surfaces resolve the reduced preset and still open and close.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     const panel = window.getByTestId("layers-panel");
     await expect(panel).toBeVisible();
     await expect(panel).toHaveAttribute("data-motion-preset", "reduced");
@@ -884,7 +885,7 @@ test("Pass B honours reduced motion without changing behaviour", async () => {
     expect(await panel.evaluate((element) => getComputedStyle(element).transform)).toMatch(
       /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/u,
     );
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(panel).toHaveCount(0);
 
     await window.emulateMedia({ reducedMotion: "no-preference" });

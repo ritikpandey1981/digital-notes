@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Page } from "@playwright/test";
+import { toggleLayerList } from "./layers-stack-helpers";
 import { activateDockSlot } from "./dock-helpers";
 
 /**
@@ -181,7 +182,7 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     // Unrelated controls do not act as canvas dismissal, so nested surfaces
     // still establish a deterministic Escape order.
     await openToolOptions(window, "Pen");
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(window.getByTestId("layers-panel")).toBeVisible();
     await expect(window.getByTestId("context-tool-palette")).toBeVisible();
 
@@ -200,7 +201,7 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
 
     // 9. A first selection click also passes through canvas-only dismissal.
     await window.getByRole("button", { name: "Select", exact: true }).click();
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(window.getByTestId("layers-panel")).toBeVisible();
     const strokePoint = await pagePoint(window, 0.42, 0.33);
     const historyBeforeSelection = await surface.getAttribute("data-history-undo-depth");
@@ -289,7 +290,7 @@ test("Pre-22 recovery refuses creation on hidden and locked active Layers", asyn
     await expect(surface).toHaveAttribute("data-clipboard-can-paste", "true");
 
     for (const state of ["hidden", "locked"] as const) {
-      await window.getByTestId("layers-toggle").click();
+      await toggleLayerList(window);
       await expect(window.getByTestId("layers-panel")).toBeVisible();
       const control = state === "hidden" ? "layer-visibility-layer-1" : "layer-lock-layer-1";
       await window.getByTestId(control).click();
@@ -311,19 +312,19 @@ test("Pre-22 recovery refuses creation on hidden and locked active Layers", asyn
       expect(await surface.getAttribute("data-document-object-count")).toBe(objectsBefore);
       expect(await surface.getAttribute("data-history-undo-depth")).toBe(historyBefore);
 
-      await window.getByTestId("layers-toggle").click();
+      await toggleLayerList(window);
       await expect(window.getByTestId("layers-panel")).toBeVisible();
       await window.getByTestId(control).click();
       await window.waitForTimeout(200);
-      await window.getByTestId("layers-toggle").click();
+      await toggleLayerList(window);
       await expect(window.getByTestId("layers-panel")).toHaveCount(0);
     }
 
     // A locked Layer keeps its artwork selectable but read-only.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.getByTestId("layer-lock-layer-1").click();
     await window.waitForTimeout(200);
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.getByRole("button", { name: "Select", exact: true }).click();
     await window.mouse.click(seeded.x, seeded.y);
     await expect(surface).not.toHaveAttribute("data-selected-object-id", "");
@@ -363,7 +364,7 @@ test("Pre-22 recovery fits the shell inside the real minimum content area", asyn
     expect(metrics.scrollWidth).toBe(metrics.clientWidth);
 
     // Open every workspace surface and confirm nothing leaves the viewport.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.getByTestId("pages-toggle").click();
     await window.waitForTimeout(400);
     const offscreen = await window.evaluate(() => {

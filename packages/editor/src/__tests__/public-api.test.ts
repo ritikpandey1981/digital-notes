@@ -85,6 +85,7 @@ describe("@folio/editor public API", () => {
       "pagePreset",
       "previousSpectrumFamily",
       "renderPageLayerPreview",
+      "renderPagePaperPreview",
       "renderPageThumbnail",
       "requireSpectrumFamily",
       "resolveSelectionEditingStyle",

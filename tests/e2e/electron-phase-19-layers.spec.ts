@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { openLayerList, toggleLayerList } from "./layers-stack-helpers";
 import { activateDockSlot } from "./dock-helpers";
 
 const PAGE_CANVAS = 'canvas[data-folio-renderer="true"]';
@@ -49,11 +50,8 @@ async function membership(surface: Locator): Promise<readonly number[]> {
 }
 
 async function openLayers(window: Page): Promise<Locator> {
-  const panel = window.getByTestId("layers-panel");
-  const toggle = window.getByTestId("layers-toggle");
-  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-  await expect(panel).toBeVisible();
-  return panel;
+  await openLayerList(window);
+  return window.getByTestId("layers-panel");
 }
 
 test("Phase 19 delivers layers with canonical ordering, interaction rules, and a compact panel", async () => {
@@ -364,7 +362,7 @@ test("Phase 19 delivers layers with canonical ordering, interaction rules, and a
     await window.keyboard.press("Control+z");
     await expect(window.getByTestId("layer-name-layer-2")).toHaveText("Layer 2");
 
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(window.getByTestId("layers-panel")).toHaveCount(0);
 
     expect(consoleErrors).toEqual([]);

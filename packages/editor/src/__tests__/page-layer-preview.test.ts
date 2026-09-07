@@ -9,7 +9,11 @@ import {
   type PageObject,
 } from "@folio/document";
 import { describe, expect, it } from "vitest";
-import { renderPageLayerPreview, renderPageThumbnail } from "../VectorShapeRendering";
+import {
+  renderPageLayerPreview,
+  renderPagePaperPreview,
+  renderPageThumbnail,
+} from "../VectorShapeRendering";
 
 /**
  * Structural rendering tests over a recording Canvas2D.
@@ -197,6 +201,12 @@ function renderLayer(page: Page, layerId: string): Recording {
 function renderThumbnail(page: Page): Recording {
   const recording = recordingContext();
   renderPageThumbnail(recording.context, page, SIZE, { pageLineColor: "#cccccc" });
+  return recording;
+}
+
+function renderPaper(page: Page): Recording {
+  const recording = recordingContext();
+  renderPagePaperPreview(recording.context, page, SIZE, { pageLineColor: "#cccccc" });
   return recording;
 }
 
@@ -439,5 +449,104 @@ describe("renderPageThumbnail regression", () => {
   it("draws no pattern marks for blank paper", () => {
     const recording = renderThumbnail(pageWithLayers([[]], { paper: BLANK_PAPER }));
     expect(recording.ops.filter((entry) => entry.op === "stroke")).toEqual([]);
+  });
+});
+
+describe("renderPagePaperPreview", () => {
+  it("paints the real paper colour exactly once", () => {
+    const page = pageWithLayers([[rectangleAt(10, 10)]], {
+      paper: createPagePaper({ type: "blank", color: "#f0e6d2" }),
+    });
+    const fills = renderPaper(page).ops.filter((entry) => entry.op === "fillRect");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]!.fillStyle).toBe("#f0e6d2");
+  });
+
+  it.each(["ruled", "grid", "dotted", "isometric"] as const)(
+    "draws %s paper exactly as the thumbnail draws it",
+    (type) => {
+      const page = pageWithLayers([[]], { paper: createPagePaper({ type, spacing: 80 }) });
+      const paperOps = renderPaper(page).ops;
+      // The thumbnail opens with the paper, then goes on to its layers; both
+      // close with the same trailing `restore`, so only that is set aside.
+      expect(renderThumbnail(page).ops.slice(0, paperOps.length - 1)).toEqual(
+        paperOps.slice(0, -1),
+      );
+    },
+  );
+
+  it("draws no pattern for blank paper", () => {
+    const recording = renderPaper(pageWithLayers([[]], { paper: BLANK_PAPER }));
+    expect(recording.ops.filter((entry) => entry.op === "stroke")).toEqual([]);
+    expect(recording.ops.filter((entry) => entry.op === "fill")).toEqual([]);
+  });
+
+  it("contains no artwork whatsoever", () => {
+    const page = pageWithLayers([[rectangleAt(10, 10), lineAt(40, 40)], [rectangleAt(300, 300)]]);
+    expect(paths(renderPaper(page).ops)).toEqual([]);
+    expect(marks(renderPaper(page).ops)).toEqual([]);
+  });
+
+  it("uses the same fitted page frame as every layer preview", () => {
+    const page = pageWithLayers([[rectangleAt(5, 5)], []], {
+      geometry: { width: 794, height: 1123 },
+    });
+    const paperFrame = frameOps(renderPaper(page).ops);
+    expect(paperFrame).toEqual(frameOps(renderLayer(page, "layer-1").ops));
+    expect(paperFrame).toEqual(frameOps(renderLayer(page, "layer-2").ops));
+    expect(paperFrame).toEqual(frameOps(renderThumbnail(page).ops));
+  });
+
+  it.each([
+    { name: "portrait", geometry: { width: 794, height: 1123 } },
+    { name: "landscape", geometry: { width: 1123, height: 794 } },
+    { name: "square", geometry: { width: 900, height: 900 } },
+  ])("fits a $name page like every other preview", ({ geometry }) => {
+    const page = pageWithLayers([[]], { geometry });
+    expect(frameOps(renderPaper(page).ops)).toEqual(frameOps(renderThumbnail(page).ops));
+  });
+
+  it("mutates nothing", () => {
+    const page = pageWithLayers([[rectangleAt(10, 10)]]);
+    const layersBefore = page.content.layers;
+    const objectsBefore = page.content.objects.objects;
+    renderPaper(page);
+    expect(page.content.layers).toBe(layersBefore);
+    expect(page.content.objects.objects).toBe(objectsBefore);
+  });
+});
+
+describe("paper plus layer previews compose into the page thumbnail", () => {
+  it("reproduces the thumbnail's paper and artwork, in that order", () => {
+    const page = pageWithLayers(
+      [[rectangleAt(10, 10), lineAt(20, 30)], [rectangleAt(200, 150)], [lineAt(400, 300)]],
+      { paper: createPagePaper({ type: "grid", color: "#fffdf8", spacing: 90 }) },
+    );
+    const paperOps = renderPaper(page).ops;
+    const thumbnail = renderThumbnail(page).ops;
+
+    // The thumbnail opens with exactly the base sheet's operations. Both end
+    // with the same trailing `restore`, so only that last op is set aside.
+    expect(thumbnail.slice(0, paperOps.length - 1)).toEqual(paperOps.slice(0, -1));
+
+    // Everything the thumbnail draws after the paper is the layers, in order.
+    expect(paths(thumbnail).slice(paths(paperOps).length)).toEqual(
+      page.content.layers.flatMap((layer) => paths(renderLayer(page, layer.id).ops)),
+    );
+  });
+
+  it("keeps paper and artwork strictly separable", () => {
+    const page = pageWithLayers([[rectangleAt(10, 10)]], {
+      paper: createPagePaper({ type: "grid", color: "#ff0000", spacing: 90 }),
+    });
+    const paperOps = renderPaper(page).ops;
+    const layerOps = renderLayer(page, "layer-1").ops;
+
+    expect(paths(paperOps), "paper carries no artwork").not.toContain("rect(10,10,40,30)");
+    expect(
+      layerOps.filter((entry) => entry.op === "fillRect"),
+      "a layer carries no paper",
+    ).toEqual([]);
+    expect(paths(layerOps)).toEqual(["rect(10,10,40,30)"]);
   });
 });

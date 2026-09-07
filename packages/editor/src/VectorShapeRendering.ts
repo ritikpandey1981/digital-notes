@@ -339,6 +339,27 @@ function drawLayerArtwork(context: CanvasRenderingContext2D, page: Page, layer: 
 }
 
 /**
+ * Paints the page's own surface: paper colour, then paper pattern.
+ *
+ * The single definition of how Page paper becomes pixels. It leaves the context
+ * clipped and in page coordinates, so a caller that also wants artwork can go
+ * straight on to drawing layers. The caller owns the surrounding save/restore.
+ */
+function drawPaperSurface(
+  context: CanvasRenderingContext2D,
+  page: Page,
+  fit: PageFit,
+  theme: Readonly<{ pageLineColor: string }>,
+): void {
+  // Filled before the clip is installed, which is the order the thumbnail has
+  // always used; keeping it means the page edge rasterises identically.
+  context.fillStyle = page.paper.color;
+  context.fillRect(fit.offsetX, fit.offsetY, fit.width, fit.height);
+  clipToFittedPage(context, fit);
+  drawPaperPattern(context, page, fit, theme);
+}
+
+/**
  * Draws one complete page into a thumbnail context.
  *
  * This deliberately reuses the same per-object draw helpers the live compositor
@@ -354,11 +375,33 @@ export function renderPageThumbnail(
   const fit = resolvePageFit(page, size);
   context.clearRect(0, 0, size.width, size.height);
   context.save();
-  context.fillStyle = page.paper.color;
-  context.fillRect(fit.offsetX, fit.offsetY, fit.width, fit.height);
-  clipToFittedPage(context, fit);
-  drawPaperPattern(context, page, fit, theme);
+  drawPaperSurface(context, page, fit, theme);
   for (const layer of page.content.layers) drawLayerArtwork(context, page, layer);
+  context.restore();
+}
+
+/**
+ * Draws only the page's paper: colour and pattern, and no artwork at all.
+ *
+ * The structural counterpart to {@link renderPageLayerPreview}. Paper is Page
+ * state rather than Layer state, so the spatial stack shows it as its own base
+ * sheet beneath every transparent layer plane -- it is not, and must never
+ * become, a Layer.
+ *
+ * Shares `resolvePageFit`, `clipToFittedPage` and the paper drawing with the
+ * whole-page thumbnail, so the base sheet and the layer planes above it land on
+ * exactly the same fitted page frame.
+ */
+export function renderPagePaperPreview(
+  context: CanvasRenderingContext2D,
+  page: Page,
+  size: Readonly<{ width: number; height: number }>,
+  theme: Readonly<{ pageLineColor: string }>,
+): void {
+  const fit = resolvePageFit(page, size);
+  context.clearRect(0, 0, size.width, size.height);
+  context.save();
+  drawPaperSurface(context, page, fit, theme);
   context.restore();
 }
 

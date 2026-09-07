@@ -30,30 +30,31 @@ function ApplicationShellContent() {
   const [historyAvailability, setHistoryAvailability] =
     useState<WorkspaceHistoryAvailability>(EMPTY_WORKSPACE_HISTORY);
   const [navigationTeachingLearned, setNavigationTeachingLearned] = useState(false);
-  const [layersPanelOpen, setLayersPanelOpen] = useState(false);
   const [pageNavigatorOpen, setPageNavigatorOpen] = useState(false);
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false);
-  // Page Settings and the Layers panel share the top-right slot, so opening one
-  // closes the other. The page navigator coexists with both.
-  const toggleLayersPanel = useCallback(() => {
-    setLayersPanelOpen((open) => {
-      if (!open) setPageSettingsOpen(false);
-      return !open;
-    });
-  }, []);
-  const dismissLayersPanel = useCallback(() => setLayersPanelOpen(false), []);
+  /**
+   * Opens the Layers experience, in whichever view it last showed.
+   *
+   * It takes over the page, so the panels that also talk about the page step
+   * aside first. Closing it disturbs nothing, hence the guard.
+   */
+  const toggleLayers = useCallback(() => {
+    editorWorkspace.toggleLayers();
+  }, [editorWorkspace]);
   const togglePageNavigator = useCallback(() => setPageNavigatorOpen((open) => !open), []);
   const dismissPageNavigator = useCallback(() => setPageNavigatorOpen(false), []);
+  // Page Settings and the Layers experience both claim the page, so opening one
+  // puts the other away.
   const openPageSettings = useCallback(() => {
-    setLayersPanelOpen(false);
+    editorWorkspace.closeLayersStackView();
     setPageSettingsOpen(true);
-  }, []);
+  }, [editorWorkspace]);
   const togglePageSettings = useCallback(() => {
     setPageSettingsOpen((open) => {
-      if (!open) setLayersPanelOpen(false);
+      if (!open) editorWorkspace.closeLayersStackView();
       return !open;
     });
-  }, []);
+  }, [editorWorkspace]);
   const dismissPageSettings = useCallback(() => setPageSettingsOpen(false), []);
   const learnViewportNavigation = useCallback(() => setNavigationTeachingLearned(true), []);
   const handleHistoryActionsReady = useCallback((actions: WorkspaceHistoryActions | null) => {
@@ -96,9 +97,11 @@ function ApplicationShellContent() {
         data-workspace-presentation="focused-canvas"
       >
         <EditorWorkspace
-          layersPanelOpen={layersPanelOpen}
-          onToggleLayersPanel={toggleLayersPanel}
-          onDismissLayersPanel={dismissLayersPanel}
+          layersOpen={editorWorkspace.layersOpen}
+          layersView={editorWorkspace.layersView}
+          onShowLayersView={editorWorkspace.showLayersView}
+          onToggleLayers={toggleLayers}
+          onDismissLayers={editorWorkspace.dismissLayers}
           pageNavigatorOpen={pageNavigatorOpen}
           onDismissPageNavigator={dismissPageNavigator}
           pageSettingsOpen={pageSettingsOpen}

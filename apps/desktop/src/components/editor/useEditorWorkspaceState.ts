@@ -34,6 +34,9 @@ import {
   describeEraserToolOptions,
 } from "./tool-options-registry";
 
+/** How the Layers experience is presented. Session state, never a document value. */
+export type LayersView = "stack" | "list";
+
 export function useEditorWorkspaceState() {
   const [activeTool, setActiveTool] = React.useState<EditorTool>("Select");
   // Which drawing slot the user last chose. Editor session state: it separates
@@ -42,6 +45,24 @@ export function useEditorWorkspaceState() {
   // Transient workspace UI state for the radial Brush Library. It never reaches
   // the document and never creates History.
   const [brushLibraryOpen, setBrushLibraryOpen] = React.useState(false);
+  // The Layers experience. Transient workspace UI state exactly like the Brush
+  // Library: never serialized, never a document value, never History.
+  //
+  // One trigger, two presentations. Keeping the view beside the open flag is
+  // what will later let a large layer count default to the list without another
+  // ownership redesign.
+  const [layersOpen, setLayersOpen] = React.useState(false);
+  const [layersView, setLayersView] = React.useState<LayersView>("stack");
+  /**
+   * Puts away only the modal presentation.
+   *
+   * The spatial stack owns the page, so reaching for a tool has to close it.
+   * The list is an ordinary floating panel and has always coexisted with
+   * drawing, so it stays exactly where it was.
+   */
+  const closeLayersStackView = React.useCallback((): void => {
+    if (layersView === "stack") setLayersOpen(false);
+  }, [layersView]);
   const [armedShape, setArmedShape] = React.useState<ShapeToolKind>("rectangle");
   const [activeFloatingWidget, setActiveFloatingWidget] =
     React.useState<FloatingToolWidgetId | null>(null);
@@ -172,12 +193,35 @@ export function useEditorWorkspaceState() {
       // Any major-tool change closes the library: it is anchored to one drawing
       // slot and must never be left hanging off a slot that is no longer active.
       setBrushLibraryOpen(false);
+      // Choosing a tool is a request to work on the page, so the structural
+      // Layers view steps aside. The list panel is not modal and stays put.
+      closeLayersStackView();
       setActiveTool(tool);
     },
-    [activeTool, floatingWidgetRegistry, shapeToolState],
+    [activeTool, closeLayersStackView, floatingWidgetRegistry, shapeToolState],
   );
   const dismissFloatingWidget = React.useCallback((): void => setActiveFloatingWidget(null), []);
   const dismissBrushLibrary = React.useCallback((): void => setBrushLibraryOpen(false), []);
+  const dismissLayers = React.useCallback((): void => setLayersOpen(false), []);
+  /**
+   * Opens or closes the Layers experience.
+   *
+   * Opening it takes the page, so the Brush Library and any tool palette give
+   * way first: those talk about the drawing tools, and Layers is a different
+   * claim on the same workspace. Zero History either way.
+   */
+  const toggleLayers = React.useCallback((): void => {
+    // The radial is the one surface that cannot coexist: it and the stack are
+    // both structural views of the same page. Ordinary panels are left alone --
+    // the stack sits below them in the workspace strata, and they have always
+    // been usable alongside the Layers list.
+    setLayersOpen((open) => {
+      if (!open) setBrushLibraryOpen(false);
+      return !open;
+    });
+  }, []);
+  /** Switching presentation only. No document change, no History. */
+  const showLayersView = React.useCallback((view: LayersView): void => setLayersView(view), []);
   const activeToolWidget = floatingWidgetRegistry.widgetFor(activeTool);
   /**
    * Opens the active tool's settings without toggling.
@@ -188,8 +232,9 @@ export function useEditorWorkspaceState() {
   const openToolOptions = React.useCallback((): void => {
     if (activeToolWidget === null) return;
     setBrushLibraryOpen(false);
+    closeLayersStackView();
     setActiveFloatingWidget(activeToolWidget);
-  }, [activeToolWidget]);
+  }, [activeToolWidget, closeLayersStackView]);
   const refresh = React.useCallback((): void => setFoundationVersion((version) => version + 1), []);
   /**
    * Activating one drawing preset slot.
@@ -217,6 +262,9 @@ export function useEditorWorkspaceState() {
         // machine.
         setBrushLibraryOpen((open) => !open);
         setActiveFloatingWidget(null);
+        // The radial and the Layers stack are both structural surfaces over the
+        // page; reaching for one puts the other away.
+        closeLayersStackView();
         return;
       }
       // First press: activate, and nothing more. `selectTool` closes any open
@@ -226,7 +274,15 @@ export function useEditorWorkspaceState() {
       selectTool(toolForDrawingFamily(slotStore.stateFor(slot.id).family));
       refresh();
     },
-    [activeDrawingSlotId, activeTool, refresh, selectTool, slotFamilies, slotStore],
+    [
+      activeDrawingSlotId,
+      activeTool,
+      closeLayersStackView,
+      refresh,
+      selectTool,
+      slotFamilies,
+      slotStore,
+    ],
   );
 
   /**
@@ -380,6 +436,12 @@ export function useEditorWorkspaceState() {
     slotDrawingColors,
     brushLibraryOpen,
     dismissBrushLibrary,
+    layersOpen,
+    layersView,
+    showLayersView,
+    toggleLayers,
+    dismissLayers,
+    closeLayersStackView,
     activeSlotBrushId: slotState.brushId,
     selectDrawingSlot,
     selectLibraryBrush,

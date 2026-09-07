@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { toggleLayerList } from "./layers-stack-helpers";
 import { activateDockSlot } from "./dock-helpers";
 
 async function launch(): Promise<{
@@ -151,10 +152,10 @@ test("Phase 20 delivers multi-selection, marquee, group transform, and selection
     expect(await depth(surface)).toBe(historyBeforeInk);
 
     // Move the selection to another Layer through the compact contextual menu.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.getByTestId("layers-add").click();
     await expect(surface).toHaveAttribute("data-layer-count", "2");
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.mouse.click(700, 265);
     expect(await selected(surface)).toHaveLength(1);
     const membershipBeforeMove = await membership(surface);
@@ -169,7 +170,7 @@ test("Phase 20 delivers multi-selection, marquee, group transform, and selection
     expect(await membership(surface)).toEqual(membershipBeforeMove);
 
     // Panels coexist and the workspace stays usable at the minimum size.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await activateDockSlot(window, "pencil");
     await window.getByTestId("quick-color-current").click();
     await expect(window.getByTestId("full-color-picker")).toBeVisible();
@@ -235,10 +236,10 @@ test("Phase 20 keeps locked layers read-only and preserves Alt overlap cycling",
     expect(secondCandidate[0]).not.toBe(firstCandidate[0]);
 
     // A locked Layer stays selectable read-only and refuses every edit.
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.getByTestId("layer-lock-layer-1").click();
     await expect(window.getByTestId("layer-lock-layer-1")).toHaveAttribute("aria-pressed", "true");
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
 
     await window.mouse.click(700, 305);
     expect(await selected(surface)).toHaveLength(1);

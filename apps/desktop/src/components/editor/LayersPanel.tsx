@@ -6,6 +6,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  Layers3,
   GripVertical,
   Lock,
   LockOpen,
@@ -47,6 +48,7 @@ interface LayersPanelProps {
   readonly open: boolean;
   readonly snapshot: LayersSnapshot;
   readonly actions: LayerActions | null;
+  readonly onShowStack?: () => void;
   readonly onDismiss: () => void;
   readonly onNotify: (message: string) => void;
 }
@@ -58,7 +60,14 @@ interface LayerDragState {
   readonly insertIndex: number;
 }
 
-export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: LayersPanelProps) {
+export function LayersPanel({
+  open,
+  snapshot,
+  actions,
+  onShowStack,
+  onDismiss,
+  onNotify,
+}: LayersPanelProps) {
   const motionPreset = useFloatingSurfaceMotion();
   const boundaryRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -244,18 +253,33 @@ export function LayersPanel({ open, snapshot, actions, onDismiss, onNotify }: La
           >
             <header className="flex shrink-0 items-center justify-between px-3 py-2">
               <span className="text-[11px] font-semibold text-folio-ink">Layers</span>
-              <button
-                type="button"
-                className="flex size-7 items-center justify-center rounded-lg text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-                aria-label="Add layer"
-                data-testid="layers-add"
-                onClick={() => {
-                  const layerId = actions?.addLayer();
-                  if (layerId !== null && layerId !== undefined) setFocusIndex(0);
-                }}
-              >
-                <Plus className="size-4" aria-hidden="true" />
-              </button>
+              <div className="flex items-center gap-0.5">
+                {/* The way back to the spatial stack. Presentation only. */}
+                {onShowStack === undefined ? null : (
+                  <button
+                    type="button"
+                    className="flex size-7 items-center justify-center rounded-lg text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                    aria-label="Stack view"
+                    aria-pressed={false}
+                    data-testid="layers-view-stack"
+                    onClick={onShowStack}
+                  >
+                    <Layers3 className="size-4" aria-hidden="true" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="flex size-7 items-center justify-center rounded-lg text-folio-muted transition-colors hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+                  aria-label="Add layer"
+                  data-testid="layers-add"
+                  onClick={() => {
+                    const layerId = actions?.addLayer();
+                    if (layerId !== null && layerId !== undefined) setFocusIndex(0);
+                  }}
+                >
+                  <Plus className="size-4" aria-hidden="true" />
+                </button>
+              </div>
             </header>
             <div
               ref={listRef}

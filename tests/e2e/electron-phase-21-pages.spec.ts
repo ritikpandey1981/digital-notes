@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
+import { toggleLayerList } from "./layers-stack-helpers";
 import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 async function launch(): Promise<{
@@ -213,12 +214,12 @@ test("Phase 21 delivers multi-page sketchbook pages, geometry, and paper", async
     // 12-13. Draw on page 1 across two layers.
     await activateDockSlot(window, "pencil");
     await stroke(window, 300);
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await window.getByTestId("layers-add").click();
     await expect(surface).toHaveAttribute("data-layer-count", "2");
     const firstPageLayer = (await surface.getAttribute("data-active-layer-id")) ?? "";
     await stroke(window, 380);
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     expect(await objects(surface)).toBe(2);
 
     // 14-15. Add Page inherits geometry but starts with default blank paper.
@@ -401,7 +402,7 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
     ).toBe(false);
     await window.keyboard.press("Escape");
     await window.getByTestId("page-settings-close").click();
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(window.getByTestId("layers-panel")).toBeVisible();
     await window.getByTestId("quick-color-current").click();
     await expect(picker).toBeVisible();
@@ -468,7 +469,7 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
     // occupied-zone set. The Picker stays usable; Pages yields deterministically.
     await window.keyboard.press("Escape");
     await expect(window.getByTestId("full-color-picker")).toHaveCount(0);
-    await window.getByTestId("layers-toggle").click();
+    await toggleLayerList(window);
     await expect(window.getByTestId("layers-panel")).toHaveCount(0);
     const minimum = await app.evaluate(async ({ BrowserWindow }) => {
       const target = BrowserWindow.getAllWindows()[0];

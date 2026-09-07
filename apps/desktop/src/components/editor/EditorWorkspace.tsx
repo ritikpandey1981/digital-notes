@@ -29,6 +29,7 @@ import { PageSettingsPanel } from "./PageSettingsPanel";
 import { useNotifications } from "../notifications/NotificationProvider";
 import { ShapesWidget } from "./ShapesWidget";
 import { ShapeEditingToolbar } from "./ShapeEditingToolbar";
+import { SpatialLayersView } from "./SpatialLayersView";
 import { ToolDock } from "./ToolDock";
 import { ToolOptionsWidget } from "./ToolOptionsWidget";
 import { FullColorPicker } from "./FullColorPicker";
@@ -39,13 +40,11 @@ import { resolveCreationColorSession } from "./creation-color-session";
 import { registerCanvasEscape } from "./floating-dismissal-stack";
 import { useColorPickerSession } from "./useColorPickerSession";
 import type { DrawingSlotDefinition } from "./tool-dock-model";
+import type { LayersView } from "./useEditorWorkspaceState";
 import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
 interface EditorWorkspaceProps {
-  layersPanelOpen: boolean;
-  onToggleLayersPanel: () => void;
-  onDismissLayersPanel: () => void;
   pageNavigatorOpen: boolean;
   onDismissPageNavigator: () => void;
   pageSettingsOpen: boolean;
@@ -64,6 +63,11 @@ interface EditorWorkspaceProps {
   activeDockSlotId: string | null;
   brushLibraryOpen: boolean;
   onDismissBrushLibrary: () => void;
+  layersOpen: boolean;
+  layersView: LayersView;
+  onShowLayersView: (view: LayersView) => void;
+  onToggleLayers: () => void;
+  onDismissLayers: () => void;
   activeSlotBrushId: string | null;
   selectLibraryBrush: (brushId: string) => void;
   onSelectDrawingSlot: (slot: DrawingSlotDefinition) => void;
@@ -94,9 +98,6 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace({
-  layersPanelOpen,
-  onToggleLayersPanel,
-  onDismissLayersPanel,
   pageNavigatorOpen,
   onDismissPageNavigator,
   pageSettingsOpen,
@@ -111,6 +112,11 @@ export function EditorWorkspace({
   activeDockSlotId,
   brushLibraryOpen,
   onDismissBrushLibrary,
+  layersOpen,
+  layersView,
+  onShowLayersView,
+  onToggleLayers,
+  onDismissLayers,
   activeSlotBrushId,
   selectLibraryBrush,
   onSelectDrawingSlot,
@@ -348,6 +354,37 @@ export function EditorWorkspace({
    * already holds the previewed value, and commit merely ends the transaction
    * that would otherwise restore over it.
    */
+  /** Selecting a Layer plane is session state: zero History, no mutation. */
+  const handleActivateStackLayer = useCallback(
+    (layerId: string): void => {
+      layerActions?.setActiveLayer(layerId);
+    },
+    [layerActions],
+  );
+  /**
+   * A page switch ends the stack rather than rebuilding it for the new page:
+   * the view is transient, and cross-page transient state is a bug factory.
+   *
+   * Stack only, and only for a real page change. The list is an ordinary panel
+   * that has always survived a page switch, and closing it here would also
+   * reorder the dismissal stack, so the next press on the canvas would put away
+   * the page navigator instead of the panel. Comparing the remembered page is
+   * what separates "the page changed" from "the stack stopped being shown".
+   */
+  const stackOpen = layersOpen && layersView === "stack";
+  const stackPageId = pagesSnapshot.activePageId;
+  const stackOpenedOnPage = useRef<string | null>(null);
+  useEffect(() => {
+    if (!stackOpen) {
+      stackOpenedOnPage.current = null;
+      return;
+    }
+    if (stackOpenedOnPage.current === null) {
+      stackOpenedOnPage.current = stackPageId;
+      return;
+    }
+    if (stackOpenedOnPage.current !== stackPageId) onDismissLayers();
+  }, [onDismissLayers, stackOpen, stackPageId]);
   const resolveCreationColorForOwnershipChange = useCallback((): void => {
     const resolution = resolveCreationColorSession(
       colorPicker.snapshot?.target.id ?? null,
@@ -383,6 +420,13 @@ export function EditorWorkspace({
     },
     [onSelectShape, resolveCreationColorForOwnershipChange],
   );
+  // Entering the structural Layers view ends a creation-colour edit the same way
+  // choosing another tool does: the artist keeps the colour they picked, and no
+  // session is left stranded behind a mode that has taken over the page.
+  const handleToggleLayers = useCallback((): void => {
+    resolveCreationColorForOwnershipChange();
+    onToggleLayers();
+  }, [onToggleLayers, resolveCreationColorForOwnershipChange]);
   // Derived on every render from the brush the editor already resolved, so the
   // rail cannot drift from the active preset and owns no state of its own.
   const propertyRailModel = resolveDrawingPropertyRail({
@@ -452,6 +496,15 @@ export function EditorWorkspace({
         onViewportChange={onViewportChange}
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
+      <SpatialLayersView
+        open={layersOpen && layersView === "stack"}
+        page={pageActions?.getPage(pagesSnapshot.activePageId) ?? null}
+        snapshot={layersSnapshot}
+        revision={thumbnailRevision}
+        onActivateLayer={handleActivateStackLayer}
+        onShowList={() => onShowLayersView("list")}
+        onDismiss={onDismissLayers}
+      />
       <RadialBrushLibrary
         open={brushLibraryOpen}
         anchorSlotId={activeDockSlotId}
@@ -486,10 +539,11 @@ export function EditorWorkspace({
         onDismiss={onDismissPageSettings}
       />
       <LayersPanel
-        open={layersPanelOpen}
+        open={layersOpen && layersView === "list"}
         snapshot={layersSnapshot}
         actions={layerActions}
-        onDismiss={onDismissLayersPanel}
+        onShowStack={() => onShowLayersView("stack")}
+        onDismiss={onDismissLayers}
         onNotify={notifyLayerDeleted}
       />
       <ShapesWidget
@@ -527,10 +581,11 @@ export function EditorWorkspace({
         onDismiss={onDismissFloatingWidget}
         previewScale={viewportSnapshot.zoom}
       />
-      <WorkspaceUtilityRail
-        layersPanelOpen={layersPanelOpen}
-        onToggleLayersPanel={onToggleLayersPanel}
-      >
+      {/*
+        One Layers entry point. Which presentation it opens -- the spatial
+        stack or the mature list panel -- is decided inside the experience.
+      */}
+      <WorkspaceUtilityRail layersOpen={layersOpen} onToggleLayers={handleToggleLayers}>
         <QuickColorRail
           activeTool={activeTool}
           target={colorTarget}

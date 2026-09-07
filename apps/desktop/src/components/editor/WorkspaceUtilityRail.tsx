@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 import { ToolTooltip } from "./ToolTooltip";
 
 interface WorkspaceUtilityRailProps {
-  readonly layersPanelOpen: boolean;
-  readonly onToggleLayersPanel: () => void;
+  readonly layersOpen: boolean;
+  readonly onToggleLayers: () => void;
   readonly children?: ReactNode;
 }
 
@@ -17,8 +17,8 @@ interface WorkspaceUtilityRailProps {
  * so it lives here directly above the colour rail rather than in the top bar.
  */
 export function WorkspaceUtilityRail({
-  layersPanelOpen,
-  onToggleLayersPanel,
+  layersOpen,
+  onToggleLayers,
   children,
 }: WorkspaceUtilityRailProps) {
   return (
@@ -39,12 +39,12 @@ export function WorkspaceUtilityRail({
           type="button"
           className={cn(
             "group relative grid size-9 shrink-0 place-items-center rounded-[9px] text-[var(--folio-icon-neutral)] transition-[background-color,color] duration-100 ease-out hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent",
-            layersPanelOpen && "bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft",
+            layersOpen && "bg-folio-accent-soft text-folio-accent hover:bg-folio-accent-soft",
           )}
           aria-label="Layers"
-          aria-pressed={layersPanelOpen}
+          aria-pressed={layersOpen}
           data-testid="layers-toggle"
-          onClick={onToggleLayersPanel}
+          onClick={onToggleLayers}
         >
           <Layers className="size-[17px]" aria-hidden="true" />
           <ToolTooltip label="Layers" side="left" />
