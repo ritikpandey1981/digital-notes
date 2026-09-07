@@ -1,0 +1,14 @@
+{
+  "name": "folio-genesis-eir-pitch",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated deck-generation tooling for the Folio GENESIS EIR Cohort-3 pitch deck. Not part of the Folio application build.",
+  "scripts": {
+    "build": "node build-deck.mjs",
+    "capture": "node capture-screenshots.mjs"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  }
+}
