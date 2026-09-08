@@ -27,23 +27,16 @@ The editor is the product surface, and it is the thing a user judges first. The
 remaining UI work is sequenced ahead of the core systems below so that persistence and
 the brush engine are built against a frozen workspace rather than a moving one.
 
-### Spatial Layers Phase 3 — contextual actions in the Stack
+### Layers
 
-- Add layer actions to the Stack, limited to what the engine truthfully supports today:
-  visibility, lock, rename, opacity, add, and delete. Duplicate, merge, and layer blend
-  modes do not exist and must not be invented at the UI layer.
-- Keep the canvas-first character: an inactive sheet shows its name and faded edge, and
-  contextual controls belong to the focused sheet rather than covering every plane.
-- Reuse the existing `LayerActions`, including the begin/preview/commit/cancel opacity
-  transaction. Navigation and activation stay History-free.
+The Layers experience is complete for the operations the model supports: activate, add,
+rename, visibility, lock, opacity, delete, and reorder, reachable from both the Stack
+and the List. Remaining Layers work is deliberately deferred rather than unfinished:
 
-### Later Spatial Layers work
-
-- Drag reorder inside the Stack. `moveLayer` already exists; the open problem is pointer
-  ownership inside a perspective arrangement that is also wheel-navigated, so it is its
-  own scoped piece of work.
-- Deep-stack, empty-document, and fallback presentation at extreme layer counts.
-- Accessibility and minimum-window validation for the Stack specifically.
+- Layer grouping, merge, and bulk operations stay in *Later* below; they need atomic
+  `PageDocument`/History commands before any UI.
+- Duplicate layer, flatten, blend modes, and masks do not exist in the model and are not
+  scheduled.
 
 ### Remaining workspace surfaces
 

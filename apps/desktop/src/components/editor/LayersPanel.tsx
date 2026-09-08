@@ -332,6 +332,7 @@ export function LayersPanel({
                   onOpacityStart={() => actions?.beginLayerOpacityEdit(row.id)}
                   onOpacityChange={(value) => actions?.previewLayerOpacity(value)}
                   onOpacityCommit={() => actions?.commitLayerOpacityEdit()}
+                  onOpacityCancel={() => actions?.cancelLayerOpacityEdit()}
                   onMove={(direction) => moveRow(row, direction, index)}
                   onDelete={() => {
                     const removed = actions?.deleteLayer(row.id);
@@ -380,6 +381,7 @@ interface LayerRowViewProps {
   readonly onToggleOpacity: () => void;
   readonly onOpacityStart: () => void;
   readonly onOpacityChange: (value: number) => void;
+  readonly onOpacityCancel: () => void;
   readonly onOpacityCommit: () => void;
   readonly onMove: (direction: "up" | "down") => void;
   readonly onDelete: () => void;
@@ -417,6 +419,7 @@ function LayerRowView({
   onOpacityStart,
   onOpacityChange,
   onOpacityCommit,
+  onOpacityCancel,
   onMove,
   onDelete,
 }: LayerRowViewProps & { readonly ref?: (element: HTMLDivElement | null) => void }) {
@@ -581,6 +584,11 @@ function LayerRowView({
             onChange={onOpacityChange}
             onInteractionStart={onOpacityStart}
             onInteractionCommit={onOpacityCommit}
+            // Without this the slider has nothing to call when it unmounts
+            // mid-interaction, and the layer-opacity transaction is left open
+            // with a preview installed. The stack has always passed it; this is
+            // the same edit boundary reached from the other presentation.
+            onInteractionCancel={onOpacityCancel}
           />
           <div className="flex items-center gap-1 px-1 pb-0.5">
             <RowButton

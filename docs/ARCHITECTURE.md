@@ -229,6 +229,23 @@ carries its real name and its real hidden/locked state. Sheet size does not depe
 the layer count, so a deep document keeps full-size sheets and a taller arrangement
 rather than shrinking into a compressed overview.
 
+**Layer operations.** Both presentations reach one mutation surface, `LayerActions`:
+activate, add, rename, visibility, lock, the continuous opacity transaction, delete,
+and reorder. The focused sheet carries the stack's controls; the list carries them per
+row. Neither view stores a layer field of its own, so switching between them is a
+change of presentation and never a change of state. Duplicate, merge, flatten, blend
+modes, grouping, and masks do not exist in the model and are therefore offered by
+neither view.
+
+**Reorder.** Dragging a sheet is presentation until it is dropped: the candidate
+position is transient, and the document sees exactly one `moveLayer` command carrying
+the whole move, or none when the destination is unchanged. Display order is mirrored
+into canonical storage order by the single resolver the list already uses. Because the
+focused sheet is held on a shelf near the bottom of the workspace, some destinations
+are off-screen at supported window sizes; holding near a structural edge slides the
+arrangement under the held sheet, which is transient exposure that never changes the
+active layer and never reaches History.
+
 ## Input and ink
 
 `PointerInputController` accepts the primary mouse, pen, or touch pointer, captures it,

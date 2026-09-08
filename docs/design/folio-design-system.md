@@ -206,6 +206,20 @@ previews floating in the middle of the workspace.
 - There is no scrollbar and no scrollbar gutter. Wheel, click, arrow keys, and Home/End
   all move focus between sheets rather than scrolling to arbitrary positions.
 
+### Layer controls and reorder
+
+The focused sheet carries a compact contextual cluster — visibility, lock, opacity,
+rename, delete — hung from its projected corner and upright in screen space, with a
+reorder grip at its head. Add belongs to the experience rather than to one sheet, so it
+sits beside the view switch, where the list keeps it too. Neighbouring sheets stay
+quiet: a name, a faint edge, and passive hidden/locked markers.
+
+Reorder is the grip, never the artwork. The held sheet lifts slightly toward the viewer
+and stays under the hand while the neighbours open a space around it; holding near the
+top or bottom of the workspace slides the arrangement beneath it so destinations the
+window cannot show remain reachable. Nothing about this moves the arrangement's settled
+geometry: the sheets return to the same places when the gesture ends.
+
 ### Frozen Spatial Layers v1
 
 These are intentional UX parameters, not incidental implementation numbers. Retuning any

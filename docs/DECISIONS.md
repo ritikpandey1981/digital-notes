@@ -268,3 +268,54 @@ swallowed the first stroke after dismissal.
 **Consequence:** do not add a second Layers trigger, and do not give the List modal
 ownership. Any future structural mode follows the same rule — visible exit, immediate
 release.
+
+## D-020 — One reorder authority, one command per drop
+
+**Status:** accepted
+
+Layer order changes through `moveLayer` and nothing else. Both presentations resolve a
+display-order gesture into a canonical storage index with the same resolver, so the two
+views cannot disagree about which way "up" is.
+
+A drag is presentation until it is dropped. The candidate position is transient state,
+so crossing several layers produces one command, and a drop that lands where it started
+produces none. Cancel — Escape, lost capture, blur, teardown — produces none either.
+
+**Consequence:** a new reorder affordance resolves the same way and commits at one
+boundary. Do not mutate order while a gesture is in flight, and do not add a second
+index mapping.
+
+## D-021 — Edge dwell exposes; it does not focus
+
+**Status:** accepted
+
+Some reorder destinations cannot be expressed by pointer travel: the focused sheet is
+held near the bottom of the workspace and the sheets are a full gap apart, so the
+position below it is off-screen at supported window sizes. Holding near a structural
+edge slides the arrangement under the held sheet instead.
+
+That offset is transient exposure living inside the gesture. It never calls
+`setActiveLayer`, so the held layer stays the active layer and focus keeps its single
+authority; it never reaches the document; and it cannot outlive the gesture, because
+every exit runs one resolution that stops the timer and releases the pointer once.
+
+**Consequence:** reaching a distant position is a presentation concern, not a focus or
+document concern. Reduced motion may drop the accompanying transition but must never
+remove the reach.
+
+## D-022 — Stack and List are one model, two presentations
+
+**Status:** accepted
+
+The Layers experience supports activate, add, rename, visibility, lock, opacity,
+delete, and reorder. Both presentations reach them through `LayerActions`, and neither
+stores a layer field of its own. Switching views is a change of presentation and
+creates no History.
+
+Equivalent actions carry equivalent document and History semantics even where the DOM
+differs — including the continuous opacity transaction, which both views must resolve
+on every exit, cancelling when their control unmounts mid-interaction.
+
+**Consequence:** a capability is added to the model first and surfaced in both views, or
+in neither. An operation the model does not support — duplicate, merge, flatten, blend
+modes, grouping, masks — is offered by neither.

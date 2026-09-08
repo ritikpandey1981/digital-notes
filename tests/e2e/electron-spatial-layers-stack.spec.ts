@@ -2326,3 +2326,472 @@ test("never starts an edge dwell from a Phase 3 control", async () => {
     await app.close();
   }
 });
+
+/**
+ * Phase 5: the two presentations are one model.
+ *
+ * Everything below drives an operation in one view and reads the result in the
+ * other. There is no presentation-specific truth to assert, which is the point:
+ * these fail the moment a view starts keeping its own copy of anything.
+ */
+
+/** Canonical bottom-to-top order, straight from the document surface. */
+const storageOrder = async (window: Page): Promise<readonly string[]> => layerOrder(window);
+
+interface LayerFacts {
+  readonly order: readonly string[];
+  readonly active: string;
+  readonly count: number;
+}
+
+async function documentFacts(window: Page): Promise<LayerFacts> {
+  const order = await storageOrder(window);
+  return { order, active: await activeLayerId(window), count: order.length };
+}
+
+/** What the list shows, read from its own rows. */
+async function listFacts(
+  window: Page,
+  layerId: string,
+): Promise<Readonly<{ name: string; visible: boolean; locked: boolean; opacity: string }>> {
+  const panel = window.getByTestId("layers-panel");
+  const visibility = await panel
+    .getByTestId(`layer-visibility-${layerId}`)
+    .getAttribute("aria-label");
+  const lock = await panel.getByTestId(`layer-lock-${layerId}`).getAttribute("aria-label");
+  return {
+    name: (await panel.getByTestId(`layer-name-${layerId}`).textContent())?.trim() ?? "",
+    // "Hide X" is offered when the layer is visible; "Show X" when it is not.
+    visible: (visibility ?? "").startsWith("Hide"),
+    locked: (lock ?? "").startsWith("Unlock"),
+    opacity: (await panel.getByTestId(`layer-opacity-value-${layerId}`).textContent()) ?? "",
+  };
+}
+
+/** What the stack shows, read from the focused sheet's own controls. */
+async function stackFacts(
+  window: Page,
+  layerId: string,
+): Promise<Readonly<{ name: string; visible: boolean; locked: boolean; opacity: string }>> {
+  const view = window.getByTestId("spatial-layers-view");
+  const plane = view.getByTestId(`spatial-layer-plane-${layerId}`);
+  const opacityLabel =
+    (await window.getByTestId(`spatial-layer-opacity-${layerId}`).getAttribute("aria-label")) ?? "";
+  return {
+    name: (await view.getByTestId(`spatial-layer-label-${layerId}`).textContent())?.trim() ?? "",
+    visible: (await plane.getAttribute("data-layer-visible")) === "true",
+    locked: (await plane.getAttribute("data-layer-locked")) === "true",
+    opacity: `${/(\d+) percent/u.exec(opacityLabel)?.[1] ?? ""}%`,
+  };
+}
+
+test("shows one canonical layer state from either presentation", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    // Every supported operation, performed in the stack.
+    const view = await openStack(window);
+    const initial = await storageOrder(window);
+    const target = initial[1]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+    await settleStack(window);
+
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Underdrawing");
+    await window.getByTestId("spatial-layer-rename-input").press("Enter");
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    const disclosure = await (async () => {
+      await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+      return window.getByTestId(`spatial-layer-opacity-panel-${target}`);
+    })();
+    await expect(disclosure).toBeVisible();
+    const track = (await disclosure.getByRole("slider").boundingBox()) ?? {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    };
+    await window.mouse.move(track.x + track.width * 0.95, track.y + track.height / 2);
+    await window.mouse.down();
+    await window.mouse.move(track.x + track.width * 0.5, track.y + track.height / 2);
+    await window.mouse.up();
+    await window.keyboard.press("Escape");
+    // Keyboard reorder belongs to the stack, so focus has to be in it -- the
+    // rename field and the disclosure both took it on their way past.
+    await view.locator(`[data-layer-plane="${target}"]`).focus();
+    await window.keyboard.press("Alt+ArrowDown");
+    await expect.poll(async () => (await storageOrder(window))[0]).toBe(target);
+
+    const afterStack = await documentFacts(window);
+    const stackShows = await stackFacts(window, target);
+    expect(stackShows.name).toBe("Underdrawing");
+    expect(stackShows.visible).toBe(false);
+    expect(stackShows.locked).toBe(true);
+
+    // The list must agree on every field, with nothing re-derived.
+    await view.getByTestId("layers-view-list").click();
+    await expect(window.getByTestId("layers-panel")).toBeVisible();
+    expect(await documentFacts(window), "switching view is not a mutation").toEqual(afterStack);
+    expect(await listFacts(window, target)).toEqual(stackShows);
+
+    // Now the same operations from the list, read back in the stack.
+    await window.getByTestId(`layer-lock-${target}`).click();
+    await window.getByTestId(`layer-visibility-${target}`).click();
+    await window.getByTestId(`layer-name-${target}`).dblclick();
+    await window.getByTestId(`layer-rename-${target}`).fill("Ink pass");
+    await window.getByTestId(`layer-rename-${target}`).press("Enter");
+    await window.getByTestId(`layer-options-${target}`).click();
+    await window.getByTestId(`layer-move-up-${target}`).click();
+    await window.getByTestId(`layer-options-${target}`).click();
+
+    const afterList = await documentFacts(window);
+    const listShows = await listFacts(window, target);
+    expect(listShows.name).toBe("Ink pass");
+    expect(listShows.visible).toBe(true);
+    expect(listShows.locked).toBe(false);
+
+    await window.getByTestId("layers-panel").getByTestId("layers-view-stack").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveAttribute(
+      "data-stack-phase",
+      "open",
+    );
+    expect(await documentFacts(window), "switching back is not a mutation either").toEqual(
+      afterList,
+    );
+    expect(await stackFacts(window, target)).toEqual(listShows);
+  } finally {
+    await app.close();
+  }
+});
+
+test("undoes and redoes identically whichever view issued the command", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await documentFacts(window);
+    const target = await activeLayerId(window);
+
+    // One command from each view, then unwind both and wind them back.
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await expect(view.getByTestId(`spatial-layer-plane-${target}`)).toHaveAttribute(
+      "data-layer-visible",
+      "false",
+    );
+    await view.getByTestId("layers-view-list").click();
+    await expect(window.getByTestId("layers-panel")).toBeVisible();
+    await window.getByTestId(`layer-lock-${target}`).click();
+    await expect(window.getByTestId(`layer-lock-${target}`)).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    const depthAfter = Number(await historyDepth(window));
+    await window.keyboard.press("Control+z");
+    await expect(window.getByTestId(`layer-lock-${target}`)).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await window.keyboard.press("Control+z");
+    await expect(window.getByTestId(`layer-visibility-${target}`)).toHaveAttribute(
+      "aria-label",
+      `Hide ${(await listFacts(window, target)).name}`,
+    );
+    expect(await documentFacts(window), "two undos return the starting state").toEqual(before);
+
+    // Redo from the other presentation reaches the same place.
+    await window.getByTestId("layers-panel").getByTestId("layers-view-stack").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveAttribute(
+      "data-stack-phase",
+      "open",
+    );
+    await window.keyboard.press("Control+y");
+    await window.keyboard.press("Control+y");
+    await expect(
+      window.getByTestId("spatial-layers-view").getByTestId(`spatial-layer-plane-${target}`),
+    ).toHaveAttribute("data-layer-visible", "false");
+    expect(Number(await historyDepth(window)), "redo restores the same depth").toBe(depthAfter);
+    expect(await stackFacts(window, target)).toMatchObject({ visible: false, locked: true });
+  } finally {
+    await app.close();
+  }
+});
+
+test("keeps every hidden, locked and empty combination recoverable", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window); // stays empty
+
+    const view = await openStack(window);
+    const target = await activeLayerId(window);
+    const plane = view.getByTestId(`spatial-layer-plane-${target}`);
+
+    // Empty + hidden + locked at once: the worst case for "can I get back?".
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    await expect(plane).toHaveAttribute("data-layer-visible", "false");
+    await expect(plane).toHaveAttribute("data-layer-locked", "true");
+
+    // The sheet is still there, still named, still carries a usable cluster.
+    await expect(view.getByTestId(`spatial-layer-label-${target}`)).toBeVisible();
+    await expect(window.getByTestId(`spatial-layer-visibility-${target}`)).toBeEnabled();
+    await expect(window.getByTestId(`spatial-layer-lock-${target}`)).toBeEnabled();
+    await expect(window.getByTestId(`spatial-layer-rename-${target}`)).toBeEnabled();
+    await expect(window.getByTestId(`spatial-layer-opacity-${target}`)).toBeEnabled();
+    await expect(window.getByTestId(`spatial-layer-reorder-${target}`)).toBeEnabled();
+
+    // Renaming and reordering still work in that state.
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Recovered");
+    await window.getByTestId("spatial-layer-rename-input").press("Enter");
+    await expect(view.getByTestId(`spatial-layer-label-${target}`)).toHaveText("Recovered");
+    await view.locator(`[data-layer-plane="${target}"]`).focus();
+    await window.keyboard.press("Alt+ArrowDown");
+    await expect.poll(async () => (await storageOrder(window))[0]).toBe(target);
+
+    // And both states are reversible from the same controls.
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await expect(plane).toHaveAttribute("data-layer-visible", "true");
+    await expect(plane).toHaveAttribute("data-layer-locked", "false");
+
+    // The list tells the same story about the same layer.
+    await view.getByTestId("layers-view-list").click();
+    expect(await listFacts(window, target)).toMatchObject({
+      name: "Recovered",
+      visible: true,
+      locked: false,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("offers Delete only while a layer can be removed, in both views", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+
+    // One layer: neither view offers Delete, and nothing is reported as failing.
+    const view = await openStack(window);
+    const only = await activeLayerId(window);
+    await expect(window.getByTestId(`spatial-layer-delete-${only}`)).toBeDisabled();
+    await view.getByTestId("layers-view-list").click();
+    await expect(window.getByTestId(`layer-delete-${only}`)).toBeDisabled();
+
+    // Two layers: Delete becomes available in both.
+    await window.getByTestId("layers-add").click();
+    const second = await activeLayerId(window);
+    await expect(window.getByTestId(`layer-delete-${only}`)).toBeEnabled();
+    await window.getByTestId("layers-panel").getByTestId("layers-view-stack").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveAttribute(
+      "data-stack-phase",
+      "open",
+    );
+    await expect(window.getByTestId(`spatial-layer-delete-${second}`)).toBeEnabled();
+
+    // Back to one, and it is unavailable again -- no error, no notification.
+    await window.getByTestId(`spatial-layer-delete-${second}`).click();
+    await expect.poll(async () => (await storageOrder(window)).length).toBe(1);
+    const survivor = await activeLayerId(window);
+    await expect(window.getByTestId(`spatial-layer-delete-${survivor}`)).toBeDisabled();
+    await expect(window.getByTestId("editor-error-banner")).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("resolves a list opacity edit on every exit", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+    await openLayerList(window);
+    const ids = await storageOrder(window);
+    const target = ids[1]!;
+
+    const openDisclosure = async (): Promise<Locator> => {
+      await window.getByTestId(`layer-options-${target}`).click();
+      const panel = window.getByTestId(`layer-options-panel-${target}`);
+      await expect(panel).toBeVisible();
+      return panel;
+    };
+    const drag = async (panel: Locator, share: number): Promise<void> => {
+      const track = (await panel.getByRole("slider").boundingBox()) ?? {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+      };
+      await window.mouse.move(track.x + track.width * 0.95, track.y + track.height / 2);
+      await window.mouse.down();
+      await window.mouse.move(track.x + track.width * share, track.y + track.height / 2);
+      await window.mouse.up();
+    };
+    const shown = async (): Promise<string> =>
+      (await window.getByTestId(`layer-opacity-value-${target}`).textContent()) ?? "";
+
+    // A completed drag is one entry, and closing the disclosure adds none.
+    let panel = await openDisclosure();
+    let before = Number(await historyDepth(window));
+    await drag(panel, 0.6);
+    const committed = await shown();
+    expect(committed).not.toBe("100%");
+    expect(Number(await historyDepth(window)), "one gesture, one entry").toBe(before + 1);
+    await window.getByTestId(`layer-options-${target}`).click();
+    await expect(panel).toHaveCount(0);
+    expect(Number(await historyDepth(window)), "closing commits nothing further").toBe(before + 1);
+
+    // Reopening and changing nothing is History-free.
+    panel = await openDisclosure();
+    before = Number(await historyDepth(window));
+    await window.getByTestId(`layer-options-${target}`).click();
+    expect(Number(await historyDepth(window)), "an unchanged value is not a change").toBe(before);
+    expect(await shown()).toBe(committed);
+
+    // Escape cancels the disclosure and leaves the value alone.
+    panel = await openDisclosure();
+    before = Number(await historyDepth(window));
+    await window.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+    await expect(window.getByTestId("layers-panel")).toBeVisible();
+    expect(Number(await historyDepth(window))).toBe(before);
+    expect(await shown()).toBe(committed);
+
+    // Deleting the edited layer is exactly one entry, and the survivors are
+    // untouched -- no stale commit lands on the layer that went away.
+    panel = await openDisclosure();
+    await drag(panel, 0.4);
+    const beforeDelete = Number(await historyDepth(window));
+    await window.getByTestId(`layer-delete-${target}`).click();
+    await expect.poll(async () => (await storageOrder(window)).length).toBe(2);
+    expect(Number(await historyDepth(window)), "the delete, and nothing else").toBe(
+      beforeDelete + 1,
+    );
+    const survivor = (await storageOrder(window))[0]!;
+    expect(await listFacts(window, survivor)).toMatchObject({ visible: true, locked: false });
+
+    // Closing the panel mid-disclosure resolves rather than leaking: reopening
+    // starts clean and the value is whatever was last committed.
+    await window.getByTestId(`layer-options-${survivor}`).click();
+    before = Number(await historyDepth(window));
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("layers-panel")).toHaveCount(0);
+    await openLayerList(window);
+    await expect(window.getByTestId(`layer-options-panel-${survivor}`)).toHaveCount(0);
+    expect(Number(await historyDepth(window)), "closing the panel is not a command").toBe(before);
+  } finally {
+    await app.close();
+  }
+});
+
+test("keeps the stack navigable and truthfully named for the keyboard", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    for (let index = 0; index < 4; index += 1) await addLayer(window);
+
+    const view = await openStack(window);
+    const display = [...(await storageOrder(window))].reverse();
+    const target = await activeLayerId(window);
+
+    // Exactly one sheet is a tab stop, however many are mounted. Faded
+    // neighbours stay navigable and named, but they are not a tab maze.
+    const tabbable = await view
+      .locator("[data-layer-plane]")
+      .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("tabindex") === "0").length);
+    expect(tabbable, "one roving tab stop").toBe(1);
+    expect(await view.locator("[data-layer-plane]").count(), "all sheets mounted").toBe(5);
+
+    // Every sheet keeps a name built from the layer, not its position.
+    await window.getByTestId(`spatial-layer-rename-${target}`).click();
+    await window.getByTestId("spatial-layer-rename-input").fill("Underdrawing");
+    await window.getByTestId("spatial-layer-rename-input").press("Enter");
+    await expect(view.locator(`[data-layer-plane="${target}"]`)).toHaveAttribute(
+      "aria-label",
+      /^Underdrawing, \d+ objects?, active layer$/u,
+    );
+
+    // State-dependent control names say what pressing them will do, and the
+    // opacity control carries the live percentage.
+    await expect(window.getByTestId(`spatial-layer-visibility-${target}`)).toHaveAttribute(
+      "aria-label",
+      "Hide Underdrawing",
+    );
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await expect(window.getByTestId(`spatial-layer-visibility-${target}`)).toHaveAttribute(
+      "aria-label",
+      "Show Underdrawing",
+    );
+    await expect(view.locator(`[data-layer-plane="${target}"]`)).toHaveAttribute(
+      "aria-label",
+      /hidden/u,
+    );
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await expect(window.getByTestId(`spatial-layer-opacity-${target}`)).toHaveAttribute(
+      "aria-label",
+      "Underdrawing opacity, 100 percent",
+    );
+    await expect(window.getByTestId(`spatial-layer-reorder-${target}`)).toHaveAttribute(
+      "aria-label",
+      /^Reorder Underdrawing\./u,
+    );
+
+    // Arrow keys navigate, Home and End reach the ends, and none of it is a
+    // reorder: the order is the same afterwards.
+    const before = await storageOrder(window);
+    await view.locator(`[data-layer-plane="${target}"]`).focus();
+    await window.keyboard.press("ArrowDown");
+    await expect.poll(() => activeLayerId(window)).toBe(display[1]);
+    await window.keyboard.press("End");
+    await expect.poll(() => activeLayerId(window)).toBe(display[display.length - 1]);
+    await window.keyboard.press("Home");
+    await expect.poll(() => activeLayerId(window)).toBe(display[0]);
+    expect(await storageOrder(window), "navigation is not reordering").toEqual(before);
+
+    // Enter and Space activate a sheet rather than doing anything else.
+    const historyBefore = Number(await historyDepth(window));
+    await window.keyboard.press("ArrowDown");
+    await window.keyboard.press("Enter");
+    await window.keyboard.press("Space");
+    expect(Number(await historyDepth(window)), "activation is session state").toBe(historyBefore);
+
+    // A key pressed inside the rename field belongs to the field.
+    const focused = await activeLayerId(window);
+    await window.getByTestId(`spatial-layer-rename-${focused}`).click();
+    const input = window.getByTestId("spatial-layer-rename-input");
+    await input.fill("a b");
+    await input.press("Space");
+    await input.press("Home");
+    await input.press("ArrowDown");
+    expect(await activeLayerId(window), "the stack does not navigate while typing").toBe(focused);
+    await expect(input).toBeVisible();
+    await input.press("Escape");
+    await expect(input).toHaveCount(0);
+    await expect(view).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});

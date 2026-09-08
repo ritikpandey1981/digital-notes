@@ -38,7 +38,7 @@ describe("display order mirrors canonical storage exactly once", () => {
   // the stack would silently invert every move, so it is asserted directly
   // against the mapping the list already uses.
   it("maps the top display row to the highest storage index", () => {
-    for (const count of [2, 3, 5, 10]) {
+    for (const count of [2, 3, 5, 10, 30, 80]) {
       expect(resolveLayerDragMove(1, 0, count).targetStorageIndex).toBe(count - 1);
       expect(resolveLayerDragMove(0, count, count).targetStorageIndex).toBe(0);
     }
@@ -65,7 +65,7 @@ describe("display order mirrors canonical storage exactly once", () => {
   });
 
   it("clamps at the top and bottom rather than producing an invalid index", () => {
-    for (const count of [2, 3, 5, 10]) {
+    for (const count of [2, 3, 5, 10, 30, 80]) {
       for (const insert of [-50, -1, count, count + 50]) {
         const move = resolveLayerDragMove(1, insert, count);
         expect(move.targetStorageIndex).toBeGreaterThanOrEqual(0);
@@ -90,7 +90,7 @@ describe("no-op detection", () => {
   });
 
   it("agrees with the canonical move resolver", () => {
-    for (const count of [2, 3, 5, 10]) {
+    for (const count of [2, 3, 5, 10, 30, 80]) {
       for (let from = 0; from < count; from += 1) {
         for (let insert = 0; insert <= count; insert += 1) {
           expect(isNoOpReorder(count, from, insert)).toBe(
@@ -122,7 +122,7 @@ describe("transient slot arrangement", () => {
   });
 
   it("always produces a complete permutation, whatever the inputs", () => {
-    for (const count of [1, 2, 3, 5, 10]) {
+    for (const count of [1, 2, 3, 5, 10, 30, 80]) {
       for (let from = 0; from < count; from += 1) {
         for (const insert of [-9, 0, 1, count - 1, count, count + 9]) {
           const slots = resolveReorderSlots(count, from, insert);
@@ -207,7 +207,7 @@ describe("pointer to insertion gap", () => {
   });
 
   it("answers for every supported layer count", () => {
-    for (const count of [1, 2, 3, 5, 10]) {
+    for (const count of [1, 2, 3, 5, 10, 30, 80]) {
       const current = layout(count);
       const index = resolveSpatialDropIndex(0, current, current.layers, current.tiltDegrees, 0);
       expect(index).toBeGreaterThanOrEqual(0);
@@ -221,7 +221,7 @@ describe("cancelling returns the canonical arrangement", () => {
     // The component renders settled slots by index when `drag` is null; this is
     // the value it falls back to, asserted so a cancel cannot leave a sheet
     // parked in a transient slot.
-    for (const count of [1, 2, 3, 5, 10]) {
+    for (const count of [1, 2, 3, 5, 10, 30, 80]) {
       const settled = Array.from({ length: count }, (_unused, index) => index);
       expect(resolveReorderSlots(count, 0, 0)).toEqual(settled);
     }
@@ -327,7 +327,7 @@ describe("transient exposure", () => {
   });
 
   it("never lets exposure name a position outside the arrangement", () => {
-    for (const count of [1, 2, 3, 5, 10]) {
+    for (const count of [1, 2, 3, 5, 10, 30, 80]) {
       for (let focused = 0; focused < count; focused += 1) {
         for (const steps of [-99, -1, 0, 1, 99]) {
           const exposed = focused + clampReorderExposure(steps, focused, count);
@@ -335,6 +335,52 @@ describe("transient exposure", () => {
           expect(exposed).toBeLessThanOrEqual(count - 1);
         }
       }
+    }
+  });
+});
+
+describe("deep stacks stay finite and reachable", () => {
+  // 30 and 80 layers are past anything a screenshot pass can judge, so the
+  // guarantees that matter there are asserted on the geometry itself: finite
+  // numbers, an order that never inverts, and every layer still addressable.
+  for (const count of [1, 2, 3, 5, 10, 30, 80]) {
+    it(`keeps ${count} layers finite, ordered and addressable`, () => {
+      const stack = layout(count);
+      expect(Number.isFinite(stack.gap)).toBe(true);
+      expect(Number.isFinite(stack.planeWidth)).toBe(true);
+      expect(Number.isFinite(stack.planeHeight)).toBe(true);
+      expect(stack.planeWidth).toBeGreaterThan(0);
+      expect(stack.gap).toBeGreaterThan(0);
+      expect(stack.layers).toHaveLength(count);
+
+      let previous = Number.NEGATIVE_INFINITY;
+      for (const plane of stack.layers) {
+        const anchor = sheetAnchorY(stack, plane, stack.tiltDegrees, 0);
+        expect(Number.isFinite(anchor)).toBe(true);
+        // Anchors increase down the arrangement; an inversion here would mean
+        // perspective had folded a sheet through the camera.
+        expect(anchor).toBeGreaterThan(previous);
+        previous = anchor;
+        expect(Number.isFinite(plane.translateZ)).toBe(true);
+        // Depth stays well short of the camera, whatever the layer count.
+        expect(plane.translateZ).toBeLessThan(stack.perspective);
+      }
+
+      // Every layer is reachable as an exposure destination from every start.
+      for (const focused of [0, Math.floor(count / 2), count - 1]) {
+        expect(focused + clampReorderExposure(-9999, focused, count)).toBe(0);
+        expect(focused + clampReorderExposure(9999, focused, count)).toBe(count - 1);
+      }
+    });
+  }
+
+  it("never magnifies the nearest sheet past the depth ceiling", () => {
+    for (const count of [1, 5, 30, 80]) {
+      const stack = layout(count);
+      const nearest = Math.max(...stack.layers.map((plane) => plane.translateZ));
+      // The layout caps accumulated depth as a share of the perspective
+      // distance; exceeding it is what would blow a deep stack up off-screen.
+      expect(nearest / stack.perspective).toBeLessThanOrEqual(0.25);
     }
   });
 });
