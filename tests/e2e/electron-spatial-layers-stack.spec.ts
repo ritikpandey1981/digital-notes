@@ -610,11 +610,11 @@ test("navigates between sheets instead of scrolling", async () => {
     // 1. The stack opens on the Layer being worked on, in the focus zone.
     const active = await surface.getAttribute("data-active-layer-id");
     expect(active).toBe(display[0]);
-    await expectFocused(view, active); // "the active Layer is the focused one"
+    await expectFocused(view, active ?? undefined); // "the active Layer is the focused one"
 
     // 2. There is no browser scrollbar and no reserved gutter.
     const scroller = view.getByTestId("spatial-layers-scroller");
-    const gutter = await scroller.evaluate((node) => ({
+    const gutter = await scroller.evaluate((node: HTMLElement) => ({
       vertical: node.offsetWidth - node.clientWidth,
       horizontal: node.offsetHeight - node.clientHeight,
       overflowY: getComputedStyle(node).overflowY,
@@ -1497,12 +1497,14 @@ test("keeps the focused controls inside a minimum window", async () => {
     // The arrangement is deliberately taller than its container -- sheets keep
     // their size and are navigated. What must stay true is that this never
     // becomes a scroll: no gutter, no scrollbar, and a pinned scroll position.
-    const gutter = await view.getByTestId("spatial-layers-scroller").evaluate((node) => ({
-      horizontal: node.offsetHeight - node.clientHeight,
-      vertical: node.offsetWidth - node.clientWidth,
-      overflowY: getComputedStyle(node).overflowY,
-      scrollTop: node.scrollTop,
-    }));
+    const gutter = await view
+      .getByTestId("spatial-layers-scroller")
+      .evaluate((node: HTMLElement) => ({
+        horizontal: node.offsetHeight - node.clientHeight,
+        vertical: node.offsetWidth - node.clientWidth,
+        overflowY: getComputedStyle(node).overflowY,
+        scrollTop: node.scrollTop,
+      }));
     expect(gutter.vertical, "no vertical scrollbar gutter").toBe(0);
     expect(gutter.horizontal, "no horizontal scrollbar gutter").toBe(0);
     expect(gutter.overflowY).toBe("hidden");
@@ -2258,11 +2260,13 @@ test("auto-navigates at the minimum window and under reduced motion", async () =
     expect(Number(await historyDepth(window))).toBe(depth + 1);
 
     // The band is still the band: no scrollbar appeared to make this work.
-    const gutter = await view.getByTestId("spatial-layers-scroller").evaluate((node) => ({
-      vertical: node.offsetWidth - node.clientWidth,
-      overflowY: getComputedStyle(node).overflowY,
-      scrollTop: node.scrollTop,
-    }));
+    const gutter = await view
+      .getByTestId("spatial-layers-scroller")
+      .evaluate((node: HTMLElement) => ({
+        vertical: node.offsetWidth - node.clientWidth,
+        overflowY: getComputedStyle(node).overflowY,
+        scrollTop: node.scrollTop,
+      }));
     expect(gutter.vertical).toBe(0);
     expect(gutter.overflowY).toBe("hidden");
     expect(gutter.scrollTop).toBe(0);

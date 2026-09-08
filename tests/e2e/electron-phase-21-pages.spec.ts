@@ -63,6 +63,22 @@ async function renderedPaperColor(window: Page): Promise<string> {
   });
 }
 
+/**
+ * A Playwright bounding box as the edge rect `overlaps` compares.
+ *
+ * `boundingBox()` reports x/y/width/height; every other caller here measures
+ * edges in the page. Passing the box straight in left every edge undefined, so
+ * the comparison was always false and the assertion always passed.
+ */
+function edgesOf(box: { x: number; y: number; width: number; height: number }): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} {
+  return { left: box.x, top: box.y, right: box.x + box.width, bottom: box.y + box.height };
+}
+
 function overlaps(
   first: { left: number; top: number; right: number; bottom: number },
   second: { left: number; top: number; right: number; bottom: number },
@@ -396,8 +412,8 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
     await expect(picker).toBeVisible();
     expect(
       overlaps(
-        (await picker.boundingBox())!,
-        (await window.getByTestId("page-settings").boundingBox())!,
+        edgesOf((await picker.boundingBox())!),
+        edgesOf((await window.getByTestId("page-settings").boundingBox())!),
       ),
     ).toBe(false);
     await window.keyboard.press("Escape");
@@ -473,7 +489,7 @@ test("Phase 21 keeps page surfaces usable and collision-free", async ({
     await expect(window.getByTestId("layers-panel")).toHaveCount(0);
     const minimum = await app.evaluate(async ({ BrowserWindow }) => {
       const target = BrowserWindow.getAllWindows()[0];
-      const [width, height] = target?.getMinimumSize() ?? [960, 640];
+      const [width, height] = (target?.getMinimumSize() ?? [960, 640]) as [number, number];
       target?.setContentSize(width, height);
       await new Promise((resolve) => setTimeout(resolve, 320));
       return { width, height };

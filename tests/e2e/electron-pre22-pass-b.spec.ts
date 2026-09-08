@@ -793,7 +793,7 @@ test("Pass B places the color picker against the shared occupied-zone model", as
 
     const minimum = await app.evaluate(({ BrowserWindow }) => {
       const target = BrowserWindow.getAllWindows()[0];
-      const [width, height] = target?.getMinimumSize() ?? [0, 0];
+      const [width, height] = (target?.getMinimumSize() ?? [0, 0]) as [number, number];
       return { width, height };
     });
     await resize(app, minimum.width, minimum.height);

@@ -93,7 +93,7 @@ test("resolves a custom paper preview when Page Settings is dismissed outside", 
     expect(await historyDepth(surface)).toBe(depthBefore);
 
     const input = await beginPaperPreview(window, "#ffedd5");
-    await window.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await window.evaluate(() => globalThis.dispatchEvent(new Event("blur")));
     await expect(surface).toHaveAttribute("data-page-paper-color", originalColor);
     expect(await historyDepth(surface)).toBe(depthBefore);
 

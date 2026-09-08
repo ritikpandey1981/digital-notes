@@ -197,7 +197,7 @@ test("owns complete ring material while preserving the first outside canvas gest
     expect(await selectedBrush()).toBe(selectionBeforeRecovery);
 
     await beginGapPress(window);
-    await window.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await window.evaluate(() => globalThis.dispatchEvent(new Event("blur")));
     await expect(library).toHaveAttribute("data-library-dragging", "false");
     await expect(library).toHaveAttribute("data-library-coasting", "false");
     await window.mouse.up();

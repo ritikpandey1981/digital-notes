@@ -202,7 +202,11 @@ async function expectDrawingSelectionCases(
     await activateDockSlot(window, slotId);
     await expectEarlierFolioSelection(dock, slotId);
     const glyph = drawingGlyph(dock, slotId);
-    await expect(glyph).toHaveAttribute("data-drawing-slot-glyph-color", colors[slotId]);
+    // Indexing a Record is optional under noUncheckedIndexedAccess; every slot
+    // in `slotIds` has a colour, and asserting it says so.
+    const expected = colors[slotId];
+    expect(expected, `${slotId} has a stored colour`).toBeDefined();
+    await expect(glyph).toHaveAttribute("data-drawing-slot-glyph-color", expected!);
     const style = await glyph.evaluate((element) => {
       const computed = getComputedStyle(element);
       return {
@@ -374,8 +378,8 @@ async function isFullyOnScreen(target: Locator): Promise<boolean> {
     return (
       rect.left >= -0.5 &&
       rect.top >= -0.5 &&
-      rect.right <= window.innerWidth + 0.5 &&
-      rect.bottom <= window.innerHeight + 0.5
+      rect.right <= globalThis.innerWidth + 0.5 &&
+      rect.bottom <= globalThis.innerHeight + 0.5
     );
   });
 }

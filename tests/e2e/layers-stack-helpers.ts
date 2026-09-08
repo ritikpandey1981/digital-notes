@@ -18,10 +18,21 @@ export async function launchFolio(
       "apps/desktop/node_modules/electron/dist/electron.exe",
     ),
   });
-  const window = await app.firstWindow();
-  await window.setViewportSize({ width, height });
-  await expect(window.getByTestId("canvas-surface")).toBeVisible();
-  return { app, window };
+  // Everything after the launch has to close the app if it throws. A failure
+  // here -- the window never arriving, the canvas never becoming visible --
+  // would otherwise leave a live Electron app behind for the rest of the run,
+  // competing for the foreground with every later pointer spec.
+  try {
+    const window = await app.firstWindow();
+    await window.setViewportSize({ width, height });
+    await expect(window.getByTestId("canvas-surface")).toBeVisible();
+    return { app, window };
+  } catch (cause) {
+    await app.close().catch(() => {
+      // Already gone, which is the outcome this wanted anyway.
+    });
+    throw cause;
+  }
 }
 
 export const surfaceOf = (window: Page): Locator => window.getByTestId("canvas-surface");

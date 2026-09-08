@@ -149,7 +149,7 @@ test("creates and edits Line, Rectangle, and Ellipse PageObjects through existin
           bubbles: true,
           cancelable: true,
         });
-        window.dispatchEvent(shift);
+        globalThis.dispatchEvent(shift);
         return shift.defaultPrevented;
       }),
     ).toBe(true);

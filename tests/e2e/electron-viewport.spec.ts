@@ -65,7 +65,9 @@ test("provides live zoom controls, anchored zoom, transient pan, and mode-aware 
     // a physical pointer move naturally spans these frames, Playwright does not.
     await window.evaluate(
       () =>
-        new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
     );
     await window.mouse.move(pageDismissPoint.x, pageDismissPoint.y);
     await window.mouse.down();

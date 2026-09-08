@@ -218,7 +218,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
         return {
           physicalWidth: canvas.width,
           physicalHeight: canvas.height,
-          dpr: window.devicePixelRatio,
+          dpr: globalThis.devicePixelRatio,
         };
       });
     expect(previewMetrics.physicalWidth).toBe(Math.round(278 * previewMetrics.dpr));
