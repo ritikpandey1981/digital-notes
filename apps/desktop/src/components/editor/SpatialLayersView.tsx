@@ -6,13 +6,42 @@ import {
   type Page,
 } from "@folio/editor";
 import { cn } from "@folio/ui";
-import { Eye, EyeOff, Layers3, Lock, LockOpen, Pencil, Plus, Rows3, Trash2 } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  GripVertical,
+  Layers3,
+  Lock,
+  LockOpen,
+  Pencil,
+  Plus,
+  Rows3,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useReducedMotionPreference } from "../../motion/floating-surface-motion";
 import { useSettlingValue } from "../../motion/settling-value";
 import { useTransientPresentation } from "../../motion/transient-presentation";
 import { ContinuousSlider } from "./ContinuousSlider";
 import { pushDismissal } from "./floating-dismissal-stack";
-import { describeDeletedLayer, normalizeLayerName } from "./layers-panel-model";
+import {
+  describeDeletedLayer,
+  LAYER_DRAG_THRESHOLD,
+  moveTargetIndex,
+  normalizeLayerName,
+  resolveLayerDragMove,
+} from "./layers-panel-model";
+import {
+  canReorderLayers,
+  clampReorderExposure,
+  REORDER_EDGE,
+  REORDER_LIFT_DEPTH,
+  reorderExposureExhausted,
+  resolveReorderEdgeZone,
+  resolveReorderSlots,
+  resolveSpatialDropIndex,
+  type ReorderEdge,
+} from "./spatial-layer-reorder-model";
 import {
   controlsInteractive,
   resolveDisclosureShift,
@@ -34,6 +63,7 @@ import {
   projectSheetCorner,
   SPATIAL_STACK_MOTION,
   SPATIAL_STACK_NAVIGATION,
+  type SpatialStackLayout,
   type SpatialStackPlane,
 } from "./spatial-layer-stack-model";
 
@@ -56,6 +86,25 @@ interface SpatialLayersViewProps {
   readonly onShowList: () => void;
   readonly onDismiss: () => void;
   readonly onNotify: (message: string) => void;
+}
+
+/** One in-flight reorder gesture, in display order. Never document state. */
+interface SpatialReorderDrag {
+  readonly layerId: string;
+  readonly fromDisplayIndex: number;
+  /** Candidate gap: 0 is above the top sheet, `layerCount` is below the last. */
+  readonly insertDisplayIndex: number;
+  /** How far the held sheet has travelled from its resting position. */
+  readonly pointerDeltaY: number;
+  /**
+   * Layers of arrangement slid under the held sheet by edge dwell.
+   *
+   * Presentation only, and transient: it exposes a different neighbourhood of
+   * the same canonical order so destinations the window cannot show become
+   * reachable. It is not a second focus authority -- the active layer is still
+   * the one being held -- and it disappears with the gesture.
+   */
+  readonly exposure: number;
 }
 
 /** Chrome the stack must stay clear of: dock plus property rail, and the utility rail. */
@@ -119,6 +168,29 @@ export function SpatialLayersView({
    */
   const [renamingLayerId, setRenamingLayerId] = useState<string | null>(null);
   const [opacityLayerId, setOpacityLayerId] = useState<string | null>(null);
+  /**
+   * One reorder gesture in flight. Presentation only until it is dropped.
+   *
+   * Holding a candidate index rather than mutating as the pointer crosses each
+   * sheet is what keeps a drag past five layers to one command: the document is
+   * untouched until the drop resolves.
+   */
+  const [drag, setDrag] = useState<SpatialReorderDrag | null>(null);
+  /** The single resolution path, so Escape and teardown end the same gesture. */
+  const cancelDragRef = useRef<(() => void) | null>(null);
+  /**
+   * The live arrangement, for the window-level drag listeners.
+   *
+   * They outlive the render that installed them, and a stale layout would judge
+   * the pointer against sheets that have since moved. Written on every render
+   * below, read only inside the gesture.
+   */
+  const layoutRef = useRef<{
+    layout: SpatialStackLayout;
+    planes: readonly SpatialStackPlane[];
+    tiltDegrees: number;
+    offset: number;
+  } | null>(null);
   // Only ever open on the sheet that is actually focused.
   const renaming = renamingLayerId !== null && renamingLayerId === snapshot.activeLayerId;
   const opacityOpen = opacityLayerId !== null && opacityLayerId === snapshot.activeLayerId;
@@ -133,6 +205,9 @@ export function SpatialLayersView({
   // value, so a reversal changes one direction of travel rather than unwinding
   // a set of per-sheet timers.
   const presentation = useTransientPresentation(open, SPATIAL_STACK_MOTION);
+  // Edge-dwell reorder is functional, not decoration: reduced motion drops the
+  // neighbour transition but must never remove access to a destination.
+  const reducedMotion = useReducedMotionPreference();
   // Presentation mount, not logical open: the sheets have to outlive the
   // request long enough to come back together.
   const mounted = presentation.phase !== "closed";
@@ -181,6 +256,12 @@ export function SpatialLayersView({
    * handler already respects -- so it never reaches here.
    */
   const handleEscape = useCallback((): void => {
+    // A live drag is the innermost transient state, so it unwinds first and
+    // leaves the order exactly as it was -- the same precedence the list uses.
+    if (cancelDragRef.current !== null) {
+      cancelDragRef.current();
+      return;
+    }
     if (renaming) {
       setRenamingLayerId(null);
       return;
@@ -349,9 +430,221 @@ export function SpatialLayersView({
     [displayLayers, onActivateLayer, snapshot.activeLayerId],
   );
 
+  /**
+   * One reorder gesture, owned from the threshold until it is resolved.
+   *
+   * Pointer capture goes to the grip, not to a sheet: the artwork is not a drag
+   * handle, so activation, the contextual controls and wheel navigation each
+   * keep their own press. Window listeners rather than React handlers because
+   * the pointer routinely leaves the small grip it started on.
+   *
+   * `finish` is the single exit. It removes the listeners, releases the
+   * capture, clears the transient arrangement, and only then decides whether
+   * anything happened -- so Escape, a lost capture, a blur, a closing stack and
+   * an unmount all resolve through the same path exactly once.
+   */
+  const beginReorder = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, fromDisplayIndex: number, layerId: string) => {
+      if (event.button !== 0 || !canReorderLayers(displayLayers.length)) return;
+      event.preventDefault();
+      // The grip sits inside the control cluster; a press on it is never also a
+      // press on the sheet behind it or the buttons beside it.
+      event.stopPropagation();
+      const handle = event.currentTarget;
+      const pointerId = event.pointerId;
+      const originY = event.clientY;
+      let started = false;
+      let insertDisplayIndex = fromDisplayIndex;
+      let resolved = false;
+      // Transient exposure: how many layers of arrangement have been slid under
+      // the held sheet. Presentation only; the document never sees it.
+      let exposure = 0;
+      let pointerY = originY;
+      let edge: ReorderEdge = null;
+      let edgeTimer: number | null = null;
+
+      /** One owner for every edge timer, so no dwell can outlive the gesture. */
+      const stopEdgeTimer = (): void => {
+        if (edgeTimer !== null) {
+          window.clearTimeout(edgeTimer);
+          edgeTimer = null;
+        }
+      };
+
+      const publish = (): void => {
+        setDrag({
+          layerId,
+          fromDisplayIndex,
+          insertDisplayIndex,
+          pointerDeltaY: pointerY - originY,
+          exposure,
+        });
+      };
+
+      /**
+       * Re-resolves the candidate against the arrangement as it stands now.
+       *
+       * The same insertion algorithm as an ordinary move -- exposure changes
+       * which neighbourhood the pointer is measured against, never how the
+       * measurement is made.
+       */
+      const resolveCandidate = (): void => {
+        const bounds = boundsRef.current?.getBoundingClientRect();
+        const live = layoutRef.current;
+        if (bounds === undefined || live === null) return;
+        insertDisplayIndex = resolveSpatialDropIndex(
+          pointerY - bounds.top,
+          live.layout,
+          live.planes,
+          live.tiltDegrees,
+          live.offset + exposure * live.layout.gap,
+        );
+      };
+
+      /**
+       * One layer of arrangement slides under the held sheet.
+       *
+       * The sheet itself does not move: its position is compensated by the same
+       * exposure, so what travels is the stack. Holding at the end of the stack
+       * stops the timer rather than churning against a clamp.
+       */
+      const stepEdge = (direction: Exclude<ReorderEdge, null>): void => {
+        const count = displayLayers.length;
+        if (reorderExposureExhausted(exposure, direction, fromDisplayIndex, count)) {
+          stopEdgeTimer();
+          return;
+        }
+        exposure = clampReorderExposure(
+          exposure + (direction === "down" ? 1 : -1),
+          fromDisplayIndex,
+          count,
+        );
+        resolveCandidate();
+        publish();
+        edgeTimer = window.setTimeout(() => stepEdge(direction), REORDER_EDGE.repeatMs);
+      };
+
+      /**
+       * Starts, keeps or cancels the dwell as the pointer enters and leaves.
+       *
+       * A direction change is a new decision, not a continuation: banked dwell
+       * time is dropped, mirroring the reversal rule wheel navigation already
+       * follows. Leaving for the middle stops the traversal but keeps whatever
+       * neighbourhood it exposed, so the artist can auto-navigate and then aim.
+       */
+      const updateEdge = (): void => {
+        const bounds = boundsRef.current?.getBoundingClientRect();
+        const next =
+          bounds === undefined ? null : resolveReorderEdgeZone(pointerY, bounds.top, bounds.bottom);
+        if (next === edge) return;
+        edge = next;
+        stopEdgeTimer();
+        if (next === null) return;
+        edgeTimer = window.setTimeout(() => stepEdge(next), REORDER_EDGE.firstDwellMs);
+      };
+
+      const finish = (commit: boolean): void => {
+        if (resolved) return;
+        resolved = true;
+        stopEdgeTimer();
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+        window.removeEventListener("blur", handleBlur);
+        cancelDragRef.current = null;
+        setDrag(null);
+        try {
+          handle.releasePointerCapture(pointerId);
+        } catch {
+          // The browser may already have released it.
+        }
+        if (!commit || !started) return;
+        const move = resolveLayerDragMove(
+          fromDisplayIndex,
+          insertDisplayIndex,
+          displayLayers.length,
+        );
+        // A drop back where it started stops here rather than relying on the
+        // command layer to notice nothing changed: no command, no History.
+        if (move.changed) actions?.moveLayer(layerId, move.targetStorageIndex);
+      };
+
+      const handleMove = (moveEvent: PointerEvent): void => {
+        if (moveEvent.pointerId !== pointerId) return;
+        pointerY = moveEvent.clientY;
+        if (!started) {
+          // The same travel the list requires, so a steady hand pressing the
+          // grip never reorders by accident. No edge timer may run before this:
+          // a press that never became a drag must not move the arrangement.
+          if (Math.abs(pointerY - originY) < LAYER_DRAG_THRESHOLD) return;
+          started = true;
+        }
+        resolveCandidate();
+        updateEdge();
+        publish();
+      };
+      const handleUp = (upEvent: PointerEvent): void => {
+        if (upEvent.pointerId !== pointerId) return;
+        finish(true);
+      };
+      const handleCancel = (cancelEvent: PointerEvent): void => {
+        if (cancelEvent.pointerId !== pointerId) return;
+        finish(false);
+      };
+      // A window that loses focus mid-gesture never receives the pointerup, so
+      // the drag would otherwise be stranded holding a sheet.
+      const handleBlur = (): void => finish(false);
+
+      handle.setPointerCapture(pointerId);
+      cancelDragRef.current = () => finish(false);
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp);
+      window.addEventListener("pointercancel", handleCancel);
+      window.addEventListener("blur", handleBlur);
+    },
+    [actions, displayLayers.length],
+  );
+
+  // Closing the stack, switching to the list, changing page and unmounting all
+  // arrive here as the surface going away. The gesture is cancelled, never
+  // committed: a drop is something the artist does, not something a teardown
+  // decides on their behalf.
+  useEffect(() => {
+    if (open) return;
+    cancelDragRef.current?.();
+  }, [open]);
+  useEffect(() => () => cancelDragRef.current?.(), []);
+
+  /**
+   * Keyboard reorder, using the list's own modifier and its own move resolver.
+   *
+   * Alt with the arrows moves the layer; the bare arrows keep navigating focus.
+   * Inventing a second shortcut for the same action in a second view is how two
+   * presentations of one model start to feel like two products.
+   */
+  const reorderFocusedLayer = useCallback(
+    (direction: "up" | "down"): void => {
+      const layer = displayLayers[focusedIndex];
+      if (layer === undefined || !canReorderLayers(displayLayers.length)) return;
+      // Display runs top-first and storage runs bottom-to-top, so "up the
+      // arrangement" is a higher storage index -- mirrored once, by the list's
+      // resolver rather than by hand.
+      const storageIndex = displayLayers.length - 1 - focusedIndex;
+      const target = moveTargetIndex({ storageIndex }, direction, displayLayers.length);
+      if (target === null) return;
+      actions?.moveLayer(layer.id, target);
+    },
+    [actions, displayLayers, focusedIndex],
+  );
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>): void => {
       const last = displayLayers.length - 1;
+      if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        event.preventDefault();
+        reorderFocusedLayer(event.key === "ArrowUp" ? "up" : "down");
+        return;
+      }
       const next =
         event.key === "ArrowUp"
           ? focusedIndex - 1
@@ -366,7 +659,7 @@ export function SpatialLayersView({
       event.preventDefault();
       focusLayer(next);
     },
-    [displayLayers.length, focusLayer, focusedIndex],
+    [displayLayers.length, focusLayer, focusedIndex, reorderFocusedLayer],
   );
 
   /**
@@ -379,6 +672,10 @@ export function SpatialLayersView({
   const handleWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>): void => {
       if (presentation.phase !== "open" || displayLayers.length < 2) return;
+      // A reorder owns the pointer outright. Letting the wheel move the focus
+      // underneath it would change which sheet is active mid-gesture, and the
+      // arrangement the drag is being judged against would move with it.
+      if (cancelDragRef.current !== null) return;
       const result = accumulateWheelNavigation(
         wheelRef.current,
         event.deltaY,
@@ -394,6 +691,24 @@ export function SpatialLayersView({
   useEffect(() => {
     if (!open) wheelRef.current = EMPTY_WHEEL_NAVIGATION;
   }, [open]);
+
+  /**
+   * Keeps the drag listeners' view of the arrangement current.
+   *
+   * Synced after commit rather than written during render. A reorder can only
+   * begin once the stack is settled open, and at that point the interpolated
+   * frame *is* the layout -- the choreography returns the approved planes by
+   * identity at the end of its travel -- so the settled layout and the live
+   * focus offset are exactly what the gesture must measure against.
+   */
+  useEffect(() => {
+    layoutRef.current = {
+      layout,
+      planes: layout.layers,
+      tiltDegrees: layout.tiltDegrees,
+      offset,
+    };
+  }, [layout, offset]);
 
   if (!mounted || page === null) return null;
 
@@ -433,6 +748,29 @@ export function SpatialLayersView({
   });
 
   const groupHeight = layout.planeHeight + layout.paper.translateY;
+
+  /**
+   * Where each sheet sits while a reorder is in flight.
+   *
+   * The neighbours close up behind the held sheet and open ahead of it, which
+   * is what reads as one sheet being lifted out of a stack rather than a list
+   * re-sorting. Presentation only: canonical order is untouched until the drop.
+   */
+  const reorderSlots =
+    drag === null
+      ? null
+      : resolveReorderSlots(displayLayers.length, drag.fromDisplayIndex, drag.insertDisplayIndex);
+  const dragging = (layerId: string): boolean => drag?.layerId === layerId;
+  /**
+   * Where the arrangement actually sits, edge-dwell exposure included.
+   *
+   * Exposure is added to the focus offset rather than to the focus itself: the
+   * held sheet stays the active layer, and what moves is which neighbourhood of
+   * the same canonical order is under it.
+   */
+  const exposurePixels = (drag?.exposure ?? 0) * layout.gap;
+  const arrangementOffset = offset + exposurePixels;
+
   /**
    * How much of the composition a sheet is part of, from its live position.
    *
@@ -441,9 +779,36 @@ export function SpatialLayersView({
    * but they step out of the picture rather than piling up behind it.
    */
   const emphasisOf = (plane: SpatialStackPlane): number =>
-    computeSheetEmphasis(layout, plane, offset, bounds.height);
-  const planeStyle = (plane: SpatialStackPlane): React.CSSProperties => ({
-    top: plane.translateY,
+    computeSheetEmphasis(layout, plane, arrangementOffset, bounds.height);
+  /**
+   * A sheet's resting Y, or the slot the reorder has opened for it.
+   *
+   * The held sheet keeps its own resting position and adds the pointer's travel
+   * on top, so it follows the hand rather than snapping between slots while the
+   * others move around it.
+   */
+  const planeTop = (plane: SpatialStackPlane, displayIndex: number): number => {
+    // Paper is Page state, not a Layer. It is passed a negative index because it
+    // has no place in display order, and it never takes part in a reorder.
+    if (drag === null || reorderSlots === null || displayIndex < 0) return plane.translateY;
+    if (displayIndex !== drag.fromDisplayIndex) {
+      return (reorderSlots[displayIndex] ?? displayIndex) * layout.gap;
+    }
+    // The held sheet follows the hand, but only within the arrangement it
+    // belongs to. Reaching the next position costs a whole gap of pointer
+    // travel, and unclamped that throws the sheet clean off the top of the
+    // workspace -- the artwork being moved becomes the one thing not visible.
+    // Clamping to the first and last slot also *is* the top and bottom
+    // boundary: a sheet cannot be carried past Paper or out of the stack.
+    //
+    // Exposure is added back here so the sheet stays under the pointer while
+    // the stack slides beneath it. Without it, auto-navigating would drag the
+    // held sheet along with the arrangement and it would appear to teleport.
+    const lowest = Math.max(0, displayLayers.length - 1) * layout.gap;
+    return Math.min(lowest, Math.max(0, plane.translateY + drag.pointerDeltaY + exposurePixels));
+  };
+  const planeStyle = (plane: SpatialStackPlane, displayIndex = -1): React.CSSProperties => ({
+    top: displayIndex < 0 ? plane.translateY : planeTop(plane, displayIndex),
     width: layout.planeWidth,
     height: layout.planeHeight,
     zIndex: plane.zIndex,
@@ -456,8 +821,11 @@ export function SpatialLayersView({
    * because the separation is one interpolated arrangement and not a set of
    * independent property animations that could arrive out of step.
    */
-  const surfaceStyle = (plane: SpatialStackPlane): React.CSSProperties => ({
-    transform: `perspective(${layout.perspective}px) translateZ(${plane.translateZ}px) rotateX(${frame.tiltDegrees}deg)`,
+  const surfaceStyle = (plane: SpatialStackPlane, held = false): React.CSSProperties => ({
+    // A held sheet comes a little toward the viewer. Depth is the stack's own
+    // language for "nearer", so lifting it says the sheet has been picked up
+    // without adding a shadow or a card the rest of the view does not use.
+    transform: `perspective(${layout.perspective}px) translateZ(${plane.translateZ + (held ? REORDER_LIFT_DEPTH : 0)}px) rotateX(${frame.tiltDegrees}deg)`,
   });
   /**
    * Where a sheet's lower-right corner lands, so a label can hang off it.
@@ -516,6 +884,16 @@ export function SpatialLayersView({
       // Exposed so the separation can be verified rather than described: a
       // test can assert what the geometry is at a given point of the travel.
       data-stack-progress={frame.progress.toFixed(2)}
+      // The settled separation, so a gesture test can drag in real sheet-gaps
+      // rather than hard-coding a pixel distance that only holds at one size.
+      data-stack-gap={Math.round(layout.gap)}
+      data-stack-reordering={drag === null ? "false" : "true"}
+      // The candidate gap the drop would land in, so a gesture can be driven to
+      // a destination and verified rather than timed.
+      data-stack-drop-index={drag?.insertDisplayIndex ?? -1}
+      // Layers of arrangement slid under the held sheet, so a test can wait for
+      // real navigation progress rather than sleeping through a dwell.
+      data-stack-exposure={drag?.exposure ?? 0}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {/*
@@ -616,7 +994,7 @@ export function SpatialLayersView({
           className="size-full overflow-hidden"
           data-testid="spatial-layers-scroller"
           data-stack-scrolls={layout.scrolls ? "true" : "false"}
-          data-stack-offset={Math.round(offset)}
+          data-stack-offset={Math.round(arrangementOffset)}
           onWheel={handleWheel}
           // The offset is the only authority on where the arrangement sits.
           // `overflow-hidden` still leaves a box the browser may scroll on its
@@ -635,7 +1013,7 @@ export function SpatialLayersView({
               style={{
                 width: layout.planeWidth,
                 height: groupHeight,
-                transform: `translateY(${-offset}px)`,
+                transform: `translateY(${-arrangementOffset}px)`,
               }}
             >
               {/* The page's own sheet. Structural only: never a Layer, never selectable. */}
@@ -668,19 +1046,37 @@ export function SpatialLayersView({
                   const plane = frame.layers[displayIndex];
                   if (plane === undefined) return null;
                   const active = layer.id === snapshot.activeLayerId;
-                  const emphasis = emphasisOf(plane);
+                  const held = dragging(layer.id);
+                  // A held sheet stays a full participant wherever the hand has
+                  // taken it. Fading it out because it left the shelf would hide
+                  // the very thing being moved.
+                  const emphasis = held ? 1 : emphasisOf(plane);
                   return (
                     <div
                       key={layer.id}
                       role="listitem"
-                      className="absolute"
-                      style={{ ...planeStyle(plane), opacity: emphasis }}
+                      className={cn(
+                        "absolute",
+                        // Slots settle; the held sheet tracks the pointer and
+                        // must not lag a frame behind it.
+                        drag !== null &&
+                          !held &&
+                          !reducedMotion &&
+                          "transition-[top] duration-150 ease-out",
+                      )}
+                      style={{
+                        ...planeStyle(plane, displayIndex),
+                        opacity: emphasis,
+                        // Held sheets paint above the ones making room.
+                        ...(held ? { zIndex: layout.layers.length + 2 } : {}),
+                      }}
                       data-testid={`spatial-layer-plane-${layer.id}`}
                       data-layer-active={active}
                       data-layer-visible={layer.visible}
                       data-layer-locked={layer.locked}
                       data-layer-display-index={displayIndex}
                       data-layer-emphasis={emphasis.toFixed(2)}
+                      data-layer-dragging={held}
                     >
                       <button
                         type="button"
@@ -700,7 +1096,7 @@ export function SpatialLayersView({
                             : "border-folio-muted/30 hover:border-folio-muted/55 focus-visible:border-folio-muted/55",
                           interactive ? "" : "pointer-events-none",
                         )}
-                        style={surfaceStyle(plane)}
+                        style={surfaceStyle(plane, held)}
                         aria-label={accessibleLayerName(layer, active)}
                         {...(active ? { "aria-current": true as const } : {})}
                         tabIndex={interactive && displayIndex === focusedIndex ? 0 : -1}
@@ -746,6 +1142,11 @@ export function SpatialLayersView({
                     .map((layer) => ({
                       key: layer.id,
                       plane: frame.layers[displayLayers.indexOf(layer)],
+                      // A label belongs to its sheet, including while another
+                      // sheet is being reordered around it. Without this the
+                      // neighbours slide into their new slots and leave their
+                      // names behind at the old ones.
+                      displayIndex: displayLayers.indexOf(layer),
                       name: layer.name,
                       active: false,
                       hidden: !layer.visible,
@@ -754,6 +1155,8 @@ export function SpatialLayersView({
                     })),
                   {
                     key: "__paper",
+                    // Paper never takes part in a reorder, so it never moves.
+                    displayIndex: -1,
                     plane: frame.paper,
                     name: "Paper",
                     active: false,
@@ -769,7 +1172,9 @@ export function SpatialLayersView({
                       style={{
                         left: layout.planeWidth / 2 + cornerOf(entry.plane).x + LABEL_GAP,
                         top:
-                          entry.plane.translateY + layout.planeHeight / 2 + cornerOf(entry.plane).y,
+                          planeTop(entry.plane, entry.displayIndex) +
+                          layout.planeHeight / 2 +
+                          cornerOf(entry.plane).y,
                         transform: "translateY(-100%)",
                         // A label belongs to its sheet, so it leaves the
                         // composition with it. The paper keeps its own approved
@@ -820,14 +1225,23 @@ export function SpatialLayersView({
                   className="pointer-events-none absolute"
                   style={{
                     left: layout.planeWidth / 2 + cornerOf(focusedPlane).x + LABEL_GAP,
+                    // Travels with its sheet while it is held, so the label and
+                    // the grip stay attached to the thing being moved.
                     top:
-                      focusedPlane.translateY + layout.planeHeight / 2 + cornerOf(focusedPlane).y,
+                      planeTop(focusedPlane, focusedIndex) +
+                      layout.planeHeight / 2 +
+                      cornerOf(focusedPlane).y,
                     transform: "translateY(-100%)",
                     zIndex: layout.layers[0]!.zIndex + 2,
                     // Tracks its sheet through the choreography like any other
                     // label, so the cluster never floats free of the plane it
-                    // belongs to.
-                    opacity: emphasisOf(focusedPlane),
+                    // belongs to. A held sheet stays a full participant wherever
+                    // the hand has taken it: emphasis is measured from a sheet's
+                    // resting position, and edge dwell deliberately moves the
+                    // arrangement out from under that -- fading the cluster then
+                    // would hide the label and controls of the very sheet being
+                    // moved, exactly when they say what is being moved.
+                    opacity: dragging(focused.id) ? 1 : emphasisOf(focusedPlane),
                   }}
                   data-testid="spatial-layer-controls"
                   data-layer-controls-for={focused.id}
@@ -869,8 +1283,44 @@ export function SpatialLayersView({
                       role="group"
                       aria-label={`${focused.name} layer controls`}
                       data-testid="spatial-layer-control-row"
+                      // The cluster is a sibling of the sheet list, so keys
+                      // pressed here would otherwise never reach the stack's
+                      // own navigation. Buttons consume neither the arrows nor
+                      // Alt, and the rename field and the opacity disclosure
+                      // are outside this row and keep their own keys.
+                      onKeyDown={handleKeyDown}
                       style={{ minWidth: SPATIAL_CONTROL_ROW_WIDTH }}
                     >
+                      {/*
+                        The reorder handle, and the only one.
+
+                        Deliberately not the artwork: making every pixel of a
+                        sheet a drag handle would collide with activation, with
+                        the controls beside it and with wheel navigation, and
+                        would leave no way to press a sheet without risking a
+                        move. A grip on the focused cluster says exactly what it
+                        does and belongs to exactly one sheet.
+                      */}
+                      <button
+                        type="button"
+                        className={cn(
+                          "grid shrink-0 cursor-grab touch-none place-items-center rounded-[6px] text-[var(--folio-icon-neutral)] transition-colors duration-100 hover:bg-folio-surface-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent disabled:pointer-events-none disabled:opacity-35",
+                          drag !== null && "cursor-grabbing text-folio-ink",
+                        )}
+                        style={{
+                          width: SPATIAL_CONTROL_METRICS.buttonSize,
+                          height: SPATIAL_CONTROL_METRICS.buttonSize,
+                        }}
+                        aria-label={`Reorder ${focused.name}. Hold Alt with the arrow keys to move it`}
+                        data-testid={`spatial-layer-reorder-${focused.id}`}
+                        disabled={!canReorderLayers(layerCount)}
+                        onPointerDown={(event) => beginReorder(event, focusedIndex, focused.id)}
+                        // The press is the gesture. A click that never crossed
+                        // the threshold must not also read as an activation.
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <GripVertical className="size-3.5" aria-hidden="true" />
+                      </button>
                       <ControlButton
                         state={controls.visibility}
                         testId={`spatial-layer-visibility-${focused.id}`}

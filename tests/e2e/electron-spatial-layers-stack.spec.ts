@@ -1511,3 +1511,814 @@ test("keeps the focused controls inside a minimum window", async () => {
     await app.close();
   }
 });
+
+/**
+ * Phase 4: reordering a Layer directly from the arrangement.
+ *
+ * The stack reaches the same `moveLayer` the list does, so what these check is
+ * that a spatial gesture produces one canonical move, that nothing reaches the
+ * document until the drop, and that every way out of a drag resolves cleanly.
+ */
+
+/** Comfortably longer than the product's first dwell plus one repeat. */
+const REORDER_DWELL_SETTLE = 900;
+
+/** Mirrors the product's edge-zone depth, for parking just outside one. */
+const REORDER_EDGE_ZONE = 72;
+
+const gripOf = (window: Page, layerId: string): Locator =>
+  window.getByTestId(`spatial-layer-reorder-${layerId}`);
+
+/** Display order, top-first: the reverse of canonical bottom-to-top storage. */
+async function displayOrder(window: Page): Promise<readonly string[]> {
+  return [...(await layerOrder(window))].reverse();
+}
+
+/**
+ * Drags a sheet by its grip until the drop candidate is the wanted gap.
+ *
+ * State-driven rather than timed: the pointer travels in small steps and the
+ * arrangement reports the gap it would drop into, so the gesture stops when it
+ * has actually arrived rather than after a guessed distance.
+ *
+ * Only travel that stays inside the window is issued. The focused sheet sits on
+ * a shelf near the bottom of the workspace, so the destination *below* it is
+ * off-screen at supported window sizes -- see the report; downward moves are
+ * covered by the keyboard, which reaches every position.
+ */
+async function dragSheetToGap(window: Page, layerId: string, targetGap: number): Promise<boolean> {
+  const view = window.getByTestId("spatial-layers-view");
+  // Measure the grip only once the arrangement has stopped moving: focusing a
+  // sheet settles it toward the shelf, and a raw pointer press does not wait
+  // for stability the way a click does.
+  await settleStack(window);
+  const grip = gripOf(window, layerId);
+  const box = (await grip.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+  const startX = box.x + box.width / 2;
+  const startY = box.y + box.height / 2;
+  const viewport = window.viewportSize() ?? { width: 1440, height: 900 };
+  const lowest = viewport.height - 4;
+
+  await window.mouse.move(startX, startY);
+  await window.mouse.down();
+  // Comfortably past the product's 4px drag threshold, so the gesture is a drag
+  // before it is aimed anywhere.
+  await window.mouse.move(startX, startY + 8);
+  await expect(view).toHaveAttribute("data-stack-reordering", "true");
+
+  const dropIndex = async (): Promise<number> =>
+    Number((await view.getAttribute("data-stack-drop-index")) ?? "-1");
+  let y = startY;
+  for (let step = 0; step < 120; step += 1) {
+    const current = await dropIndex();
+    if (current === targetGap) return true;
+    const next = Math.min(lowest, Math.max(4, y + (current > targetGap ? -12 : 12)));
+    if (next === y) return (await dropIndex()) === targetGap;
+    y = next;
+    await window.mouse.move(startX, y);
+  }
+  return (await dropIndex()) === targetGap;
+}
+
+/** Completes a drag that `dragSheetToGap` left holding the pointer. */
+async function dropSheet(window: Page): Promise<void> {
+  await window.mouse.up();
+  await expect(window.getByTestId("spatial-layers-view")).toHaveAttribute(
+    "data-stack-reordering",
+    "false",
+  );
+}
+
+test("reorders the focused layer by dragging its grip", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    expect(before).toHaveLength(3);
+
+    // Focus the middle sheet, through the existing focus path, then move it up.
+    const target = before[1]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    const depth = Number(await historyDepth(window));
+    expect(await dragSheetToGap(window, target, 0), "reaches the gap above the top sheet").toBe(
+      true,
+    );
+    // Nothing has reached the document yet: the arrangement is presentation.
+    expect(await displayOrder(window), "no command until the drop").toEqual(before);
+    await dropSheet(window);
+
+    await expect.poll(async () => (await displayOrder(window))[0]).toBe(target);
+    expect(Number(await historyDepth(window)), "one gesture, one entry").toBe(depth + 1);
+    expect(await activeLayerId(window), "the moved layer stays active").toBe(target);
+    await expect(view.getByTestId(`spatial-layer-plane-${target}`)).toHaveAttribute(
+      "data-layer-active",
+      "true",
+    );
+    await expect(view.getByTestId(`spatial-layer-plane-${target}`)).toHaveAttribute(
+      "data-layer-display-index",
+      "0",
+    );
+
+    // Undo and Redo restore each canonical order exactly.
+    await window.keyboard.press("Control+z");
+    await expect.poll(() => displayOrder(window)).toEqual(before);
+    await window.keyboard.press("Control+y");
+    await expect.poll(async () => (await displayOrder(window))[0]).toBe(target);
+
+    // The list agrees, because there is one canonical order.
+    const moved = await displayOrder(window);
+    await view.getByTestId("layers-view-list").click();
+    const panel = window.getByTestId("layers-panel");
+    await expect(panel).toBeVisible();
+    const rows = await panel
+      .locator("[data-layer-row-index]")
+      .evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-testid")?.replace("layer-row-", "") ?? ""),
+      );
+    expect(rows, "the list renders the same top-first order").toEqual(moved);
+  } finally {
+    await app.close();
+  }
+});
+
+test("crosses several layers as one canonical move", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    for (let index = 0; index < 3; index += 1) await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    expect(before).toHaveLength(4);
+
+    // The bottom sheet, carried to the top in one gesture.
+    const target = before[3]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    // Two positions up in one gesture: the sheet crosses two others, and the
+    // document sees one command. (The very top is off-screen from the focus
+    // shelf at this depth; the keyboard reaches it, and the report says so.)
+    const depth = Number(await historyDepth(window));
+    expect(await dragSheetToGap(window, target, 1)).toBe(true);
+    expect(await displayOrder(window), "no command until the drop").toEqual(before);
+    await dropSheet(window);
+    await expect.poll(async () => (await displayOrder(window))[1]).toBe(target);
+    expect(Number(await historyDepth(window)), "crossing layers is not crossing commands").toBe(
+      depth + 1,
+    );
+
+    // One Undo returns the whole multi-position move.
+    await window.keyboard.press("Control+z");
+    await expect.poll(() => displayOrder(window)).toEqual(before);
+    await window.keyboard.press("Control+y");
+    await expect.poll(async () => (await displayOrder(window))[1]).toBe(target);
+  } finally {
+    await app.close();
+  }
+});
+
+test("leaves the order alone when a drag is abandoned", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = before[1]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    const grip = gripOf(window, target);
+    const box = (await grip.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+    const startX = box.x + box.width / 2;
+    const startY = box.y + box.height / 2;
+
+    // Below the threshold is not a drag at all.
+    let depth = Number(await historyDepth(window));
+    await window.mouse.move(startX, startY);
+    await window.mouse.down();
+    await window.mouse.move(startX, startY - 2);
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await window.mouse.up();
+    expect(await displayOrder(window)).toEqual(before);
+    expect(Number(await historyDepth(window)), "a tremor is not a reorder").toBe(depth);
+
+    // Escape during a drag restores the canonical order and keeps the stack
+    // open, because the drag is the innermost thing Escape can unwind.
+    depth = Number(await historyDepth(window));
+    expect(await dragSheetToGap(window, target, 0)).toBe(true);
+    await window.keyboard.press("Escape");
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await window.mouse.up();
+    await expect(view).toBeVisible();
+    expect(await displayOrder(window)).toEqual(before);
+    expect(Number(await historyDepth(window)), "a cancelled drag reaches no command").toBe(depth);
+
+    // A drop back into its own position is a no-op too.
+    depth = Number(await historyDepth(window));
+    expect(await dragSheetToGap(window, target, 1)).toBe(true);
+    await dropSheet(window);
+    expect(await displayOrder(window)).toEqual(before);
+    expect(Number(await historyDepth(window)), "dropping it back is not a change").toBe(depth);
+
+    // A live drag owns the pointer outright, so nothing else can be pressed
+    // while it runs -- Escape is the way out. What must hold is the order of
+    // release: the drag resolves, then the stack lets go of the workspace, and
+    // the next stroke reaches the canvas rather than being swallowed.
+    depth = Number(await historyDepth(window));
+    expect(await dragSheetToGap(window, target, 0)).toBe(true);
+    await window.keyboard.press("Escape");
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await window.mouse.up();
+    await expect(view).toBeVisible();
+    await window.keyboard.press("Escape");
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    expect(await displayOrder(window)).toEqual(before);
+    expect(Number(await historyDepth(window))).toBe(depth);
+    const objects = Number(await objectCount(window));
+    await drawStroke(window, 300);
+    expect(Number(await objectCount(window)), "the first stroke after a drag is not eaten").toBe(
+      objects + 1,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("keeps the Phase 3 controls and navigation out of the reorder gesture", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = await activeLayerId(window);
+
+    // Pressing and dragging a control never starts a reorder.
+    for (const testId of [
+      `spatial-layer-visibility-${target}`,
+      `spatial-layer-lock-${target}`,
+      `spatial-layer-rename-${target}`,
+    ]) {
+      const control = window.getByTestId(testId);
+      const box = (await control.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+      await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await window.mouse.down();
+      await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 60);
+      await expect(view).toHaveAttribute("data-stack-reordering", "false");
+      await window.mouse.up();
+    }
+    // A press that travels is not a click, so none of those controls activated
+    // either -- which is the point: the gesture belonged to nothing.
+    expect(await window.getByTestId("spatial-layer-rename-input").count()).toBe(0);
+    expect(await displayOrder(window)).toEqual(before);
+
+    // The opacity control still owns its own drag.
+    await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+    const disclosure = window.getByTestId(`spatial-layer-opacity-panel-${target}`);
+    await expect(disclosure).toBeVisible();
+    const slider = disclosure.getByRole("slider");
+    const track = (await slider.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+    await window.mouse.move(track.x + track.width * 0.9, track.y + track.height / 2);
+    await window.mouse.down();
+    await window.mouse.move(track.x + track.width * 0.4, track.y + track.height / 2);
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await window.mouse.up();
+    expect(Number(await slider.inputValue())).toBeLessThan(1);
+    expect(await displayOrder(window)).toEqual(before);
+    await window.keyboard.press("Escape");
+
+    // The wheel does not move the focus underneath a live drag, and resumes the
+    // moment the drag resolves.
+    expect(await dragSheetToGap(window, target, 0)).toBe(true);
+    await window.mouse.wheel(0, 600);
+    expect(await activeLayerId(window), "the wheel is suspended during a drag").toBe(target);
+    await window.keyboard.press("Escape");
+    await window.mouse.up();
+    expect(await displayOrder(window)).toEqual(before);
+
+    await window.mouse.move(600, 400);
+    await window.mouse.wheel(0, 400);
+    await expect.poll(() => activeLayerId(window), { timeout: 10_000 }).not.toBe(target);
+  } finally {
+    await app.close();
+  }
+});
+
+test("reorders from the keyboard, in both directions and at the clamps", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = await activeLayerId(window);
+    expect(target).toBe(before[0]);
+
+    // Alt with the arrows moves the layer; the bare arrows navigate. This is
+    // also how a layer reaches a position the pointer cannot: the destination
+    // below the focus shelf is off-screen at supported window sizes.
+    await view.locator(`[data-layer-plane="${target}"]`).focus();
+    let depth = Number(await historyDepth(window));
+    await window.keyboard.press("Alt+ArrowDown");
+    await expect.poll(async () => (await displayOrder(window))[1]).toBe(target);
+    expect(Number(await historyDepth(window)), "one intentional move, one entry").toBe(depth + 1);
+    expect(await activeLayerId(window), "the moved layer stays active").toBe(target);
+
+    await window.keyboard.press("Alt+ArrowDown");
+    await expect.poll(async () => (await displayOrder(window))[2]).toBe(target);
+
+    // The bottom of the arrangement clamps rather than wrapping or erroring,
+    // and never moves past the paper.
+    depth = Number(await historyDepth(window));
+    await window.keyboard.press("Alt+ArrowDown");
+    await expect.poll(async () => (await displayOrder(window))[2]).toBe(target);
+    expect(Number(await historyDepth(window)), "the bottom clamp is a no-op").toBe(depth);
+
+    await window.keyboard.press("Alt+ArrowUp");
+    await window.keyboard.press("Alt+ArrowUp");
+    await expect.poll(() => displayOrder(window)).toEqual(before);
+    depth = Number(await historyDepth(window));
+    await window.keyboard.press("Alt+ArrowUp");
+    expect(await displayOrder(window)).toEqual(before);
+    expect(Number(await historyDepth(window)), "the top clamp is a no-op").toBe(depth);
+
+    // Ordinary navigation is untouched.
+    await window.keyboard.press("ArrowDown");
+    await expect.poll(() => activeLayerId(window)).toBe(before[1]);
+    await window.keyboard.press("Home");
+    await expect.poll(() => activeLayerId(window)).toBe(before[0]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("reorders hidden and locked layers, and agrees with the list", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = before[1]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    // A hidden layer is still a structural sheet, and still reorderable.
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+    await expect(view.getByTestId(`spatial-layer-plane-${target}`)).toHaveAttribute(
+      "data-layer-visible",
+      "false",
+    );
+    expect(await dragSheetToGap(window, target, 0)).toBe(true);
+    await dropSheet(window);
+    await expect.poll(async () => (await displayOrder(window))[0]).toBe(target);
+    await expect(view.getByTestId(`spatial-layer-plane-${target}`)).toHaveAttribute(
+      "data-layer-visible",
+      "false",
+    );
+    await window.getByTestId(`spatial-layer-visibility-${target}`).click();
+
+    // Lock governs artwork editing, not where the sheet sits.
+    await window.getByTestId(`spatial-layer-lock-${target}`).click();
+    await expect(view.getByTestId(`spatial-layer-plane-${target}`)).toHaveAttribute(
+      "data-layer-locked",
+      "true",
+    );
+    await window.keyboard.press("Alt+ArrowDown");
+    await expect.poll(async () => (await displayOrder(window))[1]).toBe(target);
+    await expect(view.getByTestId(`spatial-layer-plane-${target}`)).toHaveAttribute(
+      "data-layer-locked",
+      "true",
+    );
+
+    // A reorder made in the list is what the stack shows next.
+    await view.getByTestId("layers-view-list").click();
+    const panel = window.getByTestId("layers-panel");
+    await panel.getByTestId(`layer-options-${target}`).click();
+    await panel.getByTestId(`layer-move-up-${target}`).click();
+    const afterListMove = await displayOrder(window);
+    expect(afterListMove[0]).toBe(target);
+    await panel.getByTestId("layers-view-stack").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveAttribute(
+      "data-stack-phase",
+      "open",
+    );
+    expect(await displayOrder(window)).toEqual(afterListMove);
+    await expect(
+      window.getByTestId("spatial-layers-view").getByTestId(`spatial-layer-plane-${target}`),
+    ).toHaveAttribute("data-layer-display-index", "0");
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Edge-dwell auto-navigation.
+ *
+ * The focus shelf sits near the bottom of the workspace and the sheets are a
+ * full gap apart, so the insertion point below the held sheet is off-screen at
+ * every supported window size. Holding near a structural edge slides the
+ * arrangement under the held sheet instead. These drive it by pointer only.
+ */
+
+/** Presses the grip and crosses the drag threshold, without releasing. */
+async function beginDrag(window: Page, layerId: string): Promise<{ x: number; y: number }> {
+  await settleStack(window);
+  const grip = gripOf(window, layerId);
+  const box = (await grip.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await window.mouse.move(x, y);
+  await window.mouse.down();
+  await window.mouse.move(x, y + 8);
+  await expect(window.getByTestId("spatial-layers-view")).toHaveAttribute(
+    "data-stack-reordering",
+    "true",
+  );
+  return { x, y };
+}
+
+/**
+ * Where the drop would land, in display order.
+ *
+ * Leaving an edge zone keeps the neighbourhood it exposed and resolves the
+ * candidate from wherever the pointer now is, so the destination is a product
+ * of both -- read it from the view rather than inferring it from travel.
+ */
+async function pendingDestination(window: Page, fromDisplayIndex: number): Promise<number> {
+  const insert = Number(
+    (await window.getByTestId("spatial-layers-view").getAttribute("data-stack-drop-index")) ?? "-1",
+  );
+  return insert > fromDisplayIndex ? insert - 1 : insert;
+}
+
+const exposureOf = async (window: Page): Promise<number> =>
+  Number(
+    (await window.getByTestId("spatial-layers-view").getAttribute("data-stack-exposure")) ?? "0",
+  );
+
+/**
+ * Holds inside an edge zone until the arrangement has advanced far enough.
+ *
+ * Waits on real navigation progress rather than sleeping for a guessed dwell:
+ * the view reports how many layers it has slid, so the test knows when the
+ * gesture has actually got somewhere.
+ */
+async function holdEdgeUntilExposure(
+  window: Page,
+  x: number,
+  edge: "top" | "bottom",
+  wanted: number,
+): Promise<number> {
+  const band = (await window.getByTestId("spatial-layers-bounds").boundingBox()) ?? {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  };
+  const y = edge === "top" ? band.y + 8 : band.y + band.height - 8;
+  await window.mouse.move(x, y);
+  // Holding keeps stepping, which is the product's own behaviour, so the hold
+  // ends by leaving the zone once the arrangement has travelled far enough.
+  // Polling tightly keeps that from overshooting by more than a single step.
+  await expect
+    .poll(
+      async () => {
+        const exposure = await exposureOf(window);
+        return edge === "top" ? -exposure : exposure;
+      },
+      { timeout: 20_000, intervals: [16] },
+    )
+    .toBeGreaterThanOrEqual(Math.abs(wanted));
+  // Parks just outside the zone rather than in the middle of the band: leaving
+  // an edge keeps the neighbourhood it exposed, and the candidate is resolved
+  // from wherever the pointer now is, so retreating to the centre would give
+  // back the reach the hold just earned.
+  await window.mouse.move(
+    x,
+    edge === "top"
+      ? band.y + REORDER_EDGE_ZONE + 12
+      : band.y + band.height - REORDER_EDGE_ZONE - 12,
+  );
+  return exposureOf(window);
+}
+
+test("reaches a lower destination by holding the bottom edge", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    for (let index = 0; index < 4; index += 1) await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    expect(before).toHaveLength(5);
+
+    // A middle sheet, moved downward -- the direction raw pointer travel cannot
+    // express, because the destination below the shelf is outside the window.
+    const target = before[2]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    const depth = Number(await historyDepth(window));
+    const { x } = await beginDrag(window, target);
+    const travelled = await holdEdgeUntilExposure(window, x, "bottom", 2);
+    expect(travelled, "two or more layers exposed, by pointer alone").toBeGreaterThanOrEqual(2);
+
+    // Nothing has reached the document, however far the arrangement has slid.
+    expect(await displayOrder(window), "auto-navigation is presentation only").toEqual(before);
+    expect(await activeLayerId(window), "the held layer is still the active one").toBe(target);
+    expect(Number(await historyDepth(window))).toBe(depth);
+
+    const destination = await pendingDestination(window, 2);
+    expect(destination, "at least two positions further down").toBeGreaterThanOrEqual(4);
+
+    await window.mouse.up();
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await expect.poll(async () => (await displayOrder(window))[destination]).toBe(target);
+    expect(Number(await historyDepth(window)), "one drop, one entry").toBe(depth + 1);
+    expect(await activeLayerId(window)).toBe(target);
+
+    // Undo returns the whole traversal in one step.
+    await window.keyboard.press("Control+z");
+    await expect.poll(() => displayOrder(window)).toEqual(before);
+  } finally {
+    await app.close();
+  }
+});
+
+test("crosses a deep stack upward in one pointer gesture", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    for (let index = 0; index < 9; index += 1) await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    expect(before).toHaveLength(10);
+
+    // The bottom sheet, carried four positions up without releasing.
+    const target = before[9]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    const depth = Number(await historyDepth(window));
+    const { x } = await beginDrag(window, target);
+    const travelled = await holdEdgeUntilExposure(window, x, "top", -4);
+    expect(travelled, "four or more layers exposed, in one unbroken gesture").toBeLessThanOrEqual(
+      -4,
+    );
+    expect(await displayOrder(window), "still nothing committed").toEqual(before);
+
+    const destination = await pendingDestination(window, 9);
+    expect(destination, "at least four positions further up").toBeLessThanOrEqual(5);
+
+    await window.mouse.up();
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await expect.poll(async () => (await displayOrder(window))[destination]).toBe(target);
+    expect(Number(await historyDepth(window)), "one gesture, one entry").toBe(depth + 1);
+    expect(await activeLayerId(window)).toBe(target);
+  } finally {
+    await app.close();
+  }
+});
+
+test("reverses direction and clamps without banking dwell time", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    for (let index = 0; index < 4; index += 1) await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = before[2]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    const { x } = await beginDrag(window, target);
+    // Up two, then back down two: the final position is what counts, and the
+    // reversal starts a fresh dwell rather than spending banked time.
+    await holdEdgeUntilExposure(window, x, "top", -2);
+    await holdEdgeUntilExposure(window, x, "bottom", 0);
+    expect(await exposureOf(window)).toBe(0);
+    expect(await displayOrder(window)).toEqual(before);
+
+    // Leaving for the middle stops the traversal but keeps what it exposed.
+    await holdEdgeUntilExposure(window, x, "top", -1);
+    const band = (await view.getByTestId("spatial-layers-bounds").boundingBox()) ?? {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    };
+    await window.mouse.move(x, band.y + band.height / 2);
+    await window.waitForTimeout(REORDER_DWELL_SETTLE);
+    expect(await exposureOf(window), "the middle is ordinary space").toBe(-1);
+
+    // The end of the arrangement clamps: holding does nothing further, and no
+    // timer churns against it.
+    await holdEdgeUntilExposure(window, x, "top", -2);
+    await window.mouse.move(x, band.y + 8);
+    await window.waitForTimeout(REORDER_DWELL_SETTLE * 3);
+    expect(await exposureOf(window), "the top of the stack is the end").toBe(-2);
+
+    await window.keyboard.press("Escape");
+    await window.mouse.up();
+    expect(await displayOrder(window)).toEqual(before);
+  } finally {
+    await app.close();
+  }
+});
+
+test("abandons and no-ops correctly after auto-navigating", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    for (let index = 0; index < 4; index += 1) await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = before[2]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    // Escape after a deep traversal restores everything and keeps the stack.
+    let depth = Number(await historyDepth(window));
+    let handle = await beginDrag(window, target);
+    await holdEdgeUntilExposure(window, handle.x, "bottom", 2);
+    await window.keyboard.press("Escape");
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await window.mouse.up();
+    await expect(view).toBeVisible();
+    expect(await displayOrder(window)).toEqual(before);
+    expect(Number(await historyDepth(window)), "a cancelled traversal reaches no command").toBe(
+      depth,
+    );
+    await expect(view).toHaveAttribute("data-stack-exposure", "0");
+
+    // Wheel navigation resumes once the gesture is gone.
+    await window.mouse.move(600, 400);
+    await window.mouse.wheel(0, 400);
+    await expect.poll(() => activeLayerId(window), { timeout: 10_000 }).not.toBe(target);
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    // Travelling away and back again is not a reorder: the canonical
+    // destination is unchanged, so no command is issued.
+    depth = Number(await historyDepth(window));
+    handle = await beginDrag(window, target);
+    await holdEdgeUntilExposure(window, handle.x, "bottom", 2);
+    await holdEdgeUntilExposure(window, handle.x, "top", 0);
+    const band = (await view.getByTestId("spatial-layers-bounds").boundingBox()) ?? {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    };
+    await window.mouse.move(handle.x, handle.y);
+    await window.waitForTimeout(REORDER_DWELL_SETTLE);
+    expect(band.height).toBeGreaterThan(0);
+    await window.mouse.up();
+    expect(await displayOrder(window)).toEqual(before);
+    expect(Number(await historyDepth(window)), "distance travelled is not a change").toBe(depth);
+
+    // Closing after a traversal releases the workspace: the canvas is live.
+    await window.getByTestId("layers-toggle").click();
+    await expect(window.getByTestId("spatial-layers-view")).toHaveCount(0);
+    const objects = Number(await objectCount(window));
+    await drawStroke(window, 300);
+    expect(Number(await objectCount(window)), "the first stroke still lands").toBe(objects + 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("auto-navigates at the minimum window and under reduced motion", async () => {
+  test.setTimeout(400_000);
+  const { app, window } = await launchFolio(900, 640);
+  try {
+    // Reduced motion may drop the neighbour transition, but a destination must
+    // never become unreachable because of a preference.
+    await window.emulateMedia({ reducedMotion: "reduce" });
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 300, 12, 380, 20);
+    for (let index = 0; index < 4; index += 1) await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = before[2]!;
+    await view.locator(`[data-layer-plane="${target}"]`).click();
+    await expect.poll(() => activeLayerId(window)).toBe(target);
+
+    const depth = Number(await historyDepth(window));
+    const { x } = await beginDrag(window, target);
+
+    // Both directions work in the smallest supported workspace.
+    await holdEdgeUntilExposure(window, x, "top", -2);
+    await holdEdgeUntilExposure(window, x, "bottom", 2);
+    expect(await displayOrder(window)).toEqual(before);
+    const destination = await pendingDestination(window, 2);
+    await window.mouse.up();
+    await expect.poll(async () => (await displayOrder(window))[destination]).toBe(target);
+    expect(Number(await historyDepth(window))).toBe(depth + 1);
+
+    // The band is still the band: no scrollbar appeared to make this work.
+    const gutter = await view.getByTestId("spatial-layers-scroller").evaluate((node) => ({
+      vertical: node.offsetWidth - node.clientWidth,
+      overflowY: getComputedStyle(node).overflowY,
+      scrollTop: node.scrollTop,
+    }));
+    expect(gutter.vertical).toBe(0);
+    expect(gutter.overflowY).toBe("hidden");
+    expect(gutter.scrollTop).toBe(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("never starts an edge dwell from a Phase 3 control", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    await window.locator('button[data-dock-slot="pencil"]').click();
+    await drawStroke(window, 320);
+    await addLayer(window);
+    await addLayer(window);
+
+    const view = await openStack(window);
+    const before = await displayOrder(window);
+    const target = await activeLayerId(window);
+    const band = (await view.getByTestId("spatial-layers-bounds").boundingBox()) ?? {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    };
+
+    // Dragging the opacity slider parks the pointer well inside an edge zone;
+    // no reorder ever started, so no dwell may run.
+    await window.getByTestId(`spatial-layer-opacity-${target}`).click();
+    const disclosure = window.getByTestId(`spatial-layer-opacity-panel-${target}`);
+    await expect(disclosure).toBeVisible();
+    const slider = disclosure.getByRole("slider");
+    const track = (await slider.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+    await window.mouse.move(track.x + track.width * 0.9, track.y + track.height / 2);
+    await window.mouse.down();
+    await window.mouse.move(track.x + track.width * 0.3, band.y + 8);
+    await window.waitForTimeout(REORDER_DWELL_SETTLE * 2);
+    expect(await exposureOf(window), "no gesture, no navigation").toBe(0);
+    await expect(view).toHaveAttribute("data-stack-reordering", "false");
+    await window.mouse.up();
+    expect(Number(await slider.inputValue())).toBeLessThan(1);
+    await window.keyboard.press("Escape");
+
+    // A press on the grip that never crosses the threshold is not a drag, so
+    // holding it inside an edge zone must not navigate either.
+    const grip = gripOf(window, target);
+    const box = (await grip.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+    await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await window.mouse.down();
+    await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 2);
+    await window.waitForTimeout(REORDER_DWELL_SETTLE * 2);
+    expect(await exposureOf(window)).toBe(0);
+    await window.mouse.up();
+    expect(await displayOrder(window)).toEqual(before);
+  } finally {
+    await app.close();
+  }
+});
