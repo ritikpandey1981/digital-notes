@@ -80,9 +80,9 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await openSlotToolOptions(window, "pencil");
     await expect(palette).toBeVisible();
 
-    const workspaceMenu = window.getByRole("button", { name: "Workspace menu" });
+    const workspaceMenu = window.getByRole("button", { name: "Application menu" });
     await workspaceMenu.hover();
-    const workspaceTooltip = window.getByRole("tooltip", { name: "Workspace menu" });
+    const workspaceTooltip = window.getByRole("tooltip", { name: "Application menu" });
     await expect(workspaceTooltip).toBeVisible();
     const tooltipBounds = await workspaceTooltip.boundingBox();
     if (tooltipBounds === null) throw new Error("Workspace tooltip has no visible bounds.");

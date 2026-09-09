@@ -34,7 +34,10 @@ test("keeps the responsive color picker clear of minimum-window chrome and selec
     const surface = window.getByTestId("canvas-surface");
     const host = window.getByTestId("canvas-host");
     const workspace = window.getByTestId("editor-workspace");
-    const topBar = window.getByTestId("sketchbook-top-bar");
+    const topChrome = [
+      window.getByTestId("top-chrome-left"),
+      window.getByTestId("top-chrome-right"),
+    ];
     const viewportControls = window.getByTestId("viewport-controls");
     const rail = window.getByTestId("quick-color-rail");
     const picker = window.getByTestId("full-color-picker");
@@ -42,7 +45,7 @@ test("keeps the responsive color picker clear of minimum-window chrome and selec
     await activateDockSlot(window, "pencil");
     await rail.getByTestId("quick-color-more").click();
     await expect(picker).toHaveAttribute("data-picker-source", "quick-rail");
-    await expectMinimumWindowPlacement(picker, workspace, topBar, viewportControls, rail);
+    await expectMinimumWindowPlacement(picker, workspace, topChrome, viewportControls, rail);
 
     const scrollRegion = picker.getByTestId("full-color-picker-scroll-region");
     const scrollMetrics = await scrollRegion.evaluate((element) => ({
@@ -109,19 +112,21 @@ test("keeps the responsive color picker clear of minimum-window chrome and selec
 async function expectMinimumWindowPlacement(
   picker: Locator,
   workspace: Locator,
-  topBar: Locator,
+  topChrome: readonly Locator[],
   viewportControls: Locator,
   rail: Locator,
 ): Promise<void> {
-  const [pickerBox, workspaceBox, topBarBox, viewportControlsBox, railBox] = await Promise.all([
+  const [pickerBox, workspaceBox, viewportControlsBox, railBox] = await Promise.all([
     requiredBox(picker),
     requiredBox(workspace),
-    requiredBox(topBar),
     requiredBox(viewportControls),
     requiredBox(rail),
   ]);
   expectInside(pickerBox, workspaceBox);
-  expect(overlapArea(pickerBox, topBarBox)).toBe(0);
+  // The top chrome is two separate groups now, and the picker must clear both.
+  for (const group of topChrome) {
+    expect(overlapArea(pickerBox, await requiredBox(group))).toBe(0);
+  }
   expect(overlapArea(pickerBox, viewportControlsBox)).toBe(0);
   expect(overlapArea(pickerBox, railBox)).toBe(0);
   expect(await picker.getAttribute("data-picker-maximum-height")).not.toBeNull();

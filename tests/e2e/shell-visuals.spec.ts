@@ -33,7 +33,7 @@ test("captures the sketchbook shell in dark and light appearances", async ({
       animations: "disabled",
     });
 
-    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("button", { name: "Application menu", exact: true }).click();
     await window.getByRole("menuitem", { name: "Use dark appearance", exact: true }).click();
     await expect(window.locator("html")).toHaveAttribute("data-theme", "dark");
     await expect(window.locator("canvas[data-folio-renderer='true']")).toHaveAttribute(

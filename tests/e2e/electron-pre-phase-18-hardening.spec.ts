@@ -107,7 +107,7 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     await expect(surface).toHaveAttribute("data-clipboard-object-count", "1");
     expect(await historyDepth(surface)).toBe(lifecycleDepth);
-    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("button", { name: "Application menu", exact: true }).click();
     await window.getByRole("menuitem", { name: "Use dark appearance", exact: true }).click();
     await expect
       .poll(async () => canvasHost.getAttribute("data-latest-diagnostics-callback-generation"))
@@ -163,7 +163,12 @@ test("hardens continuous edits, canvas lifetime, floating ownership, chrome, and
     await window.mouse.click(mapping.canvasBounds.x + 4, mapping.canvasBounds.y + 200);
     await expect(palette).toHaveCount(0);
 
-    await expect(window.getByText("Folio", { exact: true })).toHaveCSS("user-select", "none");
+    // Persistent chrome text stays unselectable. The workspace no longer
+    // carries a wordmark, so the subject is the sketch's identity surface --
+    // the one piece of prose the top chrome does show.
+    const sketchName = window.getByTestId("top-chrome-sketch").getByTestId("sketch-name");
+    await expect(sketchName).toHaveText("Untitled Sketch");
+    await expect(sketchName).toHaveCSS("user-select", "none");
     await openSlotToolOptions(window, "pen");
     await expect(palette.getByText("Size", { exact: true })).toHaveCSS("user-select", "none");
     await expect(palette.getByRole("spinbutton", { name: "Size value" })).toHaveCSS(

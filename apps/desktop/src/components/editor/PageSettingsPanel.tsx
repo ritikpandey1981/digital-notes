@@ -66,14 +66,17 @@ export function PageSettingsPanel({ open, snapshot, actions, onDismiss }: PageSe
   }, [actions, open]);
 
   return (
-    <div className="pointer-events-none absolute right-[76px] top-2 z-30">
+    // Opens below the top chrome rather than beside it: the Page settings
+    // trigger now lives in the right-hand top chrome, and a panel that starts
+    // level with its own trigger would sit on top of it.
+    <div className="pointer-events-none absolute right-[76px] top-16 z-30">
       <AnimatePresence initial={false}>
         {open && page !== null ? (
           <motion.section
             ref={boundaryRef}
             data-floating-widget-scope={floatingWidgetScope}
             className="folio-floating-surface pointer-events-auto flex w-[248px] flex-col gap-2 overflow-y-auto p-3"
-            style={{ maxHeight: "min(560px, calc(100vh - 140px))" }}
+            style={{ maxHeight: "min(560px, calc(100vh - 196px))" }}
             aria-label="Page settings"
             data-testid="page-settings"
             data-elevation="temporary"

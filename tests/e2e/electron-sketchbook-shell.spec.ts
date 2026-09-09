@@ -31,7 +31,8 @@ test("captures the Phase 16.5 sketchbook workspace states", async ({ browserName
 
     await expect(surface).toHaveAttribute("data-document-state", "ready");
     await expect(window.locator("html")).toHaveAttribute("data-theme", "light");
-    await expect(window.getByTestId("sketchbook-top-bar")).toBeVisible();
+    await expect(window.getByTestId("top-chrome-left")).toBeVisible();
+    await expect(window.getByTestId("top-chrome-right")).toBeVisible();
     await expect(window.getByRole("complementary", { name: "Sidebar" })).toHaveCount(0);
     expect(await presentationColors(window)).toMatchObject({
       workspace: "#f1f1ef",

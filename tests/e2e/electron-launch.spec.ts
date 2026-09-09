@@ -63,7 +63,8 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     }
     await window.keyboard.press("Escape");
     await expect(window.getByRole("complementary", { name: "Sidebar" })).toHaveCount(0);
-    await expect(window.getByTestId("sketchbook-top-bar")).toBeVisible();
+    await expect(window.getByTestId("top-chrome-left")).toBeVisible();
+    await expect(window.getByTestId("top-chrome-right")).toBeVisible();
     await expect(window.getByTestId("sketchbook-workspace")).toBeVisible();
     await expect(window.getByLabel("Notebook workspace")).toBeVisible();
     const undoButton = window.getByRole("button", { name: "Undo", exact: true });
@@ -458,7 +459,7 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
     await window.mouse.up();
     await window.getByRole("button", { name: "Select", exact: true }).click();
 
-    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("button", { name: "Application menu", exact: true }).click();
     await window.getByRole("menuitem", { name: "Appearance settings", exact: true }).click();
     await expect(window.getByRole("dialog")).toContainText("Appearance");
     await window.getByRole("button", { name: "Cancel" }).click();
@@ -557,7 +558,8 @@ test("launches the shell with the Phase 11 History-backed manipulation lifecycle
       "data-history-undo-depth",
       "0",
     );
-    await expect(window.getByTestId("sketchbook-top-bar")).toBeVisible();
+    await expect(window.getByTestId("top-chrome-left")).toBeVisible();
+    await expect(window.getByTestId("top-chrome-right")).toBeVisible();
     await expect(window.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
   } finally {
     await electronApp.close();

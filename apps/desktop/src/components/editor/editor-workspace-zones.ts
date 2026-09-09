@@ -24,11 +24,20 @@ interface EditorSurfaceDescriptor {
 
 const EDITOR_HARD_SURFACES: readonly EditorSurfaceDescriptor[] = Object.freeze([
   { id: "tool-dock", selector: "[data-tool-dock-layout]" },
+  // The top chrome overlays the workspace rather than sitting in a row above
+  // it, so it competes for space like any other surface. Two rows, because the
+  // two groups sit in opposite corners with open canvas between them -- one
+  // union rectangle would falsely occupy the whole top edge.
+  { id: "top-chrome-left", selector: '[data-testid="top-chrome-left"]' },
+  { id: "top-chrome-right", selector: '[data-testid="top-chrome-right"]' },
   { id: "tool-options", selector: '[data-testid="context-tool-palette"]' },
   { id: "shapes-widget", selector: '[data-testid="shapes-widget"]' },
   { id: "utility-rail", selector: '[data-testid="workspace-utility-rail"]' },
   { id: "quick-color-rail", selector: '[data-testid="quick-color-rail"]' },
   { id: "layers-panel", selector: '[data-testid="layers-panel"]' },
+  // Only mounted while the Stack is open, and measured tight to the cluster
+  // itself rather than to the full-bleed Stack view behind it.
+  { id: "layers-view-switch", selector: '[data-testid="layers-view-switch"]' },
   { id: "page-settings", selector: '[data-testid="page-settings"]' },
   { id: "page-navigator", selector: '[data-testid="page-navigator"]' },
   { id: "viewport-controls", selector: '[data-testid="viewport-controls"]' },

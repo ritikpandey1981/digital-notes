@@ -84,10 +84,10 @@ export function PageNavigator({
   };
 
   return (
-    // Anchored to the Pages control in the document toolbar rather than parked
-    // over the drawing. Pages are a document operation, so the navigator lives
-    // with the other document controls and leaves the canvas alone.
-    <div className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2">
+    // Centred above the page rather than parked over the drawing, and on the
+    // same top axis as the chrome its trigger belongs to, so the filmstrip and
+    // the top chrome read as one row instead of two staggered ones.
+    <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2">
       <AnimatePresence initial={false}>
         {open ? (
           <motion.section

@@ -109,7 +109,7 @@ test("Pre-22 recovery keeps the shell, layer guards, and dismissal contracts", a
     // 2. Artwork utilities sit on the right rail, document controls on top.
     const utilityRail = window.getByTestId("workspace-utility-rail");
     await expect(utilityRail.getByTestId("layers-toggle")).toBeVisible();
-    await expect(window.getByTestId("sketchbook-top-bar").getByTestId("layers-toggle")).toHaveCount(
+    await expect(window.getByTestId("top-chrome-right").getByTestId("layers-toggle")).toHaveCount(
       0,
     );
     await expect(window.getByTestId("page-settings-toggle")).toBeVisible();
@@ -369,7 +369,8 @@ test("Pre-22 recovery fits the shell inside the real minimum content area", asyn
     await window.waitForTimeout(400);
     const offscreen = await window.evaluate(() => {
       const ids = [
-        "sketchbook-top-bar",
+        "top-chrome-left",
+        "top-chrome-right",
         "workspace-utility-rail",
         "layers-panel",
         "page-navigator",

@@ -62,6 +62,25 @@ Non-interactive wrappers pass pointer input through. Interactive surfaces accept
 only within their visible controls. A surface that starts closing stops accepting
 pointer events immediately.
 
+### Top chrome
+
+The top is segmented islands over the workspace, not a bar. There is no full-width
+painted strip and no reserved row: the canvas reaches the top of the content area and
+shows through every part of the top edge that no control occupies.
+
+- Left: the application menu, then the sketch's identity.
+- Right: the actions that operate on the work — history, then pages.
+- Center: nothing persistent. The gap between the two sides stays open workspace.
+
+Both sides sit at the same 16-pixel outer inset, the same 16-pixel top inset, and the
+same 36-pixel height, so they read as one horizontal axis. Neither side moves for
+anything: a surface that opens into an occupied corner takes the row below instead,
+which is why the Layers mode switch hangs one gap under the right group.
+
+Folio has no sketch-name authority yet. The identity surface shows a display-only
+fallback that is not persistence, not History, not a filename, and never the active
+page's name; it is replaced when real document identity exists.
+
 ## Visual foundations
 
 The canonical runtime tokens are in `apps/desktop/src/styles.css`. Reuse them instead
@@ -78,7 +97,8 @@ of introducing component-local color systems.
 ### Color roles
 
 - `folio-workspace`: surround behind the page.
-- `folio-topbar`: global chrome.
+- `folio-topbar`: global chrome. Currently unused — the top chrome paints compact
+  surfaces rather than a strip.
 - `folio-surface` and `folio-surface-muted`: panels and nested controls.
 - `folio-ink` and `folio-muted`: primary and secondary chrome content.
 - `folio-border`: restrained separation.

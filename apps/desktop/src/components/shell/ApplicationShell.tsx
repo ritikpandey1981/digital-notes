@@ -9,7 +9,7 @@ import {
   type WorkspaceHistoryAvailability,
 } from "../editor/workspace-history";
 import { ContextHintProvider } from "./ContextHintProvider";
-import { SketchbookTopBar } from "./SketchbookTopBar";
+import { SegmentedTopChrome } from "./SegmentedTopChrome";
 import { WorkspaceContextHint } from "./WorkspaceContextHint";
 import { WorkspaceViewportControl } from "./WorkspaceViewportControl";
 
@@ -77,20 +77,13 @@ function ApplicationShellContent() {
     // The shell always fills the real content area. It never asserts a minimum
     // height of its own, so the workspace can never overflow into an
     // unscrollable strip when the OS frame eats part of the window.
+    // No top row. The workspace is the whole content area, and the top chrome
+    // overlays it as a few small islands -- so the canvas is visible behind
+    // every part of the top that no control actually occupies.
     <div
       className="folio-editor-chrome-selection flex h-screen flex-col overflow-hidden bg-folio-workspace text-folio-ink"
       data-testid="editor-shell"
     >
-      <SketchbookTopBar
-        canUndo={historyAvailability.canUndo}
-        canRedo={historyAvailability.canRedo}
-        onUndo={undo}
-        onRedo={redo}
-        pageNavigatorOpen={pageNavigatorOpen}
-        onTogglePageNavigator={togglePageNavigator}
-        pageSettingsOpen={pageSettingsOpen}
-        onTogglePageSettings={togglePageSettings}
-      />
       <main
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-folio-workspace"
         data-testid="sketchbook-workspace"
@@ -143,6 +136,16 @@ function ApplicationShellContent() {
           onViewportActionsReady={viewport.handleActionsReady}
           onViewportChange={viewport.handleViewportChange}
           onViewportNavigationLearned={learnViewportNavigation}
+        />
+        <SegmentedTopChrome
+          canUndo={historyAvailability.canUndo}
+          canRedo={historyAvailability.canRedo}
+          onUndo={undo}
+          onRedo={redo}
+          pageNavigatorOpen={pageNavigatorOpen}
+          onTogglePageNavigator={togglePageNavigator}
+          pageSettingsOpen={pageSettingsOpen}
+          onTogglePageSettings={togglePageSettings}
         />
         <WorkspaceContextHint
           activeTool={editorWorkspace.activeTool}

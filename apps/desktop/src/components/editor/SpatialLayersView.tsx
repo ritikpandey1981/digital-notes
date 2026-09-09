@@ -916,9 +916,15 @@ export function SpatialLayersView({
         The view switch lives inside the Layers experience, not in the
         workspace rails: there is one Layers entry point, and this only chooses
         how it is presented. Session state, zero History.
+
+        It hangs one surface gap below the workspace's permanent top chrome,
+        on the same right edge: the row above is what the workspace can always
+        do, and this row is what is only true while Layers is open. Purely
+        screen-space chrome -- the sheets, the shelf and the projection are
+        laid out from WORKSPACE_INSET and are untouched by it.
       */}
       <div
-        className="folio-floating-surface pointer-events-auto absolute right-4 top-4 flex gap-0.5 p-1"
+        className="folio-floating-surface pointer-events-auto absolute right-4 top-16 flex gap-0.5 p-1"
         role="group"
         aria-label="Layers view"
         data-testid="layers-view-switch"

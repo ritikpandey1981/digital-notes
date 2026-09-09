@@ -227,7 +227,7 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await shapesButton.click();
     await shapesWidget.getByRole("button", { name: "Rectangle", exact: true }).hover();
     await expect(tooltipLayer).toHaveAttribute("aria-hidden", "false");
-    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("button", { name: "Application menu", exact: true }).click();
     await window.getByRole("menuitem", { name: "Appearance settings", exact: true }).click();
     const dialog = window.getByRole("dialog", { name: "Appearance" });
     const dialogOverlay = window.locator('[data-folio-modal-layer="overlay"]');

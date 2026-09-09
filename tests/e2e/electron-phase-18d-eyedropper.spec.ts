@@ -285,7 +285,7 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     await expect(surface).toHaveAttribute("data-artwork-sample-color", lightPaper);
     expect(lightPaper).toBe("#fffdf8");
     await window.keyboard.press("Escape");
-    await window.getByRole("button", { name: "Workspace menu" }).click();
+    await window.getByRole("button", { name: "Application menu" }).click();
     await window.getByRole("menuitem", { name: /Use (?:light|dark) appearance/u }).click();
     expect(await currentTheme(window)).toBe(initialTheme === "light" ? "dark" : "light");
     await nextPaint(window);
@@ -626,8 +626,9 @@ interface Point {
 /**
  * Dismisses a floating surface by pressing bare workspace.
  *
- * The corner of the workspace box is only empty surround at one shell height:
- * ask the running app where the surround beside the page actually is.
+ * The corner of the workspace box used to be empty canvas surround; the
+ * workspace now reaches the top of the window and its corner holds chrome, so
+ * ask the running app where the surround actually is.
  */
 async function dismissThroughEmptyWorkspace(window: Page): Promise<void> {
   const point = await findEmptyWorkspacePoint(window);

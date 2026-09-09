@@ -235,14 +235,17 @@ export function LayersPanel({
   };
 
   return (
-    <div className="pointer-events-none absolute right-[76px] top-2 z-30">
+    // Level with Page settings, and below the top chrome for the same reason:
+    // the Layers list shares this slot, so both panels open on one line under
+    // the right-hand chrome rather than across it.
+    <div className="pointer-events-none absolute right-[76px] top-16 z-30">
       <AnimatePresence initial={false}>
         {open ? (
           <motion.section
             ref={boundaryRef}
             data-floating-widget-scope={floatingWidgetScope}
             className="folio-floating-surface pointer-events-auto flex flex-col overflow-hidden"
-            style={{ width: LAYER_PANEL_WIDTH, maxHeight: "min(520px, calc(100vh - 140px))" }}
+            style={{ width: LAYER_PANEL_WIDTH, maxHeight: "min(520px, calc(100vh - 196px))" }}
             aria-label="Layers"
             data-testid="layers-panel"
             data-elevation="temporary"

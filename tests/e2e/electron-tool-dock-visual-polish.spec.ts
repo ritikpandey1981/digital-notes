@@ -66,7 +66,7 @@ test("restores the earlier Folio selection while keeping every stored drawing co
     await expectEarlierFolioSelection(dock, "brush-pen");
     await collapseToolOptions(window);
 
-    await window.getByRole("button", { name: "Workspace menu", exact: true }).click();
+    await window.getByRole("button", { name: "Application menu", exact: true }).click();
     await window.getByRole("menuitem", { name: "Use dark appearance", exact: true }).click();
     await expect(window.locator("html")).toHaveAttribute("data-theme", "dark");
 

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
+import { findEmptyWorkspacePoint } from "./workspace-geometry";
 
 test("keeps a compact Tool Dock and active-tool Context Palette workflow", async () => {
   test.setTimeout(75_000);
@@ -283,12 +284,7 @@ test("keeps a compact Tool Dock and active-tool Context Palette workflow", async
     await expect(window.getByRole("spinbutton", { name: "Size value" })).toHaveValue("5.8");
     await expect(window.getByRole("spinbutton", { name: "Opacity value" })).toHaveValue("63");
 
-    const hostBounds = await host.boundingBox();
-    if (hostBounds === null) throw new Error("Canvas host has no visible bounds.");
-    const emptyWorkspacePoint = {
-      x: hostBounds.x + hostBounds.width - 24,
-      y: hostBounds.y + 24,
-    };
+    const emptyWorkspacePoint = await findEmptyWorkspacePoint(window);
     // Outside-page workspace dismisses settings and creates nothing.
     await window.mouse.click(emptyWorkspacePoint.x, emptyWorkspacePoint.y);
     await expect(palette).toHaveCount(0);
