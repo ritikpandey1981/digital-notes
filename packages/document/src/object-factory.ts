@@ -154,6 +154,23 @@ export class ObjectFactory {
     });
   }
 
+  /** Creates a same-identity immutable replacement at an absolute translation. */
+  positionObject<TObject extends PageObject>(object: TObject, translation: Position): TObject {
+    assertValidObject(object);
+    if (!Number.isFinite(translation.x) || !Number.isFinite(translation.y)) {
+      throw new DocumentObjectError(
+        "INVALID_OBJECT",
+        "Object translation must contain finite page-space coordinates.",
+        { translation },
+      );
+    }
+    return this.replaceObjectTransform(
+      object,
+      object.transform.withTranslation(translation),
+      "translated",
+    );
+  }
+
   /** Creates a same-identity immutable replacement at an absolute rotation. */
   rotateObject<TObject extends PageObject>(object: TObject, rotation: number): TObject {
     assertValidObject(object);
@@ -173,7 +190,7 @@ export class ObjectFactory {
   private replaceObjectTransform<TObject extends PageObject>(
     object: TObject,
     transform: Transform,
-    operation: "rotated" | "scaled",
+    operation: "rotated" | "scaled" | "translated",
   ): TObject {
     assertValidObject(object);
     if (object.type === "ink") {
@@ -289,6 +306,14 @@ export function translateObject<TObject extends PageObject>(
   factoryOptions: ObjectFactoryOptions = {},
 ): TObject {
   return new ObjectFactory(factoryOptions).translateObject(object, delta);
+}
+
+export function positionObject<TObject extends PageObject>(
+  object: TObject,
+  translation: Position,
+  factoryOptions: ObjectFactoryOptions = {},
+): TObject {
+  return new ObjectFactory(factoryOptions).positionObject(object, translation);
 }
 
 export function rotateObject<TObject extends PageObject>(

@@ -47,6 +47,29 @@ describe("Transform", () => {
     expect(Object.isFrozen(moved.translation)).toBe(true);
   });
 
+  it("lands on an absolute translation exactly where a delta cannot", () => {
+    // The numbers from the real failure: adding `after - before` back to
+    // `after` does not return to `before`, so anything replaying a recorded
+    // position has to be able to set it rather than travel to it.
+    const before = { x: 11.269891968152166, y: -5.740710880621634 };
+    const after = { x: 325.51586998080063, y: -64.98668376748736 };
+    const transform = new Transform({ translation: before, rotation: Math.PI / 4, scale: 1.5 });
+    const moved = transform.translatedBy({ x: after.x - before.x, y: after.y - before.y });
+    const returnedByDelta = moved.translatedBy({ x: before.x - after.x, y: before.y - after.y });
+    expect(returnedByDelta.translation.x).not.toBe(before.x);
+
+    const positioned = moved.withTranslation(before);
+    expect(positioned.translation.x).toBe(before.x);
+    expect(positioned.translation.y).toBe(before.y);
+    expect(positioned.rotation).toBe(Math.PI / 4);
+    expect(positioned.scale).toBe(1.5);
+    expect(positioned).not.toBe(moved);
+    expect(Object.isFrozen(positioned.translation)).toBe(true);
+    // The source is untouched.
+    expect(moved.translation.x).toBe(after.x);
+    expect(transform.translation).toEqual(before);
+  });
+
   it("applies and inverts center-pivot geometry and returns transformed bounds", () => {
     const transform = new Transform({
       translation: { x: 10, y: 20 },
@@ -176,6 +199,29 @@ describe("ObjectFactory", () => {
       height: source.bounds.height,
     });
     expect(source.transform.translation).toEqual({ x: 0, y: 0 });
+  });
+
+  it("positions a same-identity replacement at an exact absolute translation", () => {
+    const stroke = createStroke();
+    const source = createInkObject(
+      { id: "positionable", stroke, createdAt: FIRST_TIMESTAMP },
+      { now: () => FIRST_TIMESTAMP },
+    );
+    const target = { x: 11.269891968152166, y: -5.740710880621634 };
+    const positioned = new ObjectFactory({ now: () => SECOND_TIMESTAMP }).positionObject(
+      source,
+      target,
+    );
+
+    expect(positioned).not.toBe(source);
+    expect(positioned.transform.translation.x).toBe(target.x);
+    expect(positioned.transform.translation.y).toBe(target.y);
+    expect(positioned).toMatchObject({ id: source.id, modifiedAt: SECOND_TIMESTAMP });
+    expect(positioned.stroke).toBe(source.stroke);
+    expect(source.transform.translation).toEqual({ x: 0, y: 0 });
+    expect(() => new ObjectFactory().positionObject(source, { x: Number.NaN, y: 0 })).toThrowError(
+      expect.objectContaining({ code: "INVALID_OBJECT" }),
+    );
   });
 
   it("creates rotated and scaled same-identity replacements around stable local bounds", () => {

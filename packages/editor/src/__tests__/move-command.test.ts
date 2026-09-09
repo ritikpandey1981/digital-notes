@@ -115,6 +115,101 @@ describe("MoveCommand", () => {
     });
   });
 
+  it("replays translations that a delta round trip cannot reproduce exactly", () => {
+    // The values from the real defect. `before + (after - before) + (before -
+    // after)` settles 2.84e-14 away from `before`, so a delta-based undo used
+    // to leave the object where the redo's exact precondition would reject it.
+    const before = { x: 11.269891968152166, y: -5.740710880621634 };
+    const after = { x: 325.51586998080063, y: -64.98668376748736 };
+    expect(after.x - before.x + before.x + (before.x - after.x)).not.toBe(before.x);
+
+    const initial = createCollection({ translation: before });
+    const command = createMoveCommand({
+      ...moveInput(),
+      initialTranslation: before,
+      finalTranslation: after,
+    });
+
+    const executed = command.execute(initial);
+    expect(expectInkObject(executed, "object-1").transform.translation).toStrictEqual(after);
+    const undone = command.undo(executed);
+    expect(expectInkObject(undone, "object-1").transform.translation).toStrictEqual(before);
+    const redone = command.redo(undone);
+    expect(expectInkObject(redone, "object-1").transform.translation).toStrictEqual(after);
+  });
+
+  it("stays bit-exact across repeated undo and redo cycles", () => {
+    const before = { x: 11.269891968152166, y: -5.740710880621634 };
+    const after = { x: 325.51586998080063, y: -64.98668376748736 };
+    const fixture = createCollectionSession(createCollection({ translation: before }));
+    const manager = createEditorHistoryManager({ documentSession: fixture.session });
+    manager.executeCommand(
+      createMoveCommand({ ...moveInput(), initialTranslation: before, finalTranslation: after }),
+    );
+
+    // Nothing accumulates: every cycle lands on the recorded value itself, so
+    // the tenth redo is the same number as the first.
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      expect(expectInkObject(fixture.current, "object-1").transform.translation).toStrictEqual(
+        after,
+      );
+      manager.undo();
+      expect(expectInkObject(fixture.current, "object-1").transform.translation).toStrictEqual(
+        before,
+      );
+      manager.redo();
+    }
+    expect(expectInkObject(fixture.current, "object-1").transform.translation).toStrictEqual(after);
+  });
+
+  it("redoes a committed transaction of drifting moves, as a group transform does", () => {
+    // The shape of the real failure: one grouped gesture commits a companion
+    // reposition move per object, and the transaction replays them in order.
+    // A single ULP of drift in any child used to abort the whole redo.
+    const before = { x: 11.269891968152166, y: -5.740710880621634 };
+    const after = { x: 325.51586998080063, y: -64.98668376748736 };
+    const secondBefore = { x: 141.01847203631496, y: 79.25922939914011 };
+    const secondAfter = { x: -188.98149754903892, y: 154.25919078184614 };
+    const fixture = createCollectionSession(
+      pageOf([
+        createInkObject({ translation: before }),
+        createInkObject({ id: "object-2", translation: secondBefore }),
+      ]),
+    );
+    const manager = createEditorHistoryManager({ documentSession: fixture.session });
+    manager.beginTransaction({
+      id: "group-rotation-session",
+      timestamp: SECOND_COMMAND_TIMESTAMP,
+      description: "Rotate 2 selected objects",
+    });
+    manager.executeCommand(
+      createMoveCommand({ ...moveInput(), initialTranslation: before, finalTranslation: after }),
+    );
+    manager.executeCommand(
+      createMoveCommand({
+        ...moveInput(),
+        objectId: "object-2",
+        id: "move-object-2",
+        initialTranslation: secondBefore,
+        finalTranslation: secondAfter,
+      }),
+    );
+    expect(manager.commitTransaction()).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+
+    expect(manager.undo()).toMatchObject({ undoDepth: 0, redoDepth: 1 });
+    expect(expectInkObject(fixture.current, "object-1").transform.translation).toStrictEqual(
+      before,
+    );
+    expect(expectInkObject(fixture.current, "object-2").transform.translation).toStrictEqual(
+      secondBefore,
+    );
+    expect(manager.redo()).toMatchObject({ undoDepth: 1, redoDepth: 0 });
+    expect(expectInkObject(fixture.current, "object-1").transform.translation).toStrictEqual(after);
+    expect(expectInkObject(fixture.current, "object-2").transform.translation).toStrictEqual(
+      secondAfter,
+    );
+  });
+
   it("executes, undoes, and redoes through the generic History manager", () => {
     const fixture = createCollectionSession(createCollection());
     const manager = createEditorHistoryManager({ documentSession: fixture.session });

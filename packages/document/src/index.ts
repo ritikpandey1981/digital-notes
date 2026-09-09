@@ -46,6 +46,7 @@ export {
   createInkObject,
   createLineObject,
   createRectangleObject,
+  positionObject,
   rotateObject,
   scaleObject,
   translateObject,

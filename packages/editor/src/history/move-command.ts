@@ -164,12 +164,15 @@ class MoveCommand implements EditorCommand<PageDocument> {
     }
 
     try {
-      const replacement = new ObjectFactory({ now: () => targetModifiedAt }).translateObject(
+      // Installed absolutely, not as `target - expected` added to what is
+      // there. The guard above compares translations exactly, so a replay has
+      // to land on the recorded value exactly: reaching it by addition leaves
+      // the object a few ULPs off, and the next operation -- which expects the
+      // number this command wrote down -- would then refuse. Rotation and scale
+      // replay absolutely for the same reason.
+      const replacement = new ObjectFactory({ now: () => targetModifiedAt }).positionObject(
         object,
-        {
-          x: targetTranslation.x - expectedTranslation.x,
-          y: targetTranslation.y - expectedTranslation.y,
-        },
+        targetTranslation,
       );
       return document.replace(replacement);
     } catch (cause) {

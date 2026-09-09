@@ -56,6 +56,19 @@ export class Transform {
     );
   }
 
+  /**
+   * Creates a new transform at an absolute page-space translation.
+   *
+   * The counterpart to {@link withRotation} and {@link withScale}, and the only
+   * way to land on an exact recorded translation: `translatedBy` reaches its
+   * destination by addition, and floating-point addition does not invert
+   * exactly, so a delta round trip can settle a few ULPs away from where it
+   * started. A command that replays a recorded position needs the position.
+   */
+  withTranslation(translation: Position): Transform {
+    return new Transform({ translation, rotation: this.rotation, scale: this.scale });
+  }
+
   /** Creates a new transform translated relative to this immutable value. */
   translatedBy(delta: Position): Transform {
     return new Transform({

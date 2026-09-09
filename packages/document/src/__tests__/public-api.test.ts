@@ -55,6 +55,7 @@ describe("@folio/document public API", () => {
       "pageOrientation",
       "pagePreset",
       "paperTypeDefinition",
+      "positionObject",
       "rotateObject",
       "samePagePaper",
       "scaleObject",
