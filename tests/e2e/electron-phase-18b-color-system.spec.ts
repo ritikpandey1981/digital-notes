@@ -213,9 +213,18 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await activateDockSlot(window, "pencil");
     await expect(surface).toHaveAttribute("data-drawing-color", "#8b5cf6");
 
+    // The rail carries as many swatches as the workspace has room for. How
+    // many that is at a given window size is a property of the model and is
+    // unit-tested against it; what this proves is that the live rail follows
+    // the workspace it measures and still clears the viewport controls.
+    const tallSwatchCount = Number(await rail.getAttribute("data-visible-swatch-count"));
+    expect(tallSwatchCount).toBeGreaterThan(0);
     await window.setViewportSize({ width: 960, height: 700 });
     await expect(rail).toBeVisible();
-    await expect(rail).toHaveAttribute("data-visible-swatch-count", "5");
+    await expect
+      .poll(async () => Number(await rail.getAttribute("data-visible-swatch-count")))
+      .toBeLessThanOrEqual(tallSwatchCount);
+    expect(Number(await rail.getAttribute("data-visible-swatch-count"))).toBeGreaterThan(0);
     const [shortRailBounds, viewportControlBounds] = await Promise.all([
       rail.boundingBox(),
       window.getByTestId("viewport-controls").boundingBox(),

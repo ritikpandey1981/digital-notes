@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
+import { clearOfWorkspaceSurfaces } from "./workspace-geometry";
 
 const SCREENSHOT_NAMES = [
   "01-pencil-active.png",
@@ -118,14 +119,25 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[4]);
 
     const pageToScreen = await pageCoordinateMapper(inkCanvas, surface);
+    // One stroke per family, on four rows. The Tool Options palette is still
+    // open over the left of the page, and how far into the page it reaches
+    // depends on the window, so derive a starting column that all four rows
+    // can actually be drawn from rather than trusting a fixed one.
+    const rows = [420, 180, 260, 340];
+    const cleared = await clearOfWorkspaceSurfaces(
+      window,
+      pageToScreen,
+      rows.map((y) => ({ x: 140, y })),
+    );
+    const originX = cleared[0]!.x;
     await activateDockSlot(window, "highlighter");
-    await drawPath(window, pageToScreen, 420);
+    await drawPath(window, pageToScreen, 420, originX);
     await selectInactiveBrush(window, "Pencil");
-    await drawPath(window, pageToScreen, 180);
+    await drawPath(window, pageToScreen, 180, originX);
     await selectInactiveBrush(window, "Pen");
-    await drawPath(window, pageToScreen, 260);
+    await drawPath(window, pageToScreen, 260, originX);
     await selectInactiveBrush(window, "Marker");
-    await drawPath(window, pageToScreen, 340);
+    await drawPath(window, pageToScreen, 340, originX);
     await expect(surface).toHaveAttribute("data-document-object-count", "4");
     expect(await strokeBrushFamilies(surface)).toEqual(["highlighter", "pencil", "pen", "marker"]);
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[5]);
@@ -149,7 +161,16 @@ test("delivers the Phase 17C professional brush catalog, lifecycle, strokes, and
     await expect(cursor).toHaveCSS("width", "40px");
     await capture(window, screenshotDirectory, SCREENSHOT_NAMES[7]);
 
-    await window.mouse.move(2, 2);
+    // Leaving the drawing surface hides the brush cursor. At 200% the page
+    // covers the whole window, so "outside the page" is no longer a window
+    // corner: move onto the tool dock, which sits above the canvas and so
+    // takes the pointer away from it at any window size.
+    const dockBounds = await window.locator("[data-tool-dock-layout]").boundingBox();
+    if (dockBounds === null) throw new Error("The tool dock has no visible bounds.");
+    await window.mouse.move(
+      dockBounds.x + dockBounds.width / 2,
+      dockBounds.y + dockBounds.height / 2,
+    );
     await expect(cursor).toHaveAttribute("data-visible", "false");
     await inkCanvas.dispatchEvent("pointermove", {
       clientX: 500,
@@ -185,10 +206,11 @@ async function drawPath(
   window: Page,
   pageToScreen: (x: number, y: number) => Point,
   y: number,
+  originX: number,
 ): Promise<void> {
-  const start = pageToScreen(140, y);
-  const middle = pageToScreen(300, y + 24);
-  const end = pageToScreen(500, y);
+  const start = pageToScreen(originX, y);
+  const middle = pageToScreen(originX + 160, y + 24);
+  const end = pageToScreen(originX + 360, y);
   await window.mouse.move(start.x, start.y);
   await window.mouse.down();
   await window.mouse.move(middle.x, middle.y, { steps: 8 });

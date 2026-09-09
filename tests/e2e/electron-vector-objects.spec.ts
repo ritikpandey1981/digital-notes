@@ -461,7 +461,17 @@ test("keeps a tall ellipse toolbar clear of its usable rotation handle", async (
       .toBe("rotation");
     await window.mouse.down();
     await expect(surface).toHaveAttribute("data-manipulation-kind", "rotation");
-    await window.mouse.move(rotationHandle.x + 3, rotationHandle.y + 2, { steps: 2 });
+    // A manipulation only leaves "preparing" once the pointer has travelled
+    // further than the drag threshold, which is 4 *page* units. Express the
+    // move in page units so the gesture clears it at any zoom: the old
+    // three-pixel nudge was 4.04 page units at one window height and 3.79 at
+    // another, which is the difference between a rotation and nothing at all.
+    const dragPastThreshold = 12 / zoom;
+    await window.mouse.move(
+      rotationHandle.x + dragPastThreshold,
+      rotationHandle.y + dragPastThreshold,
+      { steps: 2 },
+    );
     await expect(previewCanvas).toHaveAttribute("data-manipulation-preview-state", "active");
     await window.mouse.up();
     await expect(previewCanvas).toHaveAttribute("data-manipulation-preview-state", "empty");

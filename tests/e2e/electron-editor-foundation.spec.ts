@@ -1,6 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
+import { clearOfWorkspaceSurfaces } from "./workspace-geometry";
 
 test("switches tools without remounting and supports styled ink, highlighter, and eraser History", async () => {
   test.setTimeout(60_000);
@@ -45,7 +46,26 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     await window.getByRole("button", { name: "Use color #2563eb" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "8");
     await setNumericValue(window.getByRole("spinbutton", { name: "Opacity value" }), "80");
-    await drawPath(window, pageToScreen, [
+    // Every gesture below moves together by one derived offset, so the strokes
+    // stay where the eraser later has to cross them. The offset exists because
+    // the open Tool Options palette covers part of the page, and how much of
+    // it depends on the window: these page coordinates used to clear the
+    // palette by a few pixels and no longer do at a taller workspace.
+    const gesturePoints = [
+      { x: 120, y: 180 },
+      { x: 260, y: 175 },
+      { x: 120, y: 260 },
+      { x: 260, y: 255 },
+      { x: 110, y: 340 },
+      { x: 290, y: 340 },
+      { x: 190, y: 180 },
+      { x: 190, y: 260 },
+    ] as const;
+    const cleared = await clearOfWorkspaceSurfaces(window, pageToScreen, gesturePoints);
+    const shift = cleared[0]!.x - gesturePoints[0]!.x;
+    const at = (x: number, y: number): Point => pageToScreen(x + shift, y);
+
+    await drawPath(window, at, [
       { x: 120, y: 180 },
       { x: 190, y: 190 },
       { x: 260, y: 175 },
@@ -69,7 +89,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     await openSlotToolOptions(window, "pen");
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "4");
-    await drawPath(window, pageToScreen, [
+    await drawPath(window, at, [
       { x: 120, y: 260 },
       { x: 190, y: 270 },
       { x: 260, y: 255 },
@@ -87,7 +107,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     await expect(surface).toHaveAttribute("data-active-editor-tool", "highlighter");
     await expect(surface).toHaveAttribute("data-drawing-width", "12");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.34");
-    await drawPath(window, pageToScreen, [
+    await drawPath(window, at, [
       { x: 110, y: 340 },
       { x: 200, y: 340 },
       { x: 290, y: 340 },
@@ -110,16 +130,16 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     expect(await attributeNumber(inkCanvas, "data-ink-path-build-count")).toBe(3);
 
     await window.getByRole("button", { name: "Eraser", exact: true }).click();
-    await window.mouse.click(...pointTuple(pageToScreen(200, 340)));
+    await window.mouse.click(...pointTuple(at(200, 340)));
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
     await expect(surface).toHaveAttribute("data-history-undo-depth", "4");
     await window.keyboard.press("Control+Z");
     await expect(surface).toHaveAttribute("data-document-object-count", "3");
     await window.keyboard.press("Control+Y");
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
-    await window.mouse.move(...pointTuple(pageToScreen(190, 180)));
+    await window.mouse.move(...pointTuple(at(190, 180)));
     await window.mouse.down();
-    await window.mouse.move(...pointTuple(pageToScreen(190, 260)), { steps: 20 });
+    await window.mouse.move(...pointTuple(at(190, 260)), { steps: 20 });
     await window.mouse.up();
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
     await window.keyboard.press("Control+Z");

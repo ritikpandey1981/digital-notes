@@ -8,6 +8,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
+import { findEmptyWorkspacePoint } from "./workspace-geometry";
 
 test("Phase 18D samples committed artwork through the shared picker without stealing document input", async ({
   browserName: _browserName,
@@ -34,7 +35,6 @@ test("Phase 18D samples committed artwork through the shared picker without stea
 
     const surface = window.getByTestId("canvas-surface");
     const host = window.getByTestId("canvas-host");
-    const workspace = window.getByTestId("editor-workspace");
     const toolDock = window.getByRole("toolbar", { name: "Notebook tool dock" });
     const rail = window.getByTestId("quick-color-rail");
     const picker = window.getByTestId("full-color-picker");
@@ -162,7 +162,7 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     await expect(surface).toHaveAttribute("data-drawing-color", redPixel);
     expect(await recentColors(picker)).toEqual(baselineRecent);
     await capture(window, testInfo, "04-pencil-target-after-sample.png");
-    await workspace.click({ position: { x: 20, y: 20 } });
+    await dismissThroughEmptyWorkspace(window);
     await expect(picker).toHaveCount(0);
     await expect(surface).toHaveAttribute("data-drawing-color", redPixel);
     expect(await historyDepth(surface)).toBe(baselineHistory);
@@ -253,7 +253,7 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     expect((await vectorStyles(surface)).find(({ id }) => id === rectangle.id)?.color).toBe(
       selectedOverlapPixel,
     );
-    await workspace.click({ position: { x: 20, y: 20 } });
+    await dismissThroughEmptyWorkspace(window);
     await expect(picker).toHaveCount(0);
     expect(await historyDepth(surface)).toBe(selectedHistory + 1);
     await shapeToolbar.getByRole("button", { name: "Stroke color" }).click();
@@ -621,4 +621,15 @@ async function nextPaint(window: Page): Promise<void> {
 interface Point {
   readonly x: number;
   readonly y: number;
+}
+
+/**
+ * Dismisses a floating surface by pressing bare workspace.
+ *
+ * The corner of the workspace box is only empty surround at one shell height:
+ * ask the running app where the surround beside the page actually is.
+ */
+async function dismissThroughEmptyWorkspace(window: Page): Promise<void> {
+  const point = await findEmptyWorkspacePoint(window);
+  await window.mouse.click(point.x, point.y);
 }

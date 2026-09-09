@@ -226,9 +226,19 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     await expect
       .poll(async () => Number(await surface.getAttribute("data-selected-object-rotation")))
       .toBeCloseTo(Math.PI / 4, 4);
-    await expect(vectorCanvas).toHaveAttribute(
-      "data-vector-selection-rotation",
-      String(Math.PI / 4),
+    // Snapping positions the *pointer* on a snapped ray and the rotation is
+    // recovered from it with atan2, so the stored angle reaches 45 degrees to
+    // within trigonometric precision rather than bit-identically -- which of
+    // the two neighbouring doubles it lands on depends on the page geometry.
+    // The tolerance is 5e-10 rad, some eight orders finer than the 15 degree
+    // snap the user is actually promised.
+    await expect
+      .poll(async () => Number(await vectorCanvas.getAttribute("data-vector-selection-rotation")))
+      .toBeCloseTo(Math.PI / 4, 9);
+    // What is exact is that the selection frame reports the document's own
+    // rotation rather than a separately derived one.
+    expect(await vectorCanvas.getAttribute("data-vector-selection-rotation")).toBe(
+      await surface.getAttribute("data-selected-object-rotation"),
     );
 
     const frameAfter = await frameDiagnostics(vectorCanvas);
