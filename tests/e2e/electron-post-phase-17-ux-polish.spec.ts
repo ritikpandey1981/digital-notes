@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
+import { focusCanvasSurface } from "./workspace-geometry";
 
 test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation polish", async ({
   browserName,
@@ -67,7 +68,10 @@ test("validates the post-Phase-17 cursor, tooltip, preset, Shapes, and rotation 
     });
     await expect(brushCursor).toHaveAttribute("data-visible", "false");
     await expect(inkCanvas).toHaveCSS("cursor", "default");
-    await window.mouse.move(insidePage.x, insidePage.y);
+    // Space-pan requires canvas-surface focus; hovering the canvas while a UI
+    // control retains focus intentionally leaves Space with that control.
+    await focusCanvasSurface(window, insidePage);
+    await expect(surface).toBeFocused();
     await window.keyboard.down("Space");
     await expect(brushCursor).toHaveAttribute("data-visible", "false");
     await expect(inkCanvas).toHaveCSS("cursor", "grab");

@@ -8,6 +8,7 @@ import {
   type Page,
 } from "@playwright/test";
 import { activateDockSlot } from "./dock-helpers";
+import { focusCanvasSurface } from "./workspace-geometry";
 
 test("provides live zoom controls, anchored zoom, transient pan, and mode-aware resize", async () => {
   test.setTimeout(90_000);
@@ -114,7 +115,13 @@ test("provides live zoom controls, anchored zoom, transient pan, and mode-aware 
     await expect(contextHint).toContainText("Tip: Hold Space + Drag → Move canvas");
     const objectCountBeforePan = await attributeNumber(surface, "data-document-object-count");
     const cameraBeforeSpacePan = await cameraPosition(surface);
-    await window.mouse.move(anchor.x, anchor.y);
+    // Space belongs to whatever owns focus, and selecting a tool leaves focus
+    // on that button, so the drawing surface has to be given the key before it
+    // can pan -- hovering it is no longer enough. The anchor is used rather
+    // than a point beside the page because the page fills the window at this
+    // zoom, so there is no surround to press instead.
+    await focusCanvasSurface(window, anchor);
+    await expect(surface).toBeFocused();
     await window.keyboard.down("Space");
     await expect(inkCanvas).toHaveAttribute("data-viewport-pan-state", "grab");
     await expect(inkCanvas).toHaveCSS("cursor", "grab");

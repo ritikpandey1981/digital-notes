@@ -2405,7 +2405,6 @@ export function CanvasSurface({
       const editorPointerIds = new Set<number>();
       const viewportPanPointerIds = new Set<number>();
       let spacePanHeld = false;
-      let pointerOverCanvas = false;
       let navigationTeachingReported = false;
       let activeViewportPan: {
         pointerId: number;
@@ -2534,13 +2533,21 @@ export function CanvasSurface({
         // or a semantic SVG radio in the Brush Library all act on Space, and
         // claiming it here would leave the control inert while the view panned.
         //
-        // The exception is the established one, previously written for buttons
-        // alone and now covering every such control: with the pointer over the
-        // canvas the user's evident intent is to pan, whatever still holds
-        // focus. Only the press is gated, so a pan that started can always end.
-        if (phase === "down" && isInteractiveKeyboardTarget(event.target) && !pointerOverCanvas) {
+        // Focus alone decides it, with no exception for where the pointer
+        // happens to be. That is only truthful because a press on the artwork
+        // now takes focus onto the surface itself, so during drawing the
+        // focused thing really is the canvas and Space really is the pan.
+        //
+        // Only the press is gated. A pan that started can always end, whatever
+        // took focus in between.
+        if (phase === "down" && isInteractiveKeyboardTarget(event.target)) {
           return false;
         }
+        // A release nobody armed is not this one's to swallow. A native button
+        // activates on the Space *keyup*, so consuming every release would
+        // leave a focused control inert even though the press was correctly
+        // left alone. Held state is what says the pan is ours to end.
+        if (phase === "up" && !spacePanHeld) return false;
         event.preventDefault();
         event.stopImmediatePropagation();
         if (phase === "down") {
@@ -3117,8 +3124,14 @@ export function CanvasSurface({
       ): void => {
         const listener: EventListener = (nativeEvent) => {
           const event = nativeEvent as PointerEvent;
-          pointerOverCanvas = true;
           if (handleArtworkSamplingPointer(phase, event)) return;
+          // A press on the artwork takes focus, the way pressing any surface
+          // that owns interaction should. These listeners sit on the ink
+          // canvas, so they only ever see genuine drawing-surface presses --
+          // chrome, panels and menus never reach here and keep their own
+          // focus. Sampling is excluded above: the eyedropper is driven from
+          // the picker and has to keep it.
+          if (phase === "down") host.focus({ preventScroll: true });
           if (handleViewportPointer(phase, event)) return;
           if (phase === "down") editorPointerIds.add(event.pointerId);
           toolRegistry?.handlePointer(phase, event);
@@ -3179,7 +3192,6 @@ export function CanvasSurface({
       editorPointerListeners.push(["wheel", wheelListener]);
       host.dataset.viewportWheelPolicy = "ctrl-zoom-wheel-pan";
       const cursorLeaveListener: EventListener = () => {
-        pointerOverCanvas = false;
         if (
           !activeManipulationController.hasActiveSession() &&
           activeViewportPan === null &&
@@ -4000,6 +4012,11 @@ export function CanvasSurface({
       <div
         ref={hostRef}
         className={className}
+        // Programmatically focusable, never a Tab stop. Pressing the artwork
+        // has to leave focus somewhere truthful: without this it stays on
+        // whichever button was pressed last, and every keyboard rule that asks
+        // "what is focused" gets a stale answer for the whole drawing session.
+        tabIndex={-1}
         data-testid="canvas-surface"
         data-renderer-state="initializing"
         data-selection-capability="initializing"

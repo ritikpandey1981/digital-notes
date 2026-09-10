@@ -1,5 +1,5 @@
 import * as React from "react";
-import { AlertTriangle, FileInput, FileOutput, Pencil, Settings2, Trash2 } from "lucide-react";
+import { Settings2 } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -8,13 +8,27 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  Input,
   cn,
 } from "@folio/ui";
 import { useNotifications } from "../notifications/NotificationProvider";
 import { useTheme } from "../theme/ThemeProvider";
 
-export type ShellDialogKind = "open" | "save" | "delete" | "confirm" | "rename" | "settings";
+/**
+ * The dialogs the shell can actually open.
+ *
+ * There used to be five more -- open, save, delete, rename, confirm -- written
+ * as placeholders for a file workflow that does not exist and reachable only
+ * from a menu bar that no longer does either. They described saving and
+ * deleting notebooks in copy that said, in the dialog itself, that nothing was
+ * being saved or deleted. Folio will get them back when the operations are
+ * real.
+ */
+export type ShellDialogKind = "settings";
+
+/** How a dialog gives focus back to whatever opened it. */
+export interface ShellDialogOptions {
+  readonly returnFocus?: () => HTMLElement | null;
+}
 
 interface DialogCopy {
   title: string;
@@ -24,40 +38,10 @@ interface DialogCopy {
 }
 
 interface ShellDialogContextValue {
-  openDialog: (kind: ShellDialogKind) => void;
+  openDialog: (kind: ShellDialogKind, options?: ShellDialogOptions) => void;
 }
 
 const dialogCopy: Record<ShellDialogKind, DialogCopy> = {
-  open: {
-    title: "Open a notebook",
-    description: "File selection is represented by this Phase 2 shell placeholder.",
-    primaryLabel: "Choose file",
-    notificationTitle: "Open action previewed",
-  },
-  save: {
-    title: "Save notebook",
-    description: "Saving is not connected to persistence during Phase 2.",
-    primaryLabel: "Save placeholder",
-    notificationTitle: "Save notification previewed",
-  },
-  delete: {
-    title: "Move notebook to Trash?",
-    description: "This confirmation demonstrates destructive dialog styling without deleting data.",
-    primaryLabel: "Move to Trash",
-    notificationTitle: "Delete action cancelled safely",
-  },
-  confirm: {
-    title: "Confirm shell action",
-    description: "Reusable confirmation dialogs are ready for future feature modules.",
-    primaryLabel: "Confirm",
-    notificationTitle: "Action confirmed",
-  },
-  rename: {
-    title: "Rename notebook",
-    description: "The field is interactive, but no notebook data is changed in this phase.",
-    primaryLabel: "Rename placeholder",
-    notificationTitle: "Rename action previewed",
-  },
   settings: {
     title: "Appearance",
     description: "Choose how the Folio shell appears on this screen.",
@@ -67,11 +51,6 @@ const dialogCopy: Record<ShellDialogKind, DialogCopy> = {
 };
 
 const dialogIcons = {
-  open: FileInput,
-  save: FileOutput,
-  delete: Trash2,
-  confirm: AlertTriangle,
-  rename: Pencil,
   settings: Settings2,
 } satisfies Record<ShellDialogKind, React.ComponentType<{ className?: string }>>;
 
@@ -82,8 +61,17 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
   const { notify } = useNotifications();
   const { theme, setTheme } = useTheme();
 
+  // Whatever opened the dialog, so closing it can hand focus back. The menu
+  // item that was clicked has already unmounted by then, and without this the
+  // keyboard lands on the document body.
+  const returnFocusRef = React.useRef<(() => HTMLElement | null) | null>(null);
   const value = React.useMemo(
-    () => ({ openDialog: (kind: ShellDialogKind) => setActiveDialog(kind) }),
+    () => ({
+      openDialog: (kind: ShellDialogKind, options?: ShellDialogOptions) => {
+        returnFocusRef.current = options?.returnFocus ?? null;
+        setActiveDialog(kind);
+      },
+    }),
     [],
   );
 
@@ -94,8 +82,8 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
     if (!activeDialog || !copy) return;
     notify({
       title: copy.notificationTitle,
-      description: "This is placeholder shell feedback; no notebook data was changed.",
-      tone: activeDialog === "delete" ? "error" : "success",
+      description: "The workspace already shows the appearance you chose.",
+      tone: "success",
     });
     setActiveDialog(null);
   };
@@ -105,27 +93,23 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
       {children}
       <Dialog open={activeDialog !== null} onOpenChange={(open) => !open && setActiveDialog(null)}>
         {copy && DialogIcon ? (
-          <DialogContent className="folio-dialog-motion overflow-hidden p-0 sm:max-w-[520px]">
+          <DialogContent
+            className="folio-dialog-motion overflow-hidden p-0 sm:max-w-[520px]"
+            onCloseAutoFocus={(event) => {
+              const target = returnFocusRef.current?.();
+              if (target === null || target === undefined) return;
+              event.preventDefault();
+              target.focus();
+            }}
+          >
             <div className="p-6">
               <DialogHeader>
-                <div
-                  className={cn(
-                    "mb-3 flex size-10 items-center justify-center rounded-xl bg-folio-accent-soft text-folio-accent",
-                    activeDialog === "delete" && "bg-red-500/10 text-red-600 dark:text-red-400",
-                  )}
-                >
+                <div className="mb-3 flex size-10 items-center justify-center rounded-xl bg-folio-accent-soft text-folio-accent">
                   <DialogIcon className="size-5" aria-hidden="true" />
                 </div>
                 <DialogTitle>{copy.title}</DialogTitle>
                 <DialogDescription>{copy.description}</DialogDescription>
               </DialogHeader>
-
-              {activeDialog === "rename" ? (
-                <label className="mt-5 block text-sm font-medium">
-                  Notebook name
-                  <Input className="mt-2" defaultValue="Studio Notes" autoFocus />
-                </label>
-              ) : null}
 
               {activeDialog === "settings" ? (
                 <div className="mt-5 grid grid-cols-2 gap-3" role="group" aria-label="Theme">
@@ -161,7 +145,7 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
                 Cancel
               </Button>
               <Button
-                variant={activeDialog === "delete" ? "destructive" : "default"}
+                variant="default"
                 className="transition-[background-color,transform,box-shadow] duration-100 ease-out active:scale-[0.98]"
                 onClick={completeAction}
               >

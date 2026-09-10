@@ -94,6 +94,16 @@ test("splits the top chrome between the two corners and leaves the centre empty"
     await expect(window.getByTestId("sketch-name")).toHaveText("Untitled Sketch");
     const sketch = window.getByTestId("top-chrome-sketch");
     await expect(sketch.locator("button, a, input, textarea, [contenteditable]")).toHaveCount(0);
+    // Identity is read, not operated: no control role, and the keyboard passes
+    // straight over it.
+    expect(
+      await window
+        .getByTestId("sketch-name")
+        .evaluate(
+          (node) => `${node.getAttribute("role") ?? ""}|${node.getAttribute("tabindex") ?? ""}`,
+        ),
+      "the sketch name is not a control",
+    ).toBe("|");
     await sketch.dblclick();
     await expect(
       sketch.locator("input, [contenteditable]"),
@@ -328,6 +338,331 @@ test("keeps the top chrome contained at a minimum window", async () => {
     }));
     expect(overflow.horizontal, "no horizontal overflow").toBe(false);
     expect(overflow.vertical, "no vertical overflow").toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * The application menu is a keyboard destination, not a mouse-only one.
+ *
+ * Radix owns the mechanics; what this protects is that Folio has not put
+ * anything in their way -- a global key handler, a stolen focus, a tooltip
+ * hanging over the open menu -- and that the keyboard always comes back
+ * somewhere it can act from.
+ */
+test("opens and navigates the application menu from the keyboard", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    const trigger = window.getByTestId("application-menu-trigger");
+    const menu = window.getByRole("menu");
+    const first = menu.getByRole("menuitem").first();
+    const last = menu.getByRole("menuitem").last();
+
+    // The top-left control is the first thing the keyboard reaches.
+    await window.evaluate(() => document.body.focus());
+    await window.keyboard.press("Tab");
+    await expect(trigger).toBeFocused();
+
+    await trigger.press("Enter");
+    await expect(menu).toBeVisible();
+    await expect(first).toBeFocused();
+    // No tooltip left hanging over the surface the trigger just opened.
+    await expect(window.locator('[role="tooltip"]:visible')).toHaveCount(0);
+
+    await window.keyboard.press("ArrowDown");
+    await expect(last).toBeFocused();
+    await window.keyboard.press("ArrowUp");
+    await expect(first).toBeFocused();
+    await window.keyboard.press("End");
+    await expect(last).toBeFocused();
+    await window.keyboard.press("Home");
+    await expect(first).toBeFocused();
+
+    // Escape closes it and hands the keyboard back to the trigger.
+    await window.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // Space opens it too, and a press outside dismisses without losing focus.
+    await trigger.press("Space");
+    await expect(menu).toBeVisible();
+    await expect(first).toBeFocused();
+    await window.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+
+    await trigger.press("Enter");
+    await expect(menu).toBeVisible();
+    // Settled, not merely mounted, and reached the way a hand reaches it: a
+    // menu opened from the keyboard ignores an outside press until the pointer
+    // has actually moved, so move before pressing.
+    await expect(first).toBeFocused();
+    await window.mouse.move(760, 520);
+    await window.mouse.click(760, 520);
+    await expect(menu).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // Reduced motion changes the choreography, never the reachability.
+    await window.emulateMedia({ reducedMotion: "reduce" });
+    await trigger.press("Enter");
+    await expect(menu).toBeVisible();
+    await expect(first).toBeFocused();
+    await window.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await window.emulateMedia({ reducedMotion: "no-preference" });
+  } finally {
+    await app.close();
+  }
+});
+
+test("keeps appearance honest and hands focus back from its settings", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    const trigger = window.getByTestId("application-menu-trigger");
+    const menu = window.getByRole("menu");
+    const dialog = window.getByRole("dialog");
+
+    // The appearance action does what it says and closes behind itself.
+    await expect(window.locator("html")).toHaveAttribute("data-theme", "light");
+    await trigger.click();
+    await menu.getByRole("menuitem").first().click();
+    await expect(window.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(menu).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // Settings opens exactly one dialog, and closing it -- either way -- puts
+    // the keyboard back on the control that opened it rather than the body.
+    for (const close of ["escape", "done"] as const) {
+      await trigger.click();
+      await menu.getByRole("menuitem", { name: /settings/iu }).click();
+      await expect(dialog).toHaveCount(1);
+      await expect(menu).toHaveCount(0);
+      if (close === "escape") await window.keyboard.press("Escape");
+      else await dialog.getByRole("button", { name: "Done" }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * The menu shares the workspace with surfaces that own their own space.
+ *
+ * None of them is modal over the others, so the contract is about handover:
+ * pressing another control dismisses the menu and that control still acts,
+ * and dismissing the menu never disturbs what was already open.
+ */
+test("hands over cleanly between the menu and the workspace surfaces", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    const trigger = window.getByTestId("application-menu-trigger");
+    const menu = window.getByRole("menu");
+    const pages = window.getByTestId("pages-toggle");
+
+    // A press on Pages while the menu is open reaches Pages.
+    await trigger.click();
+    await expect(menu).toBeVisible();
+    await pages.click();
+    await expect(menu).toHaveCount(0);
+    await expect(window.getByTestId("page-navigator")).toBeVisible();
+    await expect(pages).toHaveAttribute("aria-pressed", "true");
+
+    // Opening the menu over the navigator leaves the navigator alone, and
+    // closing the menu leaves it open with its toggle still reading pressed.
+    await trigger.click();
+    await expect(menu).toBeVisible();
+    await expect(window.getByTestId("page-navigator")).toBeVisible();
+    await window.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(window.getByTestId("page-navigator")).toBeVisible();
+    await expect(pages).toHaveAttribute("aria-pressed", "true");
+    await pages.click();
+    await expect(window.getByTestId("page-navigator")).toHaveCount(0);
+    await expect(pages).toHaveAttribute("aria-pressed", "false");
+
+    // The same for Page settings.
+    const settingsToggle = window.getByTestId("page-settings-toggle");
+    await settingsToggle.click();
+    await trigger.click();
+    await expect(menu).toBeVisible();
+    await expect(window.getByTestId("page-settings")).toBeVisible();
+    await window.keyboard.press("Escape");
+    await expect(settingsToggle).toHaveAttribute("aria-pressed", "true");
+    await settingsToggle.click();
+
+    // And for the Layers Stack, whose own mode row stays reachable.
+    await openStack(window);
+    await trigger.click();
+    await expect(menu).toBeVisible();
+    await expect(window.getByTestId("spatial-layers-view")).toBeVisible();
+    await window.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(window.getByTestId("spatial-layers-view")).toBeVisible();
+    await expect(window.getByTestId("spatial-layers-add")).toBeVisible();
+    await expect(trigger).toBeFocused();
+  } finally {
+    await app.close();
+  }
+});
+
+test("contains the application menu at a minimum window", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio(960, 640);
+  try {
+    await window.getByTestId("application-menu-trigger").click();
+    const menu = window.getByRole("menu");
+    await expect(menu).toBeVisible();
+    const box = await boxOf(menu);
+    expect(box.x, "the menu stays inside the window").toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(960);
+    expect(box.y + box.height).toBeLessThanOrEqual(640);
+
+    // Below the chrome it belongs to, and clear of the identity beside it.
+    const sketch = await boxOf(window.getByTestId("top-chrome-sketch"));
+    expect(box.y, "the menu opens beneath the chrome").toBeGreaterThanOrEqual(
+      sketch.y + sketch.height,
+    );
+    expect(overlaps(box, sketch), "the menu does not cover the sketch name").toBe(false);
+    const dock = window.locator("[data-tool-dock-layout]");
+    if ((await dock.count()) > 0) {
+      expect(overlaps(box, await boxOf(dock)), "the menu clears the tool dock").toBe(false);
+    }
+
+    const overflow = await window.evaluate(() => ({
+      horizontal: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      vertical: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+    }));
+    expect(overflow.horizontal, "no horizontal overflow").toBe(false);
+    expect(overflow.vertical, "no vertical overflow").toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Space belongs to whatever holds focus, and focus is now truthful.
+ *
+ * The editor holds Space for the transient pan. It used to take the key
+ * whenever the pointer was over the canvas, because pressing the artwork left
+ * focus parked on the last button pressed and "what is focused" was therefore
+ * a stale answer for the whole drawing session. The drawing surface now takes
+ * focus when it is pressed, so the question is worth asking again: a control
+ * the user is on keeps its own activation key, and the canvas keeps the pan.
+ */
+test("gives Space to the control that holds focus, and to the pan when the canvas does", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    const surface = surfaceOf(window);
+    const trigger = window.getByTestId("application-menu-trigger");
+    const menu = window.getByRole("menu");
+    const pages = window.getByTestId("pages-toggle");
+    const settings = window.getByTestId("page-settings-toggle");
+    const panState = async (): Promise<string | null> =>
+      surface.getAttribute("data-viewport-pan-state");
+
+    // Selecting a tool leaves that button focused, and Space stays with it.
+    await window.locator('button[data-dock-slot="pen"]').click();
+    await expect(window.locator('button[data-dock-slot="pen"]')).toBeFocused();
+
+    // Pressing the artwork hands focus to the surface, which is what makes the
+    // pan gesture the truthful owner of Space from then on.
+    await window.mouse.move(700, 500);
+    await window.mouse.down({ button: "middle" });
+    await window.mouse.up({ button: "middle" });
+    await expect(surface).toBeFocused();
+    await window.keyboard.down("Space");
+    await expect(surface).toHaveAttribute("data-viewport-pan-state", "grab");
+    await window.keyboard.up("Space");
+    await expect(surface).toHaveAttribute("data-viewport-pan-state", "idle");
+
+    // Walking to a control takes the key back, with the pointer left exactly
+    // where it was: over the canvas.
+    // Tab from the canvas continues from the canvas's place in the document,
+    // so it walks the workspace controls before coming round to the chrome.
+    for (
+      let step = 0;
+      step < 30 && !(await trigger.evaluate((node) => node === document.activeElement));
+      step += 1
+    ) {
+      await window.keyboard.press("Tab");
+    }
+    await expect(trigger).toBeFocused();
+    await window.keyboard.press("Space");
+    await expect(menu).toBeVisible();
+    expect(await panState(), "the canvas did not take Space").toBe("idle");
+
+    // A menu item reached with the arrows activates on Space too.
+    await window.keyboard.press("ArrowDown");
+    await expect(menu.getByRole("menuitem").last()).toBeFocused();
+    await window.keyboard.press("Space");
+    await expect(window.getByRole("dialog")).toBeVisible();
+    expect(await panState()).toBe("idle");
+    await window.keyboard.press("Escape");
+    await expect(window.getByRole("dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // The rest of the top chrome, walked to the same way.
+    await window.keyboard.press("Tab");
+    await expect(pages).toBeFocused();
+    await window.keyboard.press("Space");
+    await expect(window.getByTestId("page-navigator")).toBeVisible();
+    await expect(pages).toHaveAttribute("aria-pressed", "true");
+    expect(await panState()).toBe("idle");
+    await window.keyboard.press("Space");
+    await expect(window.getByTestId("page-navigator")).toHaveCount(0);
+
+    await window.keyboard.press("Tab");
+    await expect(settings).toBeFocused();
+    await window.keyboard.press("Space");
+    await expect(window.getByTestId("page-settings")).toBeVisible();
+    await expect(settings).toHaveAttribute("aria-pressed", "true");
+    expect(await panState()).toBe("idle");
+    await window.keyboard.press("Space");
+    await expect(window.getByTestId("page-settings")).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("moves keyboard ownership back and forth with the pointer", async () => {
+  test.setTimeout(300_000);
+  const { app, window } = await launchFolio();
+  try {
+    const surface = surfaceOf(window);
+    const pages = window.getByTestId("pages-toggle");
+
+    // Canvas takes focus from a press...
+    await window.mouse.move(700, 500);
+    await window.mouse.down({ button: "middle" });
+    await window.mouse.up({ button: "middle" });
+    await expect(surface).toBeFocused();
+
+    // ...and a control takes it straight back, with its own Space.
+    await pages.click();
+    await expect(pages).toBeFocused();
+    await expect(window.getByTestId("page-navigator")).toBeVisible();
+    await window.keyboard.press("Space");
+    await expect(window.getByTestId("page-navigator")).toHaveCount(0);
+    await expect(surface).toHaveAttribute("data-viewport-pan-state", "idle");
+
+    // A pan that started always releases, whatever takes focus under it.
+    await window.mouse.move(700, 500);
+    await window.mouse.down({ button: "middle" });
+    await window.mouse.up({ button: "middle" });
+    await expect(surface).toBeFocused();
+    await window.keyboard.down("Space");
+    await expect(surface).toHaveAttribute("data-viewport-pan-state", "grab");
+    await window.getByTestId("application-menu-trigger").focus();
+    await window.keyboard.up("Space");
+    await expect(surface).toHaveAttribute("data-viewport-pan-state", "idle");
   } finally {
     await app.close();
   }

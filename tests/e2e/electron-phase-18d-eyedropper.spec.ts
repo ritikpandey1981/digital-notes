@@ -114,6 +114,13 @@ test("Phase 18D samples committed artwork through the shared picker without stea
     await window.mouse.move(outsidePoint.x + 45, outsidePoint.y + 30, { steps: 4 });
     await window.mouse.up();
     await window.keyboard.up("Space");
+    // Space belongs to whatever holds focus, and arming the eyedropper leaves
+    // focus on its toggle -- so the release that ends the pan attempt also
+    // activates that toggle. The drag above still happened while sampling was
+    // armed, which is what it was proving; re-arm before carrying on.
+    await expect(picker).toHaveAttribute("data-eyedropper-state", "inactive");
+    await eyedropper.click();
+    await expect(picker).toHaveAttribute("data-eyedropper-state", "active");
     await window.mouse.wheel(35, 60);
     expect(await camera(surface)).toEqual(cameraBeforeClaimedInput);
     expect(await historyDepth(surface)).toBe(baselineHistory);

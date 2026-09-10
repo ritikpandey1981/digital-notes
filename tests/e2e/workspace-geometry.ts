@@ -147,3 +147,20 @@ async function pageZoom(window: Page): Promise<number> {
   if (!Number.isFinite(zoom) || zoom <= 0) throw new Error("The viewport zoom is unavailable.");
   return zoom;
 }
+
+/**
+ * Gives the drawing surface focus through a genuine, non-drawing interaction.
+ *
+ * Space-pan requires canvas-surface focus; hovering the canvas while a UI
+ * control retains focus intentionally leaves Space with that control. A middle
+ * press is a real interaction with the surface that puts no mark on the page,
+ * and it is the button the viewport already uses for its own drag-pan.
+ */
+export async function focusCanvasSurface(window: Page, point: Point): Promise<void> {
+  if (!(await reachesCanvas(window, point))) {
+    throw new Error("The focus point does not reach the drawing surface.");
+  }
+  await window.mouse.move(point.x, point.y);
+  await window.mouse.down({ button: "middle" });
+  await window.mouse.up({ button: "middle" });
+}

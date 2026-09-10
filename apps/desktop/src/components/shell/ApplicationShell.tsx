@@ -89,6 +89,23 @@ function ApplicationShellContent() {
         data-testid="sketchbook-workspace"
         data-workspace-presentation="focused-canvas"
       >
+        {/*
+          Before the workspace in the document, not just above it on screen.
+          The chrome overlays the canvas rather than sitting in a row of its
+          own, so nothing but source order decides whether the keyboard reaches
+          the application menu before the tool dock -- and the top-left control
+          is where a keyboard user expects to arrive first.
+        */}
+        <SegmentedTopChrome
+          canUndo={historyAvailability.canUndo}
+          canRedo={historyAvailability.canRedo}
+          onUndo={undo}
+          onRedo={redo}
+          pageNavigatorOpen={pageNavigatorOpen}
+          onTogglePageNavigator={togglePageNavigator}
+          pageSettingsOpen={pageSettingsOpen}
+          onTogglePageSettings={togglePageSettings}
+        />
         <EditorWorkspace
           layersOpen={editorWorkspace.layersOpen}
           layersView={editorWorkspace.layersView}
@@ -136,16 +153,6 @@ function ApplicationShellContent() {
           onViewportActionsReady={viewport.handleActionsReady}
           onViewportChange={viewport.handleViewportChange}
           onViewportNavigationLearned={learnViewportNavigation}
-        />
-        <SegmentedTopChrome
-          canUndo={historyAvailability.canUndo}
-          canRedo={historyAvailability.canRedo}
-          onUndo={undo}
-          onRedo={redo}
-          pageNavigatorOpen={pageNavigatorOpen}
-          onTogglePageNavigator={togglePageNavigator}
-          pageSettingsOpen={pageSettingsOpen}
-          onTogglePageSettings={togglePageSettings}
         />
         <WorkspaceContextHint
           activeTool={editorWorkspace.activeTool}

@@ -15,7 +15,7 @@ import {
   Sun,
   Undo2,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { useShellDialog } from "../dialogs/ShellDialogProvider";
 import { ToolTooltip } from "../editor/ToolTooltip";
 import type { WorkspaceHistoryAvailability } from "../editor/workspace-history";
@@ -76,6 +76,7 @@ export function SegmentedTopChrome({
 }: SegmentedTopChromeProps) {
   const { openDialog } = useShellDialog();
   const { theme, toggleTheme } = useTheme();
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   return (
     <>
@@ -92,6 +93,7 @@ export function SegmentedTopChrome({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
+                ref={menuTriggerRef}
                 type="button"
                 className="folio-chrome-button"
                 aria-label="Application menu"
@@ -114,7 +116,15 @@ export function SegmentedTopChrome({
                 )}
                 Use {theme === "dark" ? "light" : "dark"} appearance
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => openDialog("settings")}>
+              {/*
+                The menu item is gone by the time the dialog closes, so tell
+                the dialog where to put focus back: the control that opened it.
+              */}
+              <DropdownMenuItem
+                onSelect={() =>
+                  openDialog("settings", { returnFocus: () => menuTriggerRef.current })
+                }
+              >
                 <Settings2 className="size-4" aria-hidden="true" />
                 Appearance settings
               </DropdownMenuItem>

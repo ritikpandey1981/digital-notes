@@ -1,6 +1,7 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Locator, type Page } from "@playwright/test";
 import { openDockSlotBrushLibrary } from "./dock-helpers";
+import { focusCanvasSurface } from "./workspace-geometry";
 
 /**
  * Dock slots are located by their stable position id, not by their accessible
@@ -378,8 +379,11 @@ test("assigns real brush identities to independent drawing slots", async () => {
     }
     expect(new Set(Object.values(assigned)).size, "five distinct identities").toBe(5);
 
-    // 19e. Space still pans the canvas when the canvas owns the key.
-    await window.mouse.move(bounds.x + 600, bounds.y + 400);
+    // 19e. Space still pans the canvas when the canvas owns the key. It has to
+    // be given the key first: hovering the canvas while a dock button retains
+    // focus intentionally leaves Space with that button.
+    await focusCanvasSurface(window, { x: bounds.x + 600, y: bounds.y + 400 });
+    await expect(surface).toBeFocused();
     const cameraBefore = await surface.getAttribute("data-viewport-camera-x");
     await window.keyboard.down("Space");
     await window.mouse.down();
