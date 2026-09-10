@@ -47,8 +47,6 @@ export interface StrokeStatistics {
   readonly maximumAcceleration: number;
 }
 
-export type PressureCurve = (pressure: number) => number;
-
 export interface StrokeStyle {
   readonly color: string;
   readonly width: number;
@@ -56,7 +54,6 @@ export interface StrokeStyle {
   readonly pressureEnabled: boolean;
   readonly lineCap: "round";
   readonly lineJoin: "round";
-  readonly pressureCurve?: PressureCurve;
   readonly brushTextureId?: string;
 }
 

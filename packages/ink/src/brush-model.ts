@@ -9,6 +9,7 @@ export interface BrushSmoothing {
   readonly amount: number;
 }
 
+/** Durable pressure behavior is data-defined so finalized strokes remain serializable. */
 export interface BrushPressureCurve {
   readonly kind: BrushPressureCurveKind;
   readonly exponent: number;

@@ -216,6 +216,8 @@ describe("selected Ink appearance", () => {
     expect(next.stroke.points).toEqual(ink.stroke.points);
     expect(next.stroke.sourceSamples).toEqual(ink.stroke.sourceSamples);
     expect(next.stroke.timestamp).toBe(ink.stroke.timestamp);
+    expect(next.stroke.brush.dynamics).toEqual(ink.stroke.brush.dynamics);
+    expect(next.stroke.brush.renderer).toEqual(ink.stroke.brush.renderer);
     expect(inkStyleValues(next)).toEqual({ color: "#dc2626", width: 9, opacity: 0.4 });
     expect(inkStyleValues(ink).color).toBe(ink.stroke.brush.color);
   });

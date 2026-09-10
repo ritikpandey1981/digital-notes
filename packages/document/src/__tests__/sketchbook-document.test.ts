@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { InkObject } from "../ink-object";
 import { LayerMembershipError } from "../errors";
 import { createDefaultLayer, Layer } from "../layer";
 import { ObjectCollection } from "../object-collection";
@@ -18,6 +19,7 @@ import {
 import { createPagePaper, DEFAULT_PAPER_COLOR, paperTypeDefinition } from "../page-paper";
 import { createPageLike, duplicatePage, Page, SketchbookDocument } from "../sketchbook-document";
 import type { PageObject } from "../types";
+import { createStroke } from "./fixtures";
 
 const factory = new ObjectFactory({ now: () => "2026-08-26T10:00:00.000Z" });
 
@@ -255,6 +257,22 @@ describe("page duplication", () => {
     expect(copy.content.objects.objects.map((object) => [object.type, object.bounds.x])).toEqual(
       hidden.content.objects.objects.map((object) => [object.type, object.bounds.x]),
     );
+  });
+
+  it("preserves finalized Ink process and resolved brush data while replacing object identity", () => {
+    const ink = factory.createInkObject({ id: "ink", stroke: createStroke("source-stroke") });
+    const source = new Page({ id: "source", content: contentOf([[ink]]) });
+    const copy = duplicatePage(source, identityFactory("dup"));
+    const duplicatedInk = copy.content.objects.objects[0];
+
+    expect(duplicatedInk).toBeInstanceOf(InkObject);
+    if (!(duplicatedInk instanceof InkObject)) {
+      throw new Error("Expected duplicated artwork to remain Ink.");
+    }
+    expect(duplicatedInk.id).not.toBe(ink.id);
+    expect(duplicatedInk.stroke).toBe(ink.stroke);
+    expect(duplicatedInk.stroke.brush).toBe(ink.stroke.brush);
+    expect(duplicatedInk.stroke.sourceSamples).toBe(ink.stroke.sourceSamples);
   });
 
   it.each(["grid", "ruled"] as const)(

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { createResolvedBrushSnapshot } from "../brush-model";
 import { StrokeBuilder } from "../stroke-builder";
 import { Stroke } from "../stroke";
 import { StrokeSmoother } from "../stroke-smoother";
-import type { InkPointerType, StrokePointInput } from "../types";
+import type { InkPointerType, StrokeBuilderOptions, StrokePointInput } from "../types";
 
 function point(
   x: number,
@@ -71,6 +72,62 @@ describe("StrokeBuilder", () => {
     expect(builder.pointCount).toBe(0);
   });
 
+  it("keeps finalized pressure behavior in serializable resolved brush data", () => {
+    const brush = createResolvedBrushSnapshot({
+      schemaVersion: 1,
+      presetId: "durable-power-brush",
+      presetVersion: 3,
+      family: "pen",
+      color: "#123456",
+      size: 8,
+      opacity: 0.7,
+      smoothing: { mode: "average", amount: 0.4 },
+      dynamics: {
+        pressureSize: {
+          enabled: true,
+          minimumFactor: 0.5,
+          maximumFactor: 1.5,
+          curve: { kind: "power", exponent: 2 },
+        },
+        pressureOpacity: {
+          enabled: true,
+          minimumFactor: 0.2,
+          maximumFactor: 1,
+          curve: { kind: "linear", exponent: 1 },
+        },
+      },
+      renderer: { version: 1, kind: "outline" },
+    });
+    const builder = new StrokeBuilder({
+      id: "durable-stroke",
+      timestamp: 100,
+      brush,
+      style: { color: brush.color, width: brush.size, opacity: brush.opacity },
+      smoother: new StrokeSmoother({ mode: "none" }),
+    });
+    builder.addPoint(point(0, 0, 100, 0.5));
+    const stroke = builder.finalize();
+
+    expect([0, 0.25, 0.5, 0.75, 1].map((pressure) => stroke.widthAtPressure(pressure))).toEqual([
+      4, 4.5, 6, 8.5, 12,
+    ]);
+    expect(stroke.brush).toEqual(brush);
+    expect(containsFunctionInOwnState(stroke)).toBe(false);
+  });
+
+  it("rejects the removed executable pressure callback at the runtime boundary", () => {
+    const options: StrokeBuilderOptions = {
+      style: {
+        // @ts-expect-error Finalized StrokeStyle no longer accepts executable pressure behavior.
+        pressureCurve: (pressure: number) => pressure * pressure,
+      },
+    };
+
+    expect(() => new StrokeBuilder(options)).toThrowError(
+      expect.objectContaining({ code: "INVALID_STYLE" }),
+    );
+  });
+
   it("supports a single-point stroke with finite zero-valued motion metrics", () => {
     const builder = unsmoothedBuilder();
     builder.addPoint(point(10, 20, 100));
@@ -103,6 +160,10 @@ describe("StrokeBuilder", () => {
       presetId: "legacy-stroke-style",
       renderer: { kind: "centerline" },
     });
+    expect([0, 0.25, 0.5, 0.75, 1].map((pressure) => compatible.widthAtPressure(pressure))).toEqual(
+      [1, 1.5, 2, 2.5, 3],
+    );
+    expect(JSON.parse(JSON.stringify(compatible.brush))).toEqual(compatible.brush);
   });
 
   it("supports a two-point stroke and computes its incremental dirty rectangle", () => {
@@ -258,3 +319,10 @@ describe("StrokeBuilder", () => {
     expect(elapsed).toBeLessThan(1_500);
   });
 });
+
+function containsFunctionInOwnState(value: unknown, visited = new Set<object>()): boolean {
+  if (typeof value === "function") return true;
+  if (value === null || typeof value !== "object" || visited.has(value)) return false;
+  visited.add(value);
+  return Object.values(value).some((item) => containsFunctionInOwnState(item, visited));
+}

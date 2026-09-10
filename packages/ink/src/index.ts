@@ -36,7 +36,6 @@ export {
   type InkPointerType,
   type PointerInputCallbacks,
   type PointerInputControllerOptions,
-  type PressureCurve,
   type SmoothingHook,
   type StrokeBounds,
   type StrokeBuilderOptions,

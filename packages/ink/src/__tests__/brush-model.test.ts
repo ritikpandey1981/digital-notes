@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createBrushPreset,
+  createResolvedBrushSnapshot,
   evaluatePressureResponse,
   resolveBrushForPointerType,
   resolveBrushPreset,
@@ -111,13 +112,50 @@ describe("Brush model", () => {
 
   it("evaluates named linear and power pressure curves without callbacks", () => {
     const linear = presetInput().dynamics.pressureSize;
-    expect(evaluatePressureResponse(linear, 0)).toBe(0.5);
-    expect(evaluatePressureResponse(linear, 0.5)).toBe(1);
-    expect(evaluatePressureResponse(linear, 1)).toBe(1.5);
-    expect(
-      evaluatePressureResponse({ ...linear, curve: { kind: "power", exponent: 2 } }, 0.5),
-    ).toBe(0.75);
+    const power = { ...linear, curve: { kind: "power" as const, exponent: 2 } };
+    const pressures = [0, 0.25, 0.5, 0.75, 1];
+
+    expect(pressures.map((pressure) => evaluatePressureResponse(linear, pressure))).toEqual([
+      0.5, 0.75, 1, 1.25, 1.5,
+    ]);
+    expect(pressures.map((pressure) => evaluatePressureResponse(power, pressure))).toEqual([
+      0.5, 0.5625, 0.75, 1.0625, 1.5,
+    ]);
     expect(evaluatePressureResponse(presetInput().dynamics.pressureOpacity, 0.2)).toBe(1);
+  });
+
+  it("reconstructs pressure behavior from a serialized resolved brush snapshot", () => {
+    const snapshot = createResolvedBrushSnapshot({
+      ...resolveBrushPreset(createBrushPreset(presetInput())),
+      size: 8,
+      dynamics: {
+        ...presetInput().dynamics,
+        pressureSize: {
+          ...presetInput().dynamics.pressureSize,
+          minimumFactor: 0.25,
+          maximumFactor: 1.75,
+          curve: { kind: "power", exponent: 2.5 },
+        },
+      },
+    });
+    const reconstructed = createResolvedBrushSnapshot(
+      JSON.parse(JSON.stringify(snapshot)) as typeof snapshot,
+    );
+    const pressures = [0, 0.25, 0.5, 0.75, 1];
+
+    expect(
+      pressures.map(
+        (pressure) =>
+          reconstructed.size *
+          evaluatePressureResponse(reconstructed.dynamics.pressureSize, pressure),
+      ),
+    ).toEqual(
+      pressures.map(
+        (pressure) =>
+          snapshot.size * evaluatePressureResponse(snapshot.dynamics.pressureSize, pressure),
+      ),
+    );
+    expect(containsNonJsonValue(reconstructed)).toBe(false);
   });
 
   it.each(["pencil", "pen"] as const)(

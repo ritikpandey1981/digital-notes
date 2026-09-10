@@ -2,6 +2,12 @@ import { InkError } from "../errors";
 import { DEFAULT_STROKE_STYLE, type StrokeStyle } from "../types";
 
 export function createStrokeStyle(style: Partial<StrokeStyle> = {}): StrokeStyle {
+  if ("pressureCurve" in style) {
+    throw new InkError(
+      "INVALID_STYLE",
+      "Finalized stroke pressure behavior must come from its resolved brush snapshot.",
+    );
+  }
   const result: StrokeStyle = {
     color: style.color ?? DEFAULT_STROKE_STYLE.color,
     width: style.width ?? DEFAULT_STROKE_STYLE.width,
@@ -9,7 +15,6 @@ export function createStrokeStyle(style: Partial<StrokeStyle> = {}): StrokeStyle
     pressureEnabled: style.pressureEnabled ?? DEFAULT_STROKE_STYLE.pressureEnabled,
     lineCap: "round",
     lineJoin: "round",
-    ...(style.pressureCurve === undefined ? {} : { pressureCurve: style.pressureCurve }),
     ...(style.brushTextureId === undefined ? {} : { brushTextureId: style.brushTextureId }),
   };
   if (result.color.trim().length === 0) {
@@ -26,11 +31,4 @@ export function createStrokeStyle(style: Partial<StrokeStyle> = {}): StrokeStyle
     });
   }
   return Object.freeze(result);
-}
-
-export function strokeWidth(style: StrokeStyle, pressure: number): number {
-  if (!style.pressureEnabled) return style.width;
-  const curved = style.pressureCurve?.(pressure) ?? pressure;
-  const normalized = Math.min(1, Math.max(0, Number.isFinite(curved) ? curved : pressure));
-  return style.width * (0.5 + normalized);
 }
