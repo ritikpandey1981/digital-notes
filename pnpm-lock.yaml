@@ -50,6 +50,9 @@ importers:
       '@folio/editor':
         specifier: workspace:*
         version: link:../../packages/editor
+      '@folio/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
       '@folio/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -131,6 +134,9 @@ importers:
       '@folio/manipulation':
         specifier: workspace:*
         version: link:../manipulation
+      '@folio/persistence':
+        specifier: workspace:*
+        version: link:../persistence
       '@folio/rendering':
         specifier: workspace:*
         version: link:../rendering

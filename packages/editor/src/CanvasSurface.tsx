@@ -122,7 +122,7 @@ import {
   type EditorEditingShortcutActions,
 } from "./history/editor-editing-shortcuts";
 import { installEditorHistoryShortcuts } from "./history/editor-history-shortcuts";
-import { InkDocumentSession } from "./InkDocumentSession";
+import type { InkDocumentSession } from "./InkDocumentSession";
 import {
   createLineEndpointManipulationResults,
   lineWorldGeometry,
@@ -317,6 +317,8 @@ export interface ShapeEditingSnapshot {
 
 /** Public composition and lifecycle callbacks accepted by {@link CanvasSurface}. */
 export interface CanvasSurfaceProps {
+  /** Project-owned document authority; keep its identity stable for this canvas lifetime. */
+  readonly session: InkDocumentSession;
   /** Optional host class name supplied by the desktop shell. */
   readonly className?: string;
   /** Active pointer-input mode without remounting the canvas lifecycle. */
@@ -460,6 +462,7 @@ interface ActiveLineEndpointInteraction {
 }
 /** Mounts and owns one editor canvas stack for the lifetime of the React host. */
 export function CanvasSurface({
+  session,
   className,
   interactionMode = "ink",
   drawingStyle,
@@ -662,7 +665,7 @@ export function CanvasSurface({
       return;
     }
 
-    const documentSession = new InkDocumentSession();
+    const documentSession = session;
     const editorClipboard = new EditorClipboard();
     const editorSelection = new EditorSelectionSet();
     const selectionGeometry = new EditorSelectionGeometry();
@@ -3955,7 +3958,6 @@ export function CanvasSurface({
       shapeEditingChangeRef.current?.(null);
       selectionController?.destroy();
       pointerInput?.destroy();
-      documentSession.clear();
       selectionOverlayRenderer?.destroy();
       vectorInteractionRenderer?.destroy();
       transformPreviewRenderer?.destroy();
@@ -3980,7 +3982,7 @@ export function CanvasSurface({
       loupeElement?.remove();
       controller.destroy();
     };
-  }, []);
+  }, [session]);
 
   const performContextMenuAction = (action: EditorContextMenuAction): void => {
     const actions = editingActionsRef.current;

@@ -12,6 +12,7 @@
     "@folio/history": "workspace:*",
     "@folio/ink": "workspace:*",
     "@folio/manipulation": "workspace:*",
+    "@folio/persistence": "workspace:*",
     "@folio/rendering": "workspace:*",
     "@folio/selection": "workspace:*",
     "react": "^19.2.8"

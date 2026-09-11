@@ -42,6 +42,7 @@ export interface PageViewportMemory {
 }
 
 export interface InkDocumentSessionOptions extends ObjectFactoryOptions {
+  readonly initialDocument?: SketchbookDocument;
   readonly createPageId?: () => string;
   readonly createLayerId?: () => string;
 }
@@ -79,7 +80,11 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     this.createPageIdValue = options.createPageId ?? defaultIdFactory("page");
     this.createLayerIdValue = options.createLayerId ?? defaultIdFactory("layer");
     this.createObjectIdValue = options.createId ?? defaultIdFactory("object");
-    this.documentValue = SketchbookDocument.empty();
+    const initialDocument = options.initialDocument ?? SketchbookDocument.empty();
+    if (!(initialDocument instanceof SketchbookDocument) || !Object.isFrozen(initialDocument)) {
+      throw new TypeError("InkDocumentSession requires an immutable initial SketchbookDocument.");
+    }
+    this.documentValue = initialDocument;
     this.activePageIdValue = this.documentValue.firstPage.id;
   }
 

@@ -1,3 +1,5 @@
+import { ProjectSession } from "@folio/editor";
+import { createEmptyFolioProject } from "@folio/persistence/project";
 import type {
   ArtworkColorSampleResult,
   CanvasDrawingStyle,
@@ -145,6 +147,8 @@ export function EditorWorkspace({
   onViewportChange,
   onViewportNavigationLearned,
 }: EditorWorkspaceProps) {
+  // One project survives tool/page/panel rerenders and canvas controller lifetimes.
+  const [projectSession] = useState(() => new ProjectSession(createEmptyFolioProject()));
   const workspaceRef = useRef<HTMLElement | null>(null);
   const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
   const handleHistoryActionsReady = useCallback(
@@ -473,6 +477,7 @@ export function EditorWorkspace({
       data-testid="editor-workspace"
     >
       <CanvasHost
+        session={projectSession.documentSession}
         activeTool={activeTool}
         armedShape={armedShape}
         artworkSamplingActive={eyedropperActive}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as editor from "../index";
+import { InkDocumentSession } from "../InkDocumentSession";
 import type {
   ArtworkColorSampleResult,
   CanvasDrawingStyle,
@@ -31,6 +32,7 @@ describe("@folio/editor public API", () => {
       "PAGE_PRESETS",
       "PAPER_COLOR_PRESETS",
       "PAPER_TYPES",
+      "ProjectSession",
       "RECENT_COLOR_CAPACITY",
       "SPECTRUM_ACHROMATIC_CHROMA",
       "SPECTRUM_CHROMA_TIERS",
@@ -102,9 +104,10 @@ describe("@folio/editor public API", () => {
   });
 
   it("preserves existing canvas props and exposes rotation and scale modes", () => {
-    const existingProps: CanvasSurfaceProps = { interactionMode: "move" };
-    const rotationProps: CanvasSurfaceProps = { interactionMode: "rotate" };
-    const scaleProps: CanvasSurfaceProps = { interactionMode: "scale" };
+    const session = new InkDocumentSession();
+    const existingProps: CanvasSurfaceProps = { session, interactionMode: "move" };
+    const rotationProps: CanvasSurfaceProps = { session, interactionMode: "rotate" };
+    const scaleProps: CanvasSurfaceProps = { session, interactionMode: "scale" };
     const highlighterStyle: CanvasDrawingStyle = {
       color: "#facc15",
       width: 12,
@@ -112,14 +115,16 @@ describe("@folio/editor public API", () => {
       pressureEnabled: false,
     };
     const highlighterProps: CanvasSurfaceProps = {
+      session,
       interactionMode: "highlighter",
       drawingStyle: highlighterStyle,
     };
-    const eraserProps: CanvasSurfaceProps = { interactionMode: "eraser" };
-    const lineProps: CanvasSurfaceProps = { interactionMode: "line" };
-    const rectangleProps: CanvasSurfaceProps = { interactionMode: "rectangle" };
-    const ellipseProps: CanvasSurfaceProps = { interactionMode: "ellipse" };
+    const eraserProps: CanvasSurfaceProps = { session, interactionMode: "eraser" };
+    const lineProps: CanvasSurfaceProps = { session, interactionMode: "line" };
+    const rectangleProps: CanvasSurfaceProps = { session, interactionMode: "rectangle" };
+    const ellipseProps: CanvasSurfaceProps = { session, interactionMode: "ellipse" };
     const historyProps: CanvasSurfaceProps = {
+      session,
       onHistoryControllerReady: (controller) => controller.getHistoryState(),
       onHistoryChange: (notification) => notification.state,
       onArtworkColorUsed: (color) => color,
@@ -131,6 +136,7 @@ describe("@folio/editor public API", () => {
       durationMs: 0.2,
     };
     const artworkSamplingProps: CanvasSurfaceProps = {
+      session,
       artworkSamplingActive: true,
       onArtworkSample: (result) => result.status,
     };
@@ -139,9 +145,11 @@ describe("@folio/editor public API", () => {
       duplicateSelection: () => true,
     };
     const lifecycleProps: CanvasSurfaceProps = {
+      session,
       onObjectLifecycleActionsReady: (actions) => actions?.deleteSelection(),
     };
     const toolRegistryProps: CanvasSurfaceProps = {
+      session,
       onToolRegistryReady: (registry) => registry?.snapshot(),
     };
     const shapeActions: ShapeEditingActions = {
@@ -165,6 +173,7 @@ describe("@folio/editor public API", () => {
       viewportSize: { width: 800, height: 600 },
     };
     const shapeEditingProps: CanvasSurfaceProps = {
+      session,
       onShapeEditingActionsReady: (actions) => actions?.updateStyle({ strokeWidth: 4 }),
       onShapeEditingChange: (snapshot) => snapshot?.objectId,
     };
@@ -185,6 +194,7 @@ describe("@folio/editor public API", () => {
       fitWidth: () => undefined,
     };
     const viewportProps: CanvasSurfaceProps = {
+      session,
       onViewportActionsReady: (actions) => actions?.fitPage(),
       onViewportChange: (snapshot) => snapshot.zoom,
     };

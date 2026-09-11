@@ -27,6 +27,7 @@ import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
 interface CanvasHostProps {
+  readonly session: CanvasSurfaceProps["session"];
   readonly activeTool: EditorTool;
   readonly armedShape: ShapeToolKind | null;
   readonly artworkSamplingActive: boolean;
@@ -52,6 +53,7 @@ interface CanvasHostProps {
 }
 
 export const CanvasHost = memo(function CanvasHost({
+  session,
   activeTool,
   armedShape,
   artworkSamplingActive,
@@ -347,6 +349,7 @@ export const CanvasHost = memo(function CanvasHost({
       data-eyedropper-input={artworkSamplingActive ? "owned" : "inactive"}
     >
       <CanvasSurface
+        session={session}
         className="relative size-full"
         interactionMode={interactionMode}
         artworkSamplingActive={artworkSamplingActive}

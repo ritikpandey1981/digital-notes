@@ -86,6 +86,16 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       },
     ]);
 
+    // Exercise real workspace rerenders after artwork exists: the supplied session
+    // and its History must survive, along with the already-mounted canvas stack.
+    const rendersBefore = await attributeNumber(host, "data-render-count");
+    await window.getByRole("button", { name: "Select", exact: true }).click();
+    await activateDockSlot(window, "pen");
+    expect(await attributeNumber(host, "data-render-count")).toBeGreaterThan(rendersBefore);
+    await expect(inkCanvas).toHaveAttribute("data-phase14-lifecycle-token", "mounted-once");
+    await expect(surface).toHaveAttribute("data-document-object-count", "1");
+    await expect(surface).toHaveAttribute("data-history-undo-depth", "1");
+
     await openSlotToolOptions(window, "pen");
     await window.getByRole("button", { name: "Use color #dc2626" }).click();
     await setNumericValue(window.getByRole("spinbutton", { name: "Size value" }), "4");

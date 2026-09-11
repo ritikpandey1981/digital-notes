@@ -1,4 +1,5 @@
 export {};
+export { ProjectSession } from "./project-session";
 export {
   FAVORITE_COLOR_CAPACITY,
   RECENT_COLOR_CAPACITY,
