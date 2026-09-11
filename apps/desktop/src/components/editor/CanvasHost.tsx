@@ -28,6 +28,7 @@ import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./wo
 
 interface CanvasHostProps {
   readonly session: CanvasSurfaceProps["session"];
+  readonly onEditorError: NonNullable<CanvasSurfaceProps["onError"]>;
   readonly activeTool: EditorTool;
   readonly armedShape: ShapeToolKind | null;
   readonly artworkSamplingActive: boolean;
@@ -54,6 +55,7 @@ interface CanvasHostProps {
 
 export const CanvasHost = memo(function CanvasHost({
   session,
+  onEditorError,
   activeTool,
   armedShape,
   artworkSamplingActive,
@@ -350,6 +352,7 @@ export const CanvasHost = memo(function CanvasHost({
     >
       <CanvasSurface
         session={session}
+        onError={onEditorError}
         className="relative size-full"
         interactionMode={interactionMode}
         artworkSamplingActive={artworkSamplingActive}

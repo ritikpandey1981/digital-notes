@@ -71,6 +71,7 @@ test("switches tools without remounting and supports styled ink, highlighter, an
       { x: 260, y: 175 },
     ]);
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
+    await expect(window.getByText("Couldn’t complete that edit.", { exact: true })).toHaveCount(0);
     expect(await strokeStyles(surface)).toMatchObject([
       { color: "#2563eb", width: 8, opacity: 0.8, pressureEnabled: false },
     ]);
@@ -145,8 +146,10 @@ test("switches tools without remounting and supports styled ink, highlighter, an
     await expect(surface).toHaveAttribute("data-history-undo-depth", "4");
     await window.keyboard.press("Control+Z");
     await expect(surface).toHaveAttribute("data-document-object-count", "3");
+    await expect(window.getByText("Couldn’t complete that edit.", { exact: true })).toHaveCount(0);
     await window.keyboard.press("Control+Y");
     await expect(surface).toHaveAttribute("data-document-object-count", "2");
+    await expect(window.getByText("Couldn’t complete that edit.", { exact: true })).toHaveCount(0);
     await window.mouse.move(...pointTuple(at(190, 180)));
     await window.mouse.down();
     await window.mouse.move(...pointTuple(at(190, 260)), { steps: 20 });

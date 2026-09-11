@@ -207,6 +207,11 @@ export function EditorWorkspace({
     setLayersSnapshot(snapshot);
   }, []);
   const { notify } = useNotifications();
+  // Editor errors may contain internal command details; only presentation is
+  // normalized here, without observing History again or retrying the operation.
+  const handleEditorError = useCallback(() => {
+    notify({ title: "Couldn’t complete that edit.", tone: "error" });
+  }, [notify]);
   // Destructive page and Layer removals are undoable, so the notification offers
   // the recovery directly instead of only announcing the loss.
   const notifyPageDeleted = useCallback(
@@ -491,6 +496,7 @@ export function EditorWorkspace({
     >
       <CanvasHost
         session={projectSession.documentSession}
+        onEditorError={handleEditorError}
         activeTool={activeTool}
         armedShape={armedShape}
         artworkSamplingActive={eyedropperActive}
