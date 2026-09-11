@@ -1,5 +1,8 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { DesktopProjectFileService } from "./project-file-service";
+import { registerProjectSaveIpc } from "./project-save-ipc";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -60,6 +63,37 @@ function createMainWindow(): void {
   });
 
   const developmentServerUrl = process.env.VITE_DEV_SERVER_URL;
+  const projectWindow = mainWindow;
+  const projectFiles = new DesktopProjectFileService({
+    chooseDestination: async (suggestedName) => {
+      const result = await dialog.showSaveDialog(projectWindow, {
+        title: "Save Folio Project",
+        defaultPath: suggestedName,
+        filters: [{ name: "Folio Project", extensions: ["folio"] }],
+        properties: ["showOverwriteConfirmation"],
+      });
+      return result.canceled ? null : result.filePath;
+    },
+    confirmReplacement: async (displayName) => {
+      const result = await dialog.showMessageBox(projectWindow, {
+        type: "warning",
+        message: `Replace ${displayName}?`,
+        detail: "A Folio project with this filename already exists.",
+        buttons: ["Cancel", "Replace"],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      return result.response === 1;
+    },
+  });
+  registerProjectSaveIpc(
+    ipcMain,
+    projectWindow,
+    projectFiles,
+    developmentServerUrl === undefined
+      ? pathToFileURL(path.join(__dirname, "../dist/renderer/index.html")).href
+      : new URL(developmentServerUrl).href,
+  );
   mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
     const allowedUrl = developmentServerUrl
       ? new URL(navigationUrl).origin === new URL(developmentServerUrl).origin

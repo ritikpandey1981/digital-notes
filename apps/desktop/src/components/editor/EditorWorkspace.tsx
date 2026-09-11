@@ -1,5 +1,6 @@
 import { ProjectSession } from "@folio/editor";
 import { createEmptyFolioProject } from "@folio/persistence/project";
+import { ProjectPersistenceCoordinator } from "../../persistence/project-persistence-coordinator";
 import type {
   ArtworkColorSampleResult,
   CanvasDrawingStyle,
@@ -47,6 +48,7 @@ import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
 interface EditorWorkspaceProps {
+  onProjectPersistenceReady?: (coordinator: ProjectPersistenceCoordinator | null) => void;
   pageNavigatorOpen: boolean;
   onDismissPageNavigator: () => void;
   pageSettingsOpen: boolean;
@@ -100,6 +102,7 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace({
+  onProjectPersistenceReady,
   pageNavigatorOpen,
   onDismissPageNavigator,
   pageSettingsOpen,
@@ -149,6 +152,16 @@ export function EditorWorkspace({
 }: EditorWorkspaceProps) {
   // One project survives tool/page/panel rerenders and canvas controller lifetimes.
   const [projectSession] = useState(() => new ProjectSession(createEmptyFolioProject()));
+  const [projectPersistence] = useState(
+    () =>
+      new ProjectPersistenceCoordinator(projectSession, {
+        save: (request) => window.folio.projects.save(request),
+      }),
+  );
+  useEffect(() => {
+    onProjectPersistenceReady?.(projectPersistence);
+    return () => onProjectPersistenceReady?.(null);
+  }, [onProjectPersistenceReady, projectPersistence]);
   const workspaceRef = useRef<HTMLElement | null>(null);
   const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
   const handleHistoryActionsReady = useCallback(
