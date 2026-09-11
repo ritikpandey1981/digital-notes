@@ -176,9 +176,15 @@ importers:
 
   packages/persistence:
     dependencies:
+      '@folio/document':
+        specifier: workspace:*
+        version: link:../document
       '@folio/domain':
         specifier: workspace:*
         version: link:../domain
+      '@folio/ink':
+        specifier: workspace:*
+        version: link:../ink
 
   packages/rendering: {}
 

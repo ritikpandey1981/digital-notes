@@ -3,11 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "sideEffects": false,
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./project": "./src/project/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@folio/domain": "workspace:*"
+    "@folio/document": "workspace:*",
+    "@folio/domain": "workspace:*",
+    "@folio/ink": "workspace:*"
   }
 }
