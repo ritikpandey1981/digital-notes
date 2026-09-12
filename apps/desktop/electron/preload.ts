@@ -11,8 +11,11 @@ import type {
   ProjectSaveResult,
 } from "./project-save-contract";
 import type {
+  DesktopRecoveryDiscoveryPort,
   DesktopRecoveryPort,
   RecoveryClearResult,
+  RecoveryListResult,
+  RecoveryReadResult,
   RecoverySnapshotRequest,
   RecoveryStoreResult,
 } from "./recovery-contract";
@@ -34,14 +37,20 @@ const folioApi = Object.freeze({
     save: (request: ProjectSaveRequest): Promise<ProjectSaveResult> =>
       ipcRenderer.invoke("folio:projects:save", request),
   } satisfies DesktopProjectSavePort & DesktopProjectOpenPort),
-  // Replace or drop this window's own recovery snapshot. No list, no read, and
-  // no path: recovery files are named by an id main validates.
+  // This window's own recovery snapshot, and the crash candidates the startup
+  // flow offers. Every call names a recovery id main issued and validates: no
+  // directory, no path, and nothing that can address a file outside them.
   recovery: Object.freeze({
     store: (request: RecoverySnapshotRequest): Promise<RecoveryStoreResult> =>
       ipcRenderer.invoke("folio:recovery:store", request),
     clear: (recoveryId: string): Promise<RecoveryClearResult> =>
       ipcRenderer.invoke("folio:recovery:clear", recoveryId),
-  } satisfies DesktopRecoveryPort),
+    list: (): Promise<RecoveryListResult> => ipcRenderer.invoke("folio:recovery:list"),
+    read: (recoveryId: string): Promise<RecoveryReadResult> =>
+      ipcRenderer.invoke("folio:recovery:read", recoveryId),
+    openOriginal: (recoveryId: string): Promise<ProjectReadResult> =>
+      ipcRenderer.invoke("folio:recovery:open-original", recoveryId),
+  } satisfies DesktopRecoveryPort & DesktopRecoveryDiscoveryPort),
   // The renderer may answer a close question main asked, and nothing more. It
   // cannot close, open, move, or inspect a window on its own.
   window: Object.freeze({

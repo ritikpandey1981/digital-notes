@@ -6,7 +6,7 @@ import type { ProjectOpenResult } from "../../electron/project-open-contract";
 import type { ProjectSaveResult } from "../../electron/project-save-contract";
 
 /** Why the active project is about to be replaced or put away. */
-export type ProjectReplacementIntent = "new" | "open" | "close";
+export type ProjectReplacementIntent = "new" | "open" | "close" | "recover";
 
 /** What the user chose when asked about unsaved work. */
 export type UnsavedChangesDecision = "save" | "discard" | "cancel";
@@ -49,29 +49,33 @@ export class DeferredUnsavedChangesPrompt implements UnsavedChangesPrompt {
 export type ProjectLifecycleErrorCode =
   "BUSY" | "SAVE_FAILED" | "SAVE_UNCONFIRMED" | "NEW_FAILED" | "OPEN_FAILED" | "UNAVAILABLE";
 
+export type ProjectLifecycleFailure = Readonly<{
+  status: "failed";
+  error: Readonly<{ code: ProjectLifecycleErrorCode; message: string }>;
+}>;
+
 export type ProjectLifecycleResult =
-  | Readonly<{ status: "proceeded" }>
-  | Readonly<{ status: "cancelled" }>
-  | Readonly<{
-      status: "failed";
-      error: Readonly<{ code: ProjectLifecycleErrorCode; message: string }>;
-    }>;
+  Readonly<{ status: "proceeded" }> | Readonly<{ status: "cancelled" }> | ProjectLifecycleFailure;
+
+/**
+ * Why a guarded replacement never reached the operation underneath it.
+ *
+ * The guard answers one question and knows nothing about what the caller was
+ * going to do, so a caller with its own result vocabulary translates this
+ * rather than inheriting the lifecycle one.
+ */
+export type ProjectReplacementRefusal = Readonly<{ status: "cancelled" }> | ProjectLifecycleFailure;
 
 function lifecycleFailure(
   code: ProjectLifecycleErrorCode,
   message: string,
-): ProjectLifecycleResult {
+): ProjectLifecycleFailure {
   return { status: "failed", error: { code, message } };
 }
 
 /** Authorization to replace the current project, not an instruction to destroy it. */
 type ReplacementPermission =
-  | Readonly<{ status: "granted" }>
-  | Readonly<{ status: "cancelled" }>
-  | Readonly<{
-      status: "failed";
-      error: Readonly<{ code: ProjectLifecycleErrorCode; message: string }>;
-    }>;
+  Readonly<{ status: "granted" }> | Readonly<{ status: "cancelled" }> | ProjectLifecycleFailure;
 
 /**
  * The single destructive-project guard for New, Open and Close.
@@ -118,19 +122,35 @@ export class ProjectLifecycleCoordinator {
     return this.#run("close", async () => ({ status: "proceeded" }));
   }
 
-  async #run(
+  #run(
     intent: ProjectReplacementIntent,
     perform: () => Promise<ProjectLifecycleResult>,
   ): Promise<ProjectLifecycleResult> {
+    return this.runGuarded(intent, perform, (refusal) => refusal);
+  }
+
+  /**
+   * Runs one guarded replacement for a caller that reports its own outcomes.
+   *
+   * Startup recovery replaces the active project exactly as Open does, and must
+   * not grow a second copy of unsaved protection to do it. Only the refusals --
+   * a cancelled question, a save that did not happen -- are translated back
+   * through `onRefused`; everything past permission is the caller's own result.
+   */
+  async runGuarded<TResult>(
+    intent: ProjectReplacementIntent,
+    perform: () => Promise<TResult>,
+    onRefused: (refusal: ProjectReplacementRefusal) => TResult,
+  ): Promise<TResult> {
     // One question at a time. Two dialogs, or a New racing a Save, would each
     // decide the fate of the same project without knowing about the other.
     if (this.#pending !== null || this.persistence.isBusy)
-      return lifecycleFailure("BUSY", "A project operation is already in progress.");
+      return onRefused(lifecycleFailure("BUSY", "A project operation is already in progress."));
     this.#pending = intent;
     try {
       const permission = await this.#requestPermission(intent);
-      if (permission.status === "cancelled") return { status: "cancelled" };
-      if (permission.status === "failed") return permission;
+      if (permission.status === "cancelled") return onRefused({ status: "cancelled" });
+      if (permission.status === "failed") return onRefused(permission);
       return await perform();
     } finally {
       this.#pending = null;

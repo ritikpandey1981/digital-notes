@@ -65,6 +65,23 @@ export class DesktopProjectFileService {
   async open(input?: unknown): Promise<ProjectReadResult> {
     if (input !== undefined)
       return openFailure("INVALID_REQUEST", "Open takes no path or payload.");
+    return this.readProjectFrom(async () => this.options.chooseSource?.());
+  }
+
+  /**
+   * Reads a file main itself chose, without a dialog.
+   *
+   * Open Original uses it with the location stored inside a recovery record, so
+   * the renderer names a recovery id and never a path. The same validation,
+   * capability minting and adoption handshake as a user-chosen Open apply.
+   */
+  async openSource(filename: string): Promise<ProjectReadResult> {
+    return this.readProjectFrom(async () => [filename]);
+  }
+
+  private async readProjectFrom(
+    choose: () => Promise<readonly string[] | null | undefined>,
+  ): Promise<ProjectReadResult> {
     if (this.disposed) return openFailure("TARGET_UNAVAILABLE", "The project window is closed.");
     if (this.busy) return openFailure("BUSY", "A project operation is already in progress.");
     this.busy = true;
@@ -75,7 +92,7 @@ export class DesktopProjectFileService {
     const current = () =>
       !this.disposed && generation === this.generation && openGeneration === this.openGeneration;
     try {
-      const paths = await this.options.chooseSource?.();
+      const paths = await choose();
       if (!current()) return openFailure("TARGET_UNAVAILABLE", "The project window changed.");
       if (paths === null) return { status: "cancelled" };
       if (

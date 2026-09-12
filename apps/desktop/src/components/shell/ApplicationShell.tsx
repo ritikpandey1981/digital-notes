@@ -9,6 +9,8 @@ import {
   type WorkspaceHistoryAvailability,
 } from "../editor/workspace-history";
 import { useShellDialog } from "../dialogs/ShellDialogProvider";
+import { StartupRecoveryDialog } from "../dialogs/StartupRecoveryDialog";
+import type { ProjectRecoveryCoordinator } from "../../persistence/project-recovery-coordinator";
 import { ContextHintProvider } from "./ContextHintProvider";
 import { SegmentedTopChrome } from "./SegmentedTopChrome";
 import { WorkspaceContextHint } from "./WorkspaceContextHint";
@@ -30,6 +32,9 @@ function ApplicationShellContent() {
   // The shell owns the only surface that can ask about unsaved work, so the
   // project lifecycle borrows it rather than growing a dialog of its own.
   const { confirmUnsavedChanges } = useShellDialog();
+  // Built by the workspace, offered by the shell: only the shell has a surface
+  // that can ask about drawings a previous run left behind.
+  const [projectRecovery, setProjectRecovery] = useState<ProjectRecoveryCoordinator | null>(null);
   const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
   const [historyAvailability, setHistoryAvailability] =
     useState<WorkspaceHistoryAvailability>(EMPTY_WORKSPACE_HISTORY);
@@ -112,6 +117,7 @@ function ApplicationShellContent() {
         />
         <EditorWorkspace
           onConfirmUnsavedChanges={confirmUnsavedChanges}
+          onProjectRecoveryReady={setProjectRecovery}
           layersOpen={editorWorkspace.layersOpen}
           layersView={editorWorkspace.layersView}
           onShowLayersView={editorWorkspace.showLayersView}
@@ -178,6 +184,7 @@ function ApplicationShellContent() {
           data-future-utility-rail-boundary="reserved"
           aria-hidden="true"
         />
+        <StartupRecoveryDialog coordinator={projectRecovery} />
       </main>
     </div>
   );

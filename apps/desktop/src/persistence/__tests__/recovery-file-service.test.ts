@@ -202,17 +202,21 @@ describe("recovery file storage", () => {
   it("refuses every request from a sender it cannot authorize", async () => {
     const s = await setup();
     const store = vi.spyOn(s.service, "store");
-    const handlers = createRecoveryHandlers(s.service, () => false);
+    const read = vi.spyOn(s.service, "read");
+    const openOriginal = vi.fn();
+    const handlers = createRecoveryHandlers(s.service, () => false, openOriginal);
 
-    expect(await handlers.store({} as never, s.request())).toMatchObject({
-      status: "failed",
-      error: { code: "INVALID_REQUEST" },
-    });
-    expect(await handlers.clear({} as never, RECOVERY_ID)).toMatchObject({
-      status: "failed",
-      error: { code: "INVALID_REQUEST" },
-    });
+    for (const refused of [
+      await handlers.store({} as never, s.request()),
+      await handlers.clear({} as never, RECOVERY_ID),
+      await handlers.list({} as never),
+      await handlers.read({} as never, RECOVERY_ID),
+      await handlers.openOriginal({} as never, RECOVERY_ID),
+    ])
+      expect(refused).toMatchObject({ status: "failed", error: { code: "INVALID_REQUEST" } });
     expect(store).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(openOriginal).not.toHaveBeenCalled();
     expect(await readdir(s.directory).catch(() => [])).toEqual([]);
   });
 
@@ -242,28 +246,32 @@ describe("recovery file storage", () => {
 });
 
 describe("recovery renderer boundary", () => {
-  it("gives the renderer only store and clear, and no path", async () => {
+  it("scopes every renderer capability to a recovery id, and exposes no path", async () => {
     const [preload, types] = await Promise.all([
       readFile(new URL("../../../electron/preload.ts", import.meta.url), "utf8"),
       readFile(new URL("../../../electron/recovery-contract.ts", import.meta.url), "utf8"),
     ]);
 
-    expect(preload).toContain("folio:recovery:store");
-    expect(preload).toContain("folio:recovery:clear");
-    for (const forbidden of [
+    // Startup recovery needs to enumerate and read candidates, so those two
+    // channels exist now. What it still cannot do is name a file.
+    for (const channel of [
+      "folio:recovery:store",
+      "folio:recovery:clear",
       "folio:recovery:list",
       "folio:recovery:read",
-      "userData",
-      "readFile",
-    ]) {
+      "folio:recovery:open-original",
+    ])
+      expect(preload).toContain(channel);
+    for (const forbidden of ["userData", "readFile", "writeFile", "unlink", "readdir"])
       expect(preload).not.toContain(forbidden);
-    }
+
+    const slice = (name: string) =>
+      types.slice(types.indexOf(name), types.indexOf("}", types.indexOf(name)));
     // The request the renderer sends carries an opaque target, never a location.
-    const request = types.slice(
-      types.indexOf("interface RecoverySnapshotRequest"),
-      types.indexOf("}", types.indexOf("interface RecoverySnapshotRequest")),
-    );
-    expect(request).toContain("backingTargetId");
-    expect(request).not.toContain("path");
+    expect(slice("interface RecoverySnapshotRequest")).toContain("backingTargetId");
+    expect(slice("interface RecoverySnapshotRequest")).not.toContain("path");
+    // Neither does the summary it receives back.
+    expect(slice("interface RecoveryCandidateSummary")).toContain("canOpenOriginal");
+    expect(slice("interface RecoveryCandidateSummary")).not.toContain("path");
   });
 });

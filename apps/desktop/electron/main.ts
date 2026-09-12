@@ -108,15 +108,17 @@ function createMainWindow(): void {
     event.senderFrame === projectWindow.webContents.mainFrame;
   // Recovery state belongs to the application, not to the user's folder, so it
   // lives under userData and never beside the project file being edited.
-  registerRecoveryIpc(
-    ipcMain,
-    projectWindow,
-    new DesktopRecoveryFileService({
-      directory: path.join(app.getPath("userData"), "recovery"),
-      resolveBackingPath: (targetId) => projectFiles.sourcePathForTarget(targetId),
-    }),
-    authorizeProjectSender,
+  const recoveryFiles = new DesktopRecoveryFileService({
+    directory: path.join(app.getPath("userData"), "recovery"),
+    resolveBackingPath: (targetId) => projectFiles.sourcePathForTarget(targetId),
+  });
+  registerRecoveryIpc(ipcMain, projectWindow, recoveryFiles, authorizeProjectSender, (filename) =>
+    projectFiles.openSource(filename),
   );
+  // A hard termination mid-write can strand this service's own temporary files.
+  // Clearing them is housekeeping, never a reason to delay the window, and it
+  // touches nothing a startup scan would offer.
+  void recoveryFiles.sweepTemporaryFiles().catch(() => undefined);
   // Quitting the app closes this window, so intentional exit reaches the same
   // unsaved-work question the close button does.
   registerWindowCloseIpc(ipcMain, projectWindow, authorizeProjectSender);

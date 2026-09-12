@@ -15,6 +15,7 @@ import {
   isProjectTargetId,
   type DesktopProjectOpenPort,
   type ProjectOpenResult,
+  type ProjectReadResult,
 } from "../../electron/project-open-contract";
 import {
   saveFailure,
@@ -52,10 +53,46 @@ function newFailure(code: ProjectNewErrorCode, message: string): ProjectNewResul
   return { status: "failed", error: { code, message } };
 }
 
+export type ProjectRecoveryActivationErrorCode =
+  | "BUSY"
+  | "INVALID_PROJECT"
+  | "UNSUPPORTED_VERSION"
+  | "RESOURCE_LIMIT"
+  | "RUNTIME_FAILED"
+  | "TARGET_UNAVAILABLE";
+
+/** Outcome of activating artwork read back from a crash snapshot. */
+export type ProjectRecoveryActivationResult =
+  | Readonly<{ status: "activated" }>
+  | Readonly<{
+      status: "failed";
+      error: Readonly<{ code: ProjectRecoveryActivationErrorCode; message: string }>;
+    }>;
+
+function recoveryFailure(
+  code: ProjectRecoveryActivationErrorCode,
+  message: string,
+): ProjectRecoveryActivationResult {
+  return { status: "failed", error: { code, message } };
+}
+
+/** What a lifecycle operation needs to swap the active project for another. */
+export interface ProjectOpeningServices {
+  readonly host: ProjectRuntimeHost;
+  readonly port: DesktopProjectOpenPort;
+  /**
+   * Reads the file a recovery candidate came from.
+   *
+   * Main chooses the location from its own record, so this takes a recovery id
+   * and the renderer never holds a path.
+   */
+  readonly openOriginal?: (recoveryId: string) => Promise<ProjectReadResult>;
+}
+
 /** Raw lifecycle commands, intentionally not exposed in File UI until unsaved protection exists. */
 export class ProjectPersistenceCoordinator {
   private backingValue: DesktopProjectBacking | null = null;
-  private operation: "save" | "open" | "new" | null = null;
+  private operation: "save" | "open" | "new" | "recover" | null = null;
   private requestingReplacement = false;
   private backingProject: ProjectSession | null = null;
 
@@ -63,7 +100,7 @@ export class ProjectPersistenceCoordinator {
     private readonly project: ProjectSession | (() => ProjectSession),
     private readonly port: DesktopProjectSavePort,
     private readonly canSave: () => boolean = () => true,
-    private readonly opening?: Readonly<{ host: ProjectRuntimeHost; port: DesktopProjectOpenPort }>,
+    private readonly opening?: ProjectOpeningServices,
     private readonly createProject: () => FolioProjectSnapshot = createEmptyFolioProject,
   ) {}
 
@@ -150,7 +187,88 @@ export class ProjectPersistenceCoordinator {
     }
   }
 
+  /**
+   * Activates artwork read back from a crash snapshot.
+   *
+   * Recovered content is deliberately detached. It is not what the original
+   * file holds -- that file may be older, newer, or something else entirely --
+   * so the recovered project adopts no file and confirms no durable copy.
+   * Saving it asks for a destination, which is the only way recovery can never
+   * silently overwrite the project it was rescued from.
+   *
+   * Raw lifecycle: the guard above it decides whether the current project may
+   * be replaced at all.
+   */
+  async adoptRecoveredProject(content: string): Promise<ProjectRecoveryActivationResult> {
+    const opening = this.opening;
+    if (this.operation !== null || !this.canSave())
+      return recoveryFailure("BUSY", "A project operation is already in progress.");
+    if (opening === undefined)
+      return recoveryFailure("TARGET_UNAVAILABLE", "Project recovery is unavailable.");
+    this.operation = "recover";
+    try {
+      let project: ProjectSession;
+      try {
+        // Loaded, not created: this content existed outside Folio's own blank
+        // sketch, so it is never the disposable baseline New and Close ignore.
+        project = new ProjectSession(decodeFolioProject(content), { origin: "loaded" });
+      } catch (error) {
+        const code =
+          error instanceof FolioProjectCodecError &&
+          (error.code === "UNSUPPORTED_VERSION" || error.code === "RESOURCE_LIMIT")
+            ? error.code
+            : "INVALID_PROJECT";
+        return recoveryFailure(code, "The recovered drawing could not be read.");
+      }
+      this.requestingReplacement = true;
+      let replacement: ReturnType<ProjectRuntimeHost["replace"]>;
+      try {
+        replacement = opening.host.replace(project);
+      } finally {
+        this.requestingReplacement = false;
+      }
+      const result = await replacement;
+      if (result.status === "busy")
+        return recoveryFailure("BUSY", "A project replacement is already in progress.");
+      if (result.status === "failed")
+        return recoveryFailure(
+          "RUNTIME_FAILED",
+          "The recovered drawing could not be opened. The current project was preserved.",
+        );
+      this.backingProject = null;
+      this.backingValue = null;
+      return { status: "activated" };
+    } catch {
+      return recoveryFailure("RUNTIME_FAILED", "The recovered drawing could not be opened.");
+    } finally {
+      this.operation = null;
+    }
+  }
+
   async open(): Promise<ProjectOpenResult> {
+    return this.performOpen((opening) => opening.port.open());
+  }
+
+  /**
+   * Opens the file a recovery candidate was made from, not the candidate itself.
+   *
+   * It is the ordinary Open pipeline with the location supplied by main's own
+   * recovery record instead of by a file dialog, so the opened project adopts
+   * its file and starts confirmed exactly as any opened project does.
+   */
+  async openRecoveryOriginal(recoveryId: string): Promise<ProjectOpenResult> {
+    return this.performOpen(
+      (opening) =>
+        opening.openOriginal?.(recoveryId) ??
+        Promise.resolve(
+          openFailure("TARGET_UNAVAILABLE", "Opening the original file is unavailable."),
+        ),
+    );
+  }
+
+  private async performOpen(
+    readProject: (opening: ProjectOpeningServices) => Promise<ProjectReadResult>,
+  ): Promise<ProjectOpenResult> {
     const opening = this.opening;
     if (this.operation !== null || !this.canSave())
       return openFailure("BUSY", "A project operation is already in progress.");
@@ -161,7 +279,7 @@ export class ProjectPersistenceCoordinator {
     let activated = false;
     let adopted = false;
     try {
-      const read = await opening.port.open();
+      const read = await readProject(opening);
       if (read?.status === "cancelled" || read?.status === "failed") return read;
       if (read?.status === "read" && isProjectTargetId(read.backing?.id))
         provisional = read.backing.id;

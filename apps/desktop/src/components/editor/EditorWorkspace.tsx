@@ -8,6 +8,7 @@ import {
   type UnsavedChangesRequest,
 } from "../../persistence/project-lifecycle-coordinator";
 import { RecoveryAutosaveCoordinator } from "../../persistence/recovery-autosave-coordinator";
+import { ProjectRecoveryCoordinator } from "../../persistence/project-recovery-coordinator";
 import { useProjectCloseProtection } from "../../persistence/useProjectCloseProtection";
 import type {
   ArtworkColorSampleResult,
@@ -68,6 +69,8 @@ interface EditorWorkspaceProps {
   onProjectRuntimeReady?: (host: ProjectRuntimeHost | null) => void;
   onProjectPersistenceReady?: (coordinator: ProjectPersistenceCoordinator | null) => void;
   onProjectLifecycleReady?: (coordinator: ProjectLifecycleCoordinator | null) => void;
+  /** Hands the shell what it needs to offer drawings a previous run left behind. */
+  onProjectRecoveryReady?: (coordinator: ProjectRecoveryCoordinator | null) => void;
   /**
    * Asks the user about unsaved work before a destructive lifecycle action.
    *
@@ -128,40 +131,57 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace(props: EditorWorkspaceProps) {
-  const [{ host, persistence, lifecycle, recovery, unsavedPrompt }] = useState(() => {
-    const runtimeHost = new ProjectRuntimeHost(
-      new ProjectSession(createEmptyFolioProject()),
-      () => coordinator.canReplaceRuntime,
-    );
-    const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
-      () => runtimeHost.active.project,
-      { save: (request) => window.folio.projects.save(request) },
-      () => !runtimeHost.replacing,
-      {
-        host: runtimeHost,
-        port: {
-          open: () => window.folio.projects.open(),
-          adopt: (targetId) => window.folio.projects.adopt(targetId),
-          release: (targetId) => window.folio.projects.release(targetId),
+  const [{ host, persistence, lifecycle, recovery, startupRecovery, unsavedPrompt }] = useState(
+    () => {
+      const runtimeHost = new ProjectRuntimeHost(
+        new ProjectSession(createEmptyFolioProject()),
+        () => coordinator.canReplaceRuntime,
+      );
+      const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
+        () => runtimeHost.active.project,
+        { save: (request) => window.folio.projects.save(request) },
+        () => !runtimeHost.replacing,
+        {
+          host: runtimeHost,
+          port: {
+            open: () => window.folio.projects.open(),
+            adopt: (targetId) => window.folio.projects.adopt(targetId),
+            release: (targetId) => window.folio.projects.release(targetId),
+          },
+          openOriginal: (recoveryId) => window.folio.recovery.openOriginal(recoveryId),
         },
-      },
-    );
-    const prompt = new DeferredUnsavedChangesPrompt();
-    return {
-      host: runtimeHost,
-      persistence: coordinator,
-      lifecycle: new ProjectLifecycleCoordinator(coordinator, prompt),
-      recovery: new RecoveryAutosaveCoordinator({
+      );
+      const prompt = new DeferredUnsavedChangesPrompt();
+      const lifecycleCoordinator = new ProjectLifecycleCoordinator(coordinator, prompt);
+      const autosave = new RecoveryAutosaveCoordinator({
         store: {
           store: (request) => window.folio.recovery.store(request),
           clear: (recoveryId) => window.folio.recovery.clear(recoveryId),
         },
         persistenceState: () => coordinator.persistenceState,
         backingTargetId: () => coordinator.backing?.id ?? null,
-      }),
-      unsavedPrompt: prompt,
-    };
-  });
+      });
+      return {
+        host: runtimeHost,
+        persistence: coordinator,
+        lifecycle: lifecycleCoordinator,
+        startupRecovery: new ProjectRecoveryCoordinator(
+          coordinator,
+          lifecycleCoordinator,
+          {
+            list: () => window.folio.recovery.list(),
+            read: (recoveryId) => window.folio.recovery.read(recoveryId),
+            clear: (recoveryId) => window.folio.recovery.clear(recoveryId),
+          },
+          // The drawing on screen is protected by a record of its own; it is
+          // never one of the crashes this offers to rescue.
+          () => autosave.activeRecoveryId,
+        ),
+        recovery: autosave,
+        unsavedPrompt: prompt,
+      };
+    },
+  );
   const { onConfirmUnsavedChanges } = props;
   useEffect(() => {
     unsavedPrompt.setHandler(onConfirmUnsavedChanges ?? null);
@@ -183,23 +203,32 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
   useEffect(() => {
     recovery.setProject(activeProject);
   }, [recovery, activeProject]);
-  const { onProjectLifecycleReady, onProjectPersistenceReady, onProjectRuntimeReady } = props;
+  const {
+    onProjectLifecycleReady,
+    onProjectPersistenceReady,
+    onProjectRecoveryReady,
+    onProjectRuntimeReady,
+  } = props;
   useEffect(() => {
     onProjectPersistenceReady?.(persistence);
     onProjectRuntimeReady?.(host);
     onProjectLifecycleReady?.(lifecycle);
+    onProjectRecoveryReady?.(startupRecovery);
     return () => {
       onProjectPersistenceReady?.(null);
       onProjectRuntimeReady?.(null);
       onProjectLifecycleReady?.(null);
+      onProjectRecoveryReady?.(null);
     };
   }, [
     host,
     persistence,
     lifecycle,
+    startupRecovery,
     onProjectPersistenceReady,
     onProjectRuntimeReady,
     onProjectLifecycleReady,
+    onProjectRecoveryReady,
   ]);
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">

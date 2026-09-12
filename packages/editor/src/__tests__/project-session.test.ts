@@ -156,7 +156,8 @@ describe("ProjectSession", () => {
         "utf8",
       ),
     ]);
-    expect(workspace).toContain("useState(() => {");
+    // Lazy creation is the property; whether it wraps across lines is not.
+    expect(workspace).toMatch(/useState\(\s*\(\) => \{/);
     expect(workspace).toContain("new ProjectSession(createEmptyFolioProject())");
     expect(workspace).toContain("const projectSession = entry.project;");
     expect(workspace).toContain("session={projectSession.documentSession}");
