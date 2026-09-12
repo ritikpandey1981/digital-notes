@@ -8,6 +8,7 @@ import {
   type WorkspaceHistoryActions,
   type WorkspaceHistoryAvailability,
 } from "../editor/workspace-history";
+import { useShellDialog } from "../dialogs/ShellDialogProvider";
 import { ContextHintProvider } from "./ContextHintProvider";
 import { SegmentedTopChrome } from "./SegmentedTopChrome";
 import { WorkspaceContextHint } from "./WorkspaceContextHint";
@@ -26,6 +27,9 @@ export function ApplicationShell() {
 function ApplicationShellContent() {
   const editorWorkspace = useEditorWorkspaceState();
   const viewport = useEditorViewportState();
+  // The shell owns the only surface that can ask about unsaved work, so the
+  // project lifecycle borrows it rather than growing a dialog of its own.
+  const { confirmUnsavedChanges } = useShellDialog();
   const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
   const [historyAvailability, setHistoryAvailability] =
     useState<WorkspaceHistoryAvailability>(EMPTY_WORKSPACE_HISTORY);
@@ -107,6 +111,7 @@ function ApplicationShellContent() {
           onTogglePageSettings={togglePageSettings}
         />
         <EditorWorkspace
+          onConfirmUnsavedChanges={confirmUnsavedChanges}
           layersOpen={editorWorkspace.layersOpen}
           layersView={editorWorkspace.layersView}
           onShowLayersView={editorWorkspace.showLayersView}

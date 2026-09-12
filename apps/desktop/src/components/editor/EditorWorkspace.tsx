@@ -1,6 +1,13 @@
 import { ProjectSession, ProjectRuntimeHost, type ProjectRuntime } from "@folio/editor";
 import { createEmptyFolioProject } from "@folio/persistence/project";
 import { ProjectPersistenceCoordinator } from "../../persistence/project-persistence-coordinator";
+import {
+  DeferredUnsavedChangesPrompt,
+  ProjectLifecycleCoordinator,
+  type UnsavedChangesDecision,
+  type UnsavedChangesRequest,
+} from "../../persistence/project-lifecycle-coordinator";
+import { useProjectCloseProtection } from "../../persistence/useProjectCloseProtection";
 import type {
   ArtworkColorSampleResult,
   CanvasDrawingStyle,
@@ -59,6 +66,14 @@ import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./wo
 interface EditorWorkspaceProps {
   onProjectRuntimeReady?: (host: ProjectRuntimeHost | null) => void;
   onProjectPersistenceReady?: (coordinator: ProjectPersistenceCoordinator | null) => void;
+  onProjectLifecycleReady?: (coordinator: ProjectLifecycleCoordinator | null) => void;
+  /**
+   * Asks the user about unsaved work before a destructive lifecycle action.
+   *
+   * Without one the guard answers "cancel": a shell that cannot ask must not
+   * silently discard a drawing.
+   */
+  onConfirmUnsavedChanges?: (request: UnsavedChangesRequest) => Promise<UnsavedChangesDecision>;
   pageNavigatorOpen: boolean;
   onDismissPageNavigator: () => void;
   pageSettingsOpen: boolean;
@@ -112,7 +127,7 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace(props: EditorWorkspaceProps) {
-  const [{ host, persistence }] = useState(() => {
+  const [{ host, persistence, lifecycle, unsavedPrompt }] = useState(() => {
     const runtimeHost = new ProjectRuntimeHost(
       new ProjectSession(createEmptyFolioProject()),
       () => coordinator.canReplaceRuntime,
@@ -130,8 +145,20 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
         },
       },
     );
-    return { host: runtimeHost, persistence: coordinator };
+    const prompt = new DeferredUnsavedChangesPrompt();
+    return {
+      host: runtimeHost,
+      persistence: coordinator,
+      lifecycle: new ProjectLifecycleCoordinator(coordinator, prompt),
+      unsavedPrompt: prompt,
+    };
   });
+  const { onConfirmUnsavedChanges } = props;
+  useEffect(() => {
+    unsavedPrompt.setHandler(onConfirmUnsavedChanges ?? null);
+    return () => unsavedPrompt.setHandler(null);
+  }, [unsavedPrompt, onConfirmUnsavedChanges]);
+  useProjectCloseProtection(lifecycle);
   const runtimes = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
   const escapeActionsRef = useRef<EditorEscapeActions | null>(null);
   const publishEscape = useCallback((actions: EditorEscapeActions | null) => {
@@ -140,15 +167,24 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
   // The shared fallback belongs to the stable host, never to an inert candidate.
   useEffect(() => registerCanvasEscape(() => escapeActionsRef.current?.escape() ?? false), []);
   useEffect(() => host.connect(), [host]);
-  const { onProjectPersistenceReady, onProjectRuntimeReady } = props;
+  const { onProjectLifecycleReady, onProjectPersistenceReady, onProjectRuntimeReady } = props;
   useEffect(() => {
     onProjectPersistenceReady?.(persistence);
     onProjectRuntimeReady?.(host);
+    onProjectLifecycleReady?.(lifecycle);
     return () => {
       onProjectPersistenceReady?.(null);
       onProjectRuntimeReady?.(null);
+      onProjectLifecycleReady?.(null);
     };
-  }, [host, persistence, onProjectPersistenceReady, onProjectRuntimeReady]);
+  }, [
+    host,
+    persistence,
+    lifecycle,
+    onProjectPersistenceReady,
+    onProjectRuntimeReady,
+    onProjectLifecycleReady,
+  ]);
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
       {runtimes.map((entry) => (

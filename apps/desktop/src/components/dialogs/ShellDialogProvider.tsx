@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Settings2 } from "lucide-react";
+import { Settings2, TriangleAlert } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -10,6 +10,10 @@ import {
   DialogTitle,
   cn,
 } from "@folio/ui";
+import type {
+  UnsavedChangesDecision,
+  UnsavedChangesRequest,
+} from "../../persistence/project-lifecycle-coordinator";
 import { useNotifications } from "../notifications/NotificationProvider";
 import { useTheme } from "../theme/ThemeProvider";
 
@@ -39,6 +43,19 @@ interface DialogCopy {
 
 interface ShellDialogContextValue {
   openDialog: (kind: ShellDialogKind, options?: ShellDialogOptions) => void;
+  /**
+   * Asks whether unsaved work should be saved before the project is replaced.
+   *
+   * Resolves exactly once. Dismissing the dialog by any route -- Escape, the
+   * overlay, a close button -- answers "cancel", because silence must never be
+   * read as permission to discard.
+   */
+  confirmUnsavedChanges: (request: UnsavedChangesRequest) => Promise<UnsavedChangesDecision>;
+}
+
+interface UnsavedChangesDialogState {
+  readonly request: UnsavedChangesRequest;
+  readonly resolve: (decision: UnsavedChangesDecision) => void;
 }
 
 const dialogCopy: Record<ShellDialogKind, DialogCopy> = {
@@ -65,15 +82,31 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
   // item that was clicked has already unmounted by then, and without this the
   // keyboard lands on the document body.
   const returnFocusRef = React.useRef<(() => HTMLElement | null) | null>(null);
+  const [unsaved, setUnsaved] = React.useState<UnsavedChangesDialogState | null>(null);
   const value = React.useMemo(
     () => ({
       openDialog: (kind: ShellDialogKind, options?: ShellDialogOptions) => {
         returnFocusRef.current = options?.returnFocus ?? null;
         setActiveDialog(kind);
       },
+      confirmUnsavedChanges: (request: UnsavedChangesRequest) =>
+        new Promise<UnsavedChangesDecision>((resolve) => {
+          setUnsaved((previous) => {
+            // A second question can only mean the first was abandoned. Answering
+            // it keeps its caller from waiting on a promise nothing will settle.
+            previous?.resolve("cancel");
+            return { request, resolve };
+          });
+        }),
     }),
     [],
   );
+  const answerUnsaved = React.useCallback((decision: UnsavedChangesDecision) => {
+    setUnsaved((previous) => {
+      previous?.resolve(decision);
+      return null;
+    });
+  }, []);
 
   const copy = activeDialog ? dialogCopy[activeDialog] : null;
   const DialogIcon = activeDialog ? dialogIcons[activeDialog] : null;
@@ -150,6 +183,54 @@ export function ShellDialogProvider({ children }: React.PropsWithChildren) {
                 onClick={completeAction}
               >
                 {copy.primaryLabel}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+      <Dialog
+        open={unsaved !== null}
+        onOpenChange={(open) => {
+          if (!open) answerUnsaved("cancel");
+        }}
+      >
+        {unsaved ? (
+          <DialogContent
+            className="folio-dialog-motion overflow-hidden p-0 sm:max-w-[460px]"
+            data-testid="unsaved-changes-dialog"
+          >
+            <div className="p-6">
+              <DialogHeader>
+                <div className="mb-3 flex size-10 items-center justify-center rounded-xl bg-folio-accent-soft text-folio-accent">
+                  <TriangleAlert className="size-5" aria-hidden="true" />
+                </div>
+                <DialogTitle>{`Save changes to ${unsaved.request.title}?`}</DialogTitle>
+                <DialogDescription>
+                  Your drawing will be lost if you do not save it.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            <DialogFooter className="border-t border-folio-border bg-folio-surface-muted px-6 py-4">
+              <Button
+                variant="ghost"
+                data-testid="unsaved-changes-cancel"
+                onClick={() => answerUnsaved("cancel")}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="ghost"
+                data-testid="unsaved-changes-discard"
+                onClick={() => answerUnsaved("discard")}
+              >
+                Discard
+              </Button>
+              <Button
+                variant="default"
+                data-testid="unsaved-changes-save"
+                onClick={() => answerUnsaved("save")}
+              >
+                Save
               </Button>
             </DialogFooter>
           </DialogContent>

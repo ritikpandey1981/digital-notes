@@ -32,14 +32,16 @@ function setup() {
 }
 
 describe("project dirty state and save checkpoints", () => {
-  it("reports an untouched project as clean but still without a durable copy", () => {
+  it("reports an untouched project as clean, disposable, and without a durable copy", () => {
     const { coordinator, history } = setup();
 
+    // The blank sketch Folio just made is worth nothing to lose, so replacing it
+    // is not a risk even though no file holds it.
     expect(coordinator.persistenceState).toEqual({
       isDirty: false,
       hasBackingFile: false,
       hasConfirmedCheckpoint: false,
-      hasUnsavedRisk: true,
+      hasUnsavedRisk: false,
     });
     expect(Object.isFrozen(coordinator.persistenceState)).toBe(true);
     history.destroy();
@@ -210,7 +212,7 @@ describe("project dirty state and save checkpoints", () => {
         isDirty: false,
         hasBackingFile: false,
         hasConfirmedCheckpoint: false,
-        hasUnsavedRisk: true,
+        hasUnsavedRisk: false,
       });
 
       const history = createHistory(next);

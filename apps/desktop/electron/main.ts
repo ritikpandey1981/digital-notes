@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopProjectFileService } from "./project-file-service";
 import { registerProjectSaveIpc } from "./project-save-ipc";
+import { registerWindowCloseIpc } from "./window-close-ipc";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -94,13 +95,20 @@ function createMainWindow(): void {
       return result.response === 1;
     },
   });
-  registerProjectSaveIpc(
-    ipcMain,
-    projectWindow,
-    projectFiles,
+  const trustedUrl =
     developmentServerUrl === undefined
       ? pathToFileURL(path.join(__dirname, "../dist/renderer/index.html")).href
-      : new URL(developmentServerUrl).href,
+      : new URL(developmentServerUrl).href;
+  registerProjectSaveIpc(ipcMain, projectWindow, projectFiles, trustedUrl);
+  // Quitting the app closes this window, so intentional exit reaches the same
+  // unsaved-work question the close button does.
+  registerWindowCloseIpc(
+    ipcMain,
+    projectWindow,
+    (event) =>
+      !projectWindow.isDestroyed() &&
+      event.sender === projectWindow.webContents &&
+      event.senderFrame === projectWindow.webContents.mainFrame,
   );
   mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
     const allowedUrl = developmentServerUrl

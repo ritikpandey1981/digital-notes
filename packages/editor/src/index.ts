@@ -1,8 +1,10 @@
 export {};
 export {
   ProjectSession,
+  type ProjectContentOrigin,
   type ProjectContentState,
   type ProjectPersistenceCapture,
+  type ProjectSessionOptions,
 } from "./project-session";
 export {
   ProjectRuntimeHost,

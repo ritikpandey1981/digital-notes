@@ -143,8 +143,10 @@ describe("project content state", () => {
       contentStateId: project.baselineStateId,
       baselineStateId: project.baselineStateId,
       checkpointStateId: null,
+      origin: "created",
       isDirty: false,
       hasConfirmedCheckpoint: false,
+      isDisposableBaseline: true,
     });
     expect(Object.isFrozen(project.contentState())).toBe(true);
     expect(Object.keys(project).sort()).toEqual(["documentSession", "metadata"]);

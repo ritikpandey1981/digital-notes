@@ -4,10 +4,12 @@ import {
   type ProjectRuntimeHost,
 } from "@folio/editor";
 import {
+  createEmptyFolioProject,
   encodeFolioProject,
   decodeFolioProject,
   FolioProjectCodecError,
 } from "@folio/persistence/project";
+import type { FolioProjectSnapshot } from "@folio/persistence/project";
 import {
   openFailure,
   isProjectTargetId,
@@ -25,9 +27,12 @@ import {
  * Two separate questions, deliberately not collapsed into one boolean.
  *
  * `isDirty` asks whether content changed relative to its reference state.
- * `hasUnsavedRisk` asks whether closing could lose content because no confirmed
- * durable copy of the current content exists, which is also true for a project
- * that was activated without a confirmed backing target.
+ * `hasUnsavedRisk` asks whether replacing this project could lose something the
+ * user would want back. That is true for edited content, and also for a project
+ * whose bytes came from a file Folio could not confirm a writable association
+ * with -- its content is real even though nothing has changed it. It is
+ * deliberately false for the untouched blank sketch Folio itself created, so
+ * New and Close do not interrogate the user about nothing.
  */
 export interface ProjectPersistenceState {
   readonly isDirty: boolean;
@@ -36,10 +41,21 @@ export interface ProjectPersistenceState {
   readonly hasUnsavedRisk: boolean;
 }
 
+/** Outcome of creating a fresh project over the active one. */
+export type ProjectNewResult =
+  | Readonly<{ status: "created" }>
+  | Readonly<{ status: "failed"; error: Readonly<{ code: ProjectNewErrorCode; message: string }> }>;
+
+export type ProjectNewErrorCode = "BUSY" | "RUNTIME_FAILED" | "TARGET_UNAVAILABLE";
+
+function newFailure(code: ProjectNewErrorCode, message: string): ProjectNewResult {
+  return { status: "failed", error: { code, message } };
+}
+
 /** Raw lifecycle commands, intentionally not exposed in File UI until unsaved protection exists. */
 export class ProjectPersistenceCoordinator {
   private backingValue: DesktopProjectBacking | null = null;
-  private operation: "save" | "open" | null = null;
+  private operation: "save" | "open" | "new" | null = null;
   private requestingReplacement = false;
   private backingProject: ProjectSession | null = null;
 
@@ -48,6 +64,7 @@ export class ProjectPersistenceCoordinator {
     private readonly port: DesktopProjectSavePort,
     private readonly canSave: () => boolean = () => true,
     private readonly opening?: Readonly<{ host: ProjectRuntimeHost; port: DesktopProjectOpenPort }>,
+    private readonly createProject: () => FolioProjectSnapshot = createEmptyFolioProject,
   ) {}
 
   get backing(): DesktopProjectBacking | null {
@@ -58,6 +75,16 @@ export class ProjectPersistenceCoordinator {
     return this.operation === "save";
   }
 
+  /** True while any project operation holds the coordinator. */
+  get isBusy(): boolean {
+    return this.operation !== null;
+  }
+
+  /** The active project's logical title. Never a filename, never a path. */
+  get projectTitle(): string {
+    return this.currentProject().metadata.title;
+  }
+
   /** Narrow read model for the future unsaved-change guard. It mutates nothing. */
   get persistenceState(): ProjectPersistenceState {
     const content = this.currentProject().contentState();
@@ -65,12 +92,62 @@ export class ProjectPersistenceCoordinator {
       isDirty: content.isDirty,
       hasBackingFile: this.backing !== null,
       hasConfirmedCheckpoint: content.hasConfirmedCheckpoint,
-      hasUnsavedRisk: content.isDirty || !content.hasConfirmedCheckpoint,
+      // Nothing is at risk when the project is either the untouched blank sketch
+      // Folio made, or byte-identical to a durable copy it confirmed. Everything
+      // else is: edited content, and content loaded from a file whose writable
+      // association was never confirmed.
+      hasUnsavedRisk: !(
+        content.isDisposableBaseline ||
+        (!content.isDirty && content.hasConfirmedCheckpoint)
+      ),
     });
   }
 
   get canReplaceRuntime(): boolean {
     return this.operation === null || this.requestingReplacement;
+  }
+
+  /**
+   * Replaces the active project with a fresh one through the same transactional
+   * handoff Open uses.
+   *
+   * Raw lifecycle: it performs no unsaved-change protection. The guard above it
+   * decides whether the current project may be replaced at all.
+   */
+  async newProject(): Promise<ProjectNewResult> {
+    const opening = this.opening;
+    if (this.operation !== null || !this.canSave())
+      return newFailure("BUSY", "A project operation is already in progress.");
+    if (opening === undefined)
+      return newFailure("TARGET_UNAVAILABLE", "New Project is unavailable.");
+    this.operation = "new";
+    try {
+      const project = new ProjectSession(this.createProject());
+      this.requestingReplacement = true;
+      let replacement: ReturnType<ProjectRuntimeHost["replace"]>;
+      try {
+        replacement = opening.host.replace(project);
+      } finally {
+        this.requestingReplacement = false;
+      }
+      const result = await replacement;
+      if (result.status === "busy")
+        return newFailure("BUSY", "A project replacement is already in progress.");
+      if (result.status === "failed")
+        return newFailure(
+          "RUNTIME_FAILED",
+          "The new project could not be activated. The current project was preserved.",
+        );
+      // The previous project's approved file must never follow a different
+      // project, so the fresh one starts unbacked and Save falls back to Save As.
+      this.backingProject = null;
+      this.backingValue = null;
+      return { status: "created" };
+    } catch {
+      return newFailure("RUNTIME_FAILED", "The new project could not be activated.");
+    } finally {
+      this.operation = null;
+    }
   }
 
   async open(): Promise<ProjectOpenResult> {
@@ -98,7 +175,7 @@ export class ProjectPersistenceCoordinator {
       provisional = read.backing.id;
       let project: ProjectSession;
       try {
-        project = new ProjectSession(decodeFolioProject(read.content));
+        project = new ProjectSession(decodeFolioProject(read.content), { origin: "loaded" });
       } catch (error) {
         const code =
           error instanceof FolioProjectCodecError &&
