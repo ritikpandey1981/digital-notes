@@ -19,6 +19,9 @@ import { useNotifications } from "../notifications/NotificationProvider";
 interface StartupRecoveryDialogProps {
   /** Null until the workspace has built one; the prompt simply waits. */
   readonly coordinator: ProjectRecoveryCoordinator | null;
+  /** True while the shell has asked for this surface from the application menu. */
+  readonly requested: boolean;
+  readonly onRequestedChange: (requested: boolean) => void;
 }
 
 type RecoveryAction = "recover" | "open-original" | "discard";
@@ -48,17 +51,25 @@ function describeCapture(capturedAt: string): string {
  *
  * Folio keeps a background copy of unsaved work, and if it stops without being
  * closed -- a crash, a power cut, a forced quit -- that copy is still there the
- * next time it starts. This asks what to do with it, once, and treats every
- * answer except an explicit discard as a reason to keep the copy: dismissing it
- * changes nothing, and it will be offered again next time.
+ * next time it starts. This asks what to do with it, and treats every answer
+ * except an explicit discard as a reason to keep the copy: dismissing it
+ * changes nothing.
  *
- * It is not a file browser and is not the File menu. It appears only when there
- * is something to offer.
+ * It opens by itself when a run finds something, and on request from the
+ * application menu, so dismissing the offer is no longer the end of it. Asked
+ * for directly it will say that there is nothing, which is the honest answer to
+ * a question the user asked rather than a menu item that does nothing.
+ *
+ * It is not a file browser and is not the File menu.
  */
-export function StartupRecoveryDialog({ coordinator }: StartupRecoveryDialogProps) {
+export function StartupRecoveryDialog({
+  coordinator,
+  requested,
+  onRequestedChange,
+}: StartupRecoveryDialogProps) {
   const { notify } = useNotifications();
   const [candidates, setCandidates] = React.useState<readonly RecoveryCandidateSummary[]>([]);
-  const [dismissed, setDismissed] = React.useState(false);
+  const [offered, setOffered] = React.useState(false);
   const [pending, setPending] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -67,12 +78,32 @@ export function StartupRecoveryDialog({ coordinator }: StartupRecoveryDialogProp
     // Discovery is the only thing that happens automatically. Nothing is
     // decoded, opened, or removed until the user chooses.
     void coordinator.listCandidates().then((found) => {
-      if (current) setCandidates(found);
+      if (!current) return;
+      setCandidates(found);
+      setOffered(found.length > 0);
     });
     return () => {
       current = false;
     };
   }, [coordinator]);
+
+  React.useEffect(() => {
+    if (!requested || coordinator === null) return;
+    let current = true;
+    // Asked for directly, so the list is read again rather than shown as it
+    // stood at startup.
+    void coordinator.listCandidates().then((found) => {
+      if (current) setCandidates(found);
+    });
+    return () => {
+      current = false;
+    };
+  }, [requested, coordinator]);
+
+  const close = React.useCallback(() => {
+    setOffered(false);
+    onRequestedChange(false);
+  }, [onRequestedChange]);
 
   const act = React.useCallback(
     async (candidate: RecoveryCandidateSummary, action: RecoveryAction) => {
@@ -103,14 +134,17 @@ export function StartupRecoveryDialog({ coordinator }: StartupRecoveryDialogProp
         // Re-reading is also how a failure stays honest: a copy that would not
         // delete, or an open that could not confirm its file, is still listed.
         setCandidates(await coordinator.listCandidates());
+        // A drawing that is now on screen has been dealt with; the rest of the
+        // list is only worth staying open for after a discard.
+        if (result.status === "recovered" || result.status === "opened-original") close();
       } finally {
         setPending(null);
       }
     },
-    [coordinator, notify, pending],
+    [close, coordinator, notify, pending],
   );
 
-  const open = !dismissed && candidates.length > 0;
+  const open = requested || (offered && candidates.length > 0);
   const busy = pending !== null;
 
   return (
@@ -118,7 +152,7 @@ export function StartupRecoveryDialog({ coordinator }: StartupRecoveryDialogProp
       open={open}
       onOpenChange={(next) => {
         // Dismissing decides nothing. Every copy stays exactly where it is.
-        if (!next && !busy) setDismissed(true);
+        if (!next && !busy) close();
       }}
     >
       {open ? (
@@ -132,65 +166,70 @@ export function StartupRecoveryDialog({ coordinator }: StartupRecoveryDialogProp
                 <History className="size-5" aria-hidden="true" />
               </div>
               <DialogTitle>
-                {candidates.length === 1
-                  ? "Folio kept an unsaved drawing"
-                  : `Folio kept ${candidates.length} unsaved drawings`}
+                {candidates.length === 0
+                  ? "No recovered drawings"
+                  : candidates.length === 1
+                    ? "Folio kept an unsaved drawing"
+                    : `Folio kept ${candidates.length} unsaved drawings`}
               </DialogTitle>
               <DialogDescription>
-                Folio closed unexpectedly with work that had not been saved. You can bring it back,
-                or open the file it came from instead.
+                {candidates.length === 0
+                  ? "There is nothing waiting to be recovered. Folio keeps a copy of unsaved work here only when it stops without being closed."
+                  : "Folio closed unexpectedly with work that had not been saved. You can bring it back, or open the file it came from instead."}
               </DialogDescription>
             </DialogHeader>
 
-            <ul className="mt-5 flex max-h-[320px] flex-col gap-3 overflow-y-auto">
-              {candidates.map((candidate) => (
-                <li
-                  key={candidate.recoveryId}
-                  className="rounded-[14px] border border-folio-border bg-folio-surface p-4"
-                  data-testid="startup-recovery-candidate"
-                  data-recovery-id={candidate.recoveryId}
-                >
-                  <p className="text-sm font-semibold" data-testid="startup-recovery-title">
-                    {candidate.title}
-                  </p>
-                  <p className="mt-1 text-xs text-folio-muted">
-                    {describeCapture(candidate.capturedAt)}
-                    {candidate.canOpenOriginal ? " · Saved file available" : " · Never saved"}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      variant="default"
-                      size="sm"
-                      disabled={busy}
-                      data-testid="startup-recovery-recover"
-                      onClick={() => void act(candidate, "recover")}
-                    >
-                      Recover
-                    </Button>
-                    {candidate.canOpenOriginal ? (
+            {candidates.length === 0 ? null : (
+              <ul className="mt-5 flex max-h-[320px] flex-col gap-3 overflow-y-auto">
+                {candidates.map((candidate) => (
+                  <li
+                    key={candidate.recoveryId}
+                    className="rounded-[14px] border border-folio-border bg-folio-surface p-4"
+                    data-testid="startup-recovery-candidate"
+                    data-recovery-id={candidate.recoveryId}
+                  >
+                    <p className="text-sm font-semibold" data-testid="startup-recovery-title">
+                      {candidate.title}
+                    </p>
+                    <p className="mt-1 text-xs text-folio-muted">
+                      {describeCapture(candidate.capturedAt)}
+                      {candidate.canOpenOriginal ? " · Saved file available" : " · Never saved"}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        disabled={busy}
+                        data-testid="startup-recovery-recover"
+                        onClick={() => void act(candidate, "recover")}
+                      >
+                        Recover
+                      </Button>
+                      {candidate.canOpenOriginal ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          data-testid="startup-recovery-open-original"
+                          onClick={() => void act(candidate, "open-original")}
+                        >
+                          Open Original
+                        </Button>
+                      ) : null}
                       <Button
                         variant="ghost"
                         size="sm"
                         disabled={busy}
-                        data-testid="startup-recovery-open-original"
-                        onClick={() => void act(candidate, "open-original")}
+                        data-testid="startup-recovery-discard"
+                        onClick={() => void act(candidate, "discard")}
                       >
-                        Open Original
+                        Discard
                       </Button>
-                    ) : null}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy}
-                      data-testid="startup-recovery-discard"
-                      onClick={() => void act(candidate, "discard")}
-                    >
-                      Discard
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <DialogFooter className="border-t border-folio-border bg-folio-surface-muted px-6 py-4">
@@ -198,9 +237,9 @@ export function StartupRecoveryDialog({ coordinator }: StartupRecoveryDialogProp
               variant="ghost"
               disabled={busy}
               data-testid="startup-recovery-later"
-              onClick={() => setDismissed(true)}
+              onClick={close}
             >
-              Not now
+              {candidates.length === 0 ? "Close" : "Not now"}
             </Button>
           </DialogFooter>
         </DialogContent>

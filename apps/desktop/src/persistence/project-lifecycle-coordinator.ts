@@ -54,8 +54,19 @@ export type ProjectLifecycleFailure = Readonly<{
   error: Readonly<{ code: ProjectLifecycleErrorCode; message: string }>;
 }>;
 
+/**
+ * Something true about a request that still succeeded.
+ *
+ * `backing-unconfirmed` means the project really was replaced, but Folio could
+ * not confirm the file behind it, so the shell must say so rather than report
+ * an ordinary Open.
+ */
+export type ProjectLifecycleWarning = "backing-unconfirmed";
+
 export type ProjectLifecycleResult =
-  Readonly<{ status: "proceeded" }> | Readonly<{ status: "cancelled" }> | ProjectLifecycleFailure;
+  | Readonly<{ status: "proceeded"; warning?: ProjectLifecycleWarning }>
+  | Readonly<{ status: "cancelled" }>
+  | ProjectLifecycleFailure;
 
 /**
  * Why a guarded replacement never reached the operation underneath it.
@@ -202,10 +213,12 @@ export class ProjectLifecycleCoordinator {
   }
 
   #reportOpen(result: ProjectOpenResult): ProjectLifecycleResult {
-    // An activated-unbacked Open did replace the project; its missing file
-    // association is reported by the persistence state, not as a lifecycle failure.
-    if (result.status === "opened" || result.status === "activated-unbacked")
-      return { status: "proceeded" };
+    if (result.status === "opened") return { status: "proceeded" };
+    // An activated-unbacked Open did replace the project, so it is not a
+    // failure -- but calling it an ordinary success would tell the user their
+    // work has a file when it does not.
+    if (result.status === "activated-unbacked")
+      return { status: "proceeded", warning: "backing-unconfirmed" };
     if (result.status === "cancelled") return { status: "cancelled" };
     return lifecycleFailure(
       result.error.code === "BUSY" ? "BUSY" : "OPEN_FAILED",

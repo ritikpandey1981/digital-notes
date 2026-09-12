@@ -194,15 +194,33 @@ test("keeps every top chrome action working and truthful", async () => {
     await settings.click();
 
     // The application menu offers only what the application can actually do.
+    // Persistence exists now, so the file actions are real; the ones that still
+    // have no implementation behind them are still absent rather than greyed.
     await window.getByTestId("application-menu-trigger").click();
     const menu = window.getByRole("menu");
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole("menuitem")).toHaveCount(2);
+    await expect(menu.getByRole("menuitem")).toHaveCount(7);
+    for (const [testId, label] of [
+      ["menu-new-project", "New"],
+      ["menu-open-project", "Open…"],
+      ["menu-save-project", "Save"],
+      ["menu-save-project-as", "Save As…"],
+      ["menu-show-recovery", "Recovered drawings…"],
+    ] as const) {
+      const item = menu.getByTestId(testId);
+      await expect(item, `${label} is offered`).toHaveCount(1);
+      await expect(item).toContainText(label);
+      await expect(item).toBeEnabled();
+    }
+    // Each file action names the key that also performs it.
+    for (const accelerator of ["Ctrl+N", "Ctrl+O", "Ctrl+S", "Ctrl+Shift+S"]) {
+      await expect(menu.getByText(accelerator, { exact: true })).toHaveCount(1);
+    }
     await expect(menu.getByRole("menuitem", { name: /appearance/iu })).toHaveCount(2);
-    for (const absent of ["New", "Open", "Save", "Save As", "Recent", "Close"]) {
+    for (const absent of ["Recent", "Close", "Export", "Print", "Rename"]) {
       await expect(
         menu.getByRole("menuitem", { name: new RegExp(`^${absent}`, "u") }),
-        `${absent} is not offered before persistence exists`,
+        `${absent} has no implementation, so it is not offered`,
       ).toHaveCount(0);
     }
     await window.keyboard.press("Escape");
@@ -372,7 +390,7 @@ test("opens and navigates the application menu from the keyboard", async () => {
     await expect(window.locator('[role="tooltip"]:visible')).toHaveCount(0);
 
     await window.keyboard.press("ArrowDown");
-    await expect(last).toBeFocused();
+    await expect(menu.getByRole("menuitem").nth(1)).toBeFocused();
     await window.keyboard.press("ArrowUp");
     await expect(first).toBeFocused();
     await window.keyboard.press("End");
@@ -428,7 +446,7 @@ test("keeps appearance honest and hands focus back from its settings", async () 
     // The appearance action does what it says and closes behind itself.
     await expect(window.locator("html")).toHaveAttribute("data-theme", "light");
     await trigger.click();
-    await menu.getByRole("menuitem").first().click();
+    await menu.getByRole("menuitem", { name: /^use .* appearance$/iu }).click();
     await expect(window.locator("html")).toHaveAttribute("data-theme", "dark");
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
@@ -530,9 +548,17 @@ test("contains the application menu at a minimum window", async () => {
       sketch.y + sketch.height,
     );
     expect(overlaps(box, sketch), "the menu does not cover the sketch name").toBe(false);
+    // A menu long enough to hold the file actions reaches down the left edge,
+    // which is what a transient surface is allowed to do. What it must not do
+    // is push the workspace around while it is open.
     const dock = window.locator("[data-tool-dock-layout]");
     if ((await dock.count()) > 0) {
-      expect(overlaps(box, await boxOf(dock)), "the menu clears the tool dock").toBe(false);
+      const open = await boxOf(dock);
+      await window.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+      expect(await boxOf(dock), "the menu overlays the dock without moving it").toEqual(open);
+      await window.getByTestId("application-menu-trigger").click();
+      await expect(menu).toBeVisible();
     }
 
     const overflow = await window.evaluate(() => ({
@@ -599,8 +625,10 @@ test("gives Space to the control that holds focus, and to the pan when the canva
     await expect(menu).toBeVisible();
     expect(await panState(), "the canvas did not take Space").toBe("idle");
 
-    // A menu item reached with the arrows activates on Space too.
-    await window.keyboard.press("ArrowDown");
+    // A menu item reached with the arrows activates on Space too. End lands on
+    // appearance settings, which is the one item that answers without leaving
+    // the window.
+    await window.keyboard.press("End");
     await expect(menu.getByRole("menuitem").last()).toBeFocused();
     await window.keyboard.press("Space");
     await expect(window.getByRole("dialog")).toBeVisible();

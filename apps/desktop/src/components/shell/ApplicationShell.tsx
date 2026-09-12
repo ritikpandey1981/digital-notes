@@ -1,5 +1,5 @@
 import { EditorWorkspace } from "../editor/EditorWorkspace";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TooltipLayerProvider } from "../editor/ToolTooltip";
 import { useEditorWorkspaceState } from "../editor/useEditorWorkspaceState";
 import { useEditorViewportState } from "../editor/useEditorViewportState";
@@ -10,7 +10,13 @@ import {
 } from "../editor/workspace-history";
 import { useShellDialog } from "../dialogs/ShellDialogProvider";
 import { StartupRecoveryDialog } from "../dialogs/StartupRecoveryDialog";
+import { useNotifications } from "../notifications/NotificationProvider";
 import type { ProjectRecoveryCoordinator } from "../../persistence/project-recovery-coordinator";
+import type { ProjectLifecycleCoordinator } from "../../persistence/project-lifecycle-coordinator";
+import type { ProjectPersistenceCoordinator } from "../../persistence/project-persistence-coordinator";
+import { createProjectFileCommands } from "../../persistence/project-file-commands";
+import { installProjectFileShortcuts } from "../../persistence/project-file-shortcuts";
+import { useProjectShellState } from "../../persistence/useProjectShellState";
 import { ContextHintProvider } from "./ContextHintProvider";
 import { SegmentedTopChrome } from "./SegmentedTopChrome";
 import { WorkspaceContextHint } from "./WorkspaceContextHint";
@@ -32,9 +38,44 @@ function ApplicationShellContent() {
   // The shell owns the only surface that can ask about unsaved work, so the
   // project lifecycle borrows it rather than growing a dialog of its own.
   const { confirmUnsavedChanges } = useShellDialog();
-  // Built by the workspace, offered by the shell: only the shell has a surface
-  // that can ask about drawings a previous run left behind.
+  const { notify } = useNotifications();
+  // Built by the workspace, driven by the shell: the workspace owns the project
+  // runtime, and the shell owns every surface that can act on it or say
+  // anything about it.
   const [projectRecovery, setProjectRecovery] = useState<ProjectRecoveryCoordinator | null>(null);
+  const [projectLifecycle, setProjectLifecycle] = useState<ProjectLifecycleCoordinator | null>(
+    null,
+  );
+  const [projectPersistence, setProjectPersistence] =
+    useState<ProjectPersistenceCoordinator | null>(null);
+  const [recoveryRequested, setRecoveryRequested] = useState(false);
+  const projectState = useProjectShellState(projectPersistence);
+  const fileCommands = useMemo(
+    () =>
+      createProjectFileCommands({
+        lifecycle: projectLifecycle,
+        persistence: projectPersistence,
+        notify,
+      }),
+    [projectLifecycle, projectPersistence, notify],
+  );
+  // One shortcut owner for the whole application. The canvas keeps Undo, Redo,
+  // Space and the tool keys; what becomes of the project is decided here.
+  useEffect(() => installProjectFileShortcuts({ commands: fileCommands }), [fileCommands]);
+  const showRecovery = useCallback(() => setRecoveryRequested(true), []);
+  const projectChrome = useMemo(
+    () => ({
+      title: projectState.title,
+      isDirty: projectState.isDirty,
+      isBusy: projectState.isBusy,
+      onNewProject: () => void fileCommands.newProject(),
+      onOpenProject: () => void fileCommands.openProject(),
+      onSaveProject: () => void fileCommands.save(),
+      onSaveProjectAs: () => void fileCommands.saveAs(),
+      onShowRecovery: showRecovery,
+    }),
+    [projectState.title, projectState.isDirty, projectState.isBusy, fileCommands, showRecovery],
+  );
   const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
   const [historyAvailability, setHistoryAvailability] =
     useState<WorkspaceHistoryAvailability>(EMPTY_WORKSPACE_HISTORY);
@@ -114,10 +155,13 @@ function ApplicationShellContent() {
           onTogglePageNavigator={togglePageNavigator}
           pageSettingsOpen={pageSettingsOpen}
           onTogglePageSettings={togglePageSettings}
+          project={projectChrome}
         />
         <EditorWorkspace
           onConfirmUnsavedChanges={confirmUnsavedChanges}
           onProjectRecoveryReady={setProjectRecovery}
+          onProjectLifecycleReady={setProjectLifecycle}
+          onProjectPersistenceReady={setProjectPersistence}
           layersOpen={editorWorkspace.layersOpen}
           layersView={editorWorkspace.layersView}
           onShowLayersView={editorWorkspace.showLayersView}
@@ -184,7 +228,11 @@ function ApplicationShellContent() {
           data-future-utility-rail-boundary="reserved"
           aria-hidden="true"
         />
-        <StartupRecoveryDialog coordinator={projectRecovery} />
+        <StartupRecoveryDialog
+          coordinator={projectRecovery}
+          requested={recoveryRequested}
+          onRequestedChange={setRecoveryRequested}
+        />
       </main>
     </div>
   );

@@ -2,14 +2,20 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@folio/ui";
 import { cn } from "@folio/ui";
 import {
   BookOpen,
+  FilePlus2,
+  FolderOpen,
+  History,
   Menu,
   Moon,
   Redo2,
+  Save,
   Settings2,
   SlidersHorizontal,
   Sun,
@@ -22,15 +28,29 @@ import type { WorkspaceHistoryAvailability } from "../editor/workspace-history";
 import { useTheme } from "../theme/ThemeProvider";
 
 /**
- * What the workspace calls the sketch until documents have real identity.
+ * What to call a project whose own title is missing.
  *
- * Display only. It is not persisted, it is not History state, it is not a
- * filename, and it is deliberately not the active page's name -- Folio has no
- * sketch-name authority yet, and inventing one here would put a second name
- * store in the shell. When real document identity arrives, this surface reads
- * that name and this constant goes away.
+ * The title shown here is the active project's metadata title, which is the
+ * only name Folio has: never a filename, and never the active page's name.
+ * This is a display fallback for the case where that title is somehow empty --
+ * rendering it changes nothing about the project, which keeps a presentation
+ * problem from becoming a document edit.
  */
 const SKETCH_NAME_FALLBACK = "Untitled Sketch";
+
+/** What the top chrome shows and offers for the active project. */
+export interface ProjectChromeModel {
+  readonly title: string;
+  /** Content differs from the last confirmed baseline or checkpoint. */
+  readonly isDirty: boolean;
+  /** An exclusive project operation is running, so another must not start. */
+  readonly isBusy: boolean;
+  readonly onNewProject: () => void;
+  readonly onOpenProject: () => void;
+  readonly onSaveProject: () => void;
+  readonly onSaveProjectAs: () => void;
+  readonly onShowRecovery: () => void;
+}
 
 interface SegmentedTopChromeProps extends WorkspaceHistoryAvailability {
   readonly onUndo: () => void;
@@ -39,6 +59,7 @@ interface SegmentedTopChromeProps extends WorkspaceHistoryAvailability {
   readonly onTogglePageNavigator: () => void;
   readonly pageSettingsOpen: boolean;
   readonly onTogglePageSettings: () => void;
+  readonly project: ProjectChromeModel;
 }
 
 /**
@@ -73,6 +94,7 @@ export function SegmentedTopChrome({
   onTogglePageNavigator,
   pageSettingsOpen,
   onTogglePageSettings,
+  project,
 }: SegmentedTopChromeProps) {
   const { openDialog } = useShellDialog();
   const { theme, toggleTheme } = useTheme();
@@ -105,9 +127,62 @@ export function SegmentedTopChrome({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-52">
               {/*
-                Only what the application can truthfully do today. File actions
-                wait for a persistence boundary rather than appearing greyed out.
+                What becomes of the project, then what becomes of a project a
+                previous run left behind, then how the application looks. Each
+                one does what it says: nothing here is a placeholder, and an
+                operation already running disables the rest rather than
+                queueing a second one behind it.
               */}
+              <DropdownMenuItem
+                disabled={project.isBusy}
+                onSelect={project.onNewProject}
+                data-testid="menu-new-project"
+              >
+                <FilePlus2 className="size-4" aria-hidden="true" />
+                New
+                <DropdownMenuShortcut>Ctrl+N</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={project.isBusy}
+                onSelect={project.onOpenProject}
+                data-testid="menu-open-project"
+              >
+                <FolderOpen className="size-4" aria-hidden="true" />
+                Open…
+                <DropdownMenuShortcut>Ctrl+O</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              {/*
+                Saving a project nothing has changed is a perfectly ordinary
+                thing to ask for, so Save is not disabled for being clean.
+              */}
+              <DropdownMenuItem
+                disabled={project.isBusy}
+                onSelect={project.onSaveProject}
+                data-testid="menu-save-project"
+              >
+                <Save className="size-4" aria-hidden="true" />
+                Save
+                <DropdownMenuShortcut>Ctrl+S</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={project.isBusy}
+                onSelect={project.onSaveProjectAs}
+                data-testid="menu-save-project-as"
+              >
+                <Save className="size-4" aria-hidden="true" />
+                Save As…
+                <DropdownMenuShortcut>Ctrl+Shift+S</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={project.isBusy}
+                onSelect={project.onShowRecovery}
+                data-testid="menu-show-recovery"
+              >
+                <History className="size-4" aria-hidden="true" />
+                Recovered drawings…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={toggleTheme}>
                 {theme === "dark" ? (
                   <Sun className="size-4" aria-hidden="true" />
@@ -134,14 +209,32 @@ export function SegmentedTopChrome({
         <ChromeIsland testId="top-chrome-sketch">
           {/*
             Identity, not a control. Nothing here opens, renames or saves
-            anything; the max width is for the real titles this will show
-            later, so a long one can never eat into the workspace.
+            anything; the max width keeps a long project title from eating into
+            the workspace.
+
+            The visible name and the dot are one sentence to a screen reader
+            rather than a name followed by a bullet, so the spoken form is the
+            written one and the marker is never the only signal.
           */}
           <span
             className="max-w-[220px] truncate px-2 text-xs font-medium text-folio-ink"
             data-testid="sketch-name"
+            aria-hidden="true"
           >
-            {SKETCH_NAME_FALLBACK}
+            {project.title.trim() === "" ? SKETCH_NAME_FALLBACK : project.title}
+          </span>
+          {project.isDirty ? (
+            <span
+              className="-ml-1.5 pr-2 text-xs leading-none text-folio-muted"
+              data-testid="sketch-dirty-indicator"
+              aria-hidden="true"
+            >
+              •
+            </span>
+          ) : null}
+          <span className="sr-only">
+            {project.title.trim() === "" ? SKETCH_NAME_FALLBACK : project.title}
+            {project.isDirty ? ", unsaved changes" : ""}
           </span>
         </ChromeIsland>
       </ChromeGroup>

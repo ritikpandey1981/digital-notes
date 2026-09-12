@@ -42,6 +42,34 @@ export interface ProjectPersistenceState {
   readonly hasUnsavedRisk: boolean;
 }
 
+/**
+ * Everything the shell may show about the active project, and nothing else.
+ *
+ * No content-state identity, no backing target id, no path, no History: those
+ * are how persistence works, not what the user is looking at. It is a value,
+ * replaced whole whenever any part of it changes, so a view can compare it by
+ * reference.
+ */
+export interface ProjectShellState extends ProjectPersistenceState {
+  /** The project's logical title, from its own metadata. Never a filename. */
+  readonly title: string;
+  /** True while an exclusive project operation holds the coordinator. */
+  readonly isBusy: boolean;
+}
+
+export type ProjectShellStateListener = (state: ProjectShellState) => void;
+
+function shellStateEquals(first: ProjectShellState, second: ProjectShellState): boolean {
+  return (
+    first.title === second.title &&
+    first.isDirty === second.isDirty &&
+    first.hasBackingFile === second.hasBackingFile &&
+    first.hasConfirmedCheckpoint === second.hasConfirmedCheckpoint &&
+    first.hasUnsavedRisk === second.hasUnsavedRisk &&
+    first.isBusy === second.isBusy
+  );
+}
+
 /** Outcome of creating a fresh project over the active one. */
 export type ProjectNewResult =
   | Readonly<{ status: "created" }>
@@ -89,12 +117,19 @@ export interface ProjectOpeningServices {
   readonly openOriginal?: (recoveryId: string) => Promise<ProjectReadResult>;
 }
 
-/** Raw lifecycle commands, intentionally not exposed in File UI until unsaved protection exists. */
+type ProjectOperation = "save" | "open" | "new" | "recover";
+
+/** The project lifecycle commands the shell drives, and the state it reports back. */
 export class ProjectPersistenceCoordinator {
   private backingValue: DesktopProjectBacking | null = null;
-  private operation: "save" | "open" | "new" | "recover" | null = null;
+  private operation: ProjectOperation | null = null;
   private requestingReplacement = false;
   private backingProject: ProjectSession | null = null;
+  private readonly stateListeners = new Set<ProjectShellStateListener>();
+  private shellStateValue: ProjectShellState | null = null;
+  private observedProject: ProjectSession | null = null;
+  private releaseContent: (() => void) | undefined;
+  private releaseRuntime: (() => void) | undefined;
 
   constructor(
     private readonly project: ProjectSession | (() => ProjectSession),
@@ -145,6 +180,114 @@ export class ProjectPersistenceCoordinator {
   }
 
   /**
+   * What the shell shows about the active project, as one comparable value.
+   *
+   * Recomputed only when something actually changed, so a view can hold this
+   * reference and re-render on identity.
+   */
+  get shellState(): ProjectShellState {
+    this.shellStateValue ??= this.computeShellState();
+    return this.shellStateValue;
+  }
+
+  /**
+   * Reports project state to the shell as it changes.
+   *
+   * Everything that can change it publishes: a committed edit, a confirmed
+   * checkpoint, a backing target adopted or dropped, a runtime replacement, and
+   * an operation starting or finishing. Nothing polls, and no second copy of
+   * project state exists anywhere above this.
+   */
+  subscribeState(listener: ProjectShellStateListener): () => void {
+    if (typeof listener !== "function") {
+      throw new TypeError("A project shell-state listener must be a function.");
+    }
+    this.stateListeners.add(listener);
+    this.observeActiveProject();
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.stateListeners.delete(listener);
+      if (this.stateListeners.size === 0) this.stopObserving();
+    };
+  }
+
+  /**
+   * Follows whichever project is active.
+   *
+   * A replacement swaps the session the shell is describing, so the content
+   * subscription moves with it rather than reporting on a project nobody can
+   * see any more.
+   */
+  private observeActiveProject(): void {
+    this.releaseRuntime ??= this.opening?.host.subscribe(() => this.observeActiveProject());
+    const project = this.currentProject();
+    if (project === this.observedProject) return;
+    this.releaseContent?.();
+    this.observedProject = project;
+    this.releaseContent = project.subscribeContentState(() => this.publishState());
+    this.publishState();
+  }
+
+  private stopObserving(): void {
+    this.releaseContent?.();
+    this.releaseRuntime?.();
+    this.releaseContent = undefined;
+    this.releaseRuntime = undefined;
+    this.observedProject = null;
+  }
+
+  private beginOperation(operation: ProjectOperation): void {
+    this.operation = operation;
+    this.publishState();
+  }
+
+  private endOperation(): void {
+    this.operation = null;
+    this.publishState();
+  }
+
+  /**
+   * Records which project a confirmed file belongs to.
+   *
+   * Adoption and clearing are both real changes to what the shell should say,
+   * and neither produces a content edit, so both have to announce themselves.
+   */
+  private setBacking(project: ProjectSession | null, backing: DesktopProjectBacking | null): void {
+    this.backingProject = project;
+    this.backingValue = backing;
+    this.publishState();
+  }
+
+  private computeShellState(): ProjectShellState {
+    const state = this.persistenceState;
+    return Object.freeze({
+      title: this.projectTitle,
+      isDirty: state.isDirty,
+      hasBackingFile: state.hasBackingFile,
+      hasConfirmedCheckpoint: state.hasConfirmedCheckpoint,
+      hasUnsavedRisk: state.hasUnsavedRisk,
+      isBusy: this.isBusy,
+    });
+  }
+
+  private publishState(): void {
+    const next = this.computeShellState();
+    const previous = this.shellStateValue;
+    if (previous !== null && shellStateEquals(previous, next)) return;
+    this.shellStateValue = next;
+    for (const listener of [...this.stateListeners]) {
+      try {
+        listener(next);
+      } catch {
+        // A view that throws while reading project state cannot break the
+        // operation that produced it.
+      }
+    }
+  }
+
+  /**
    * Replaces the active project with a fresh one through the same transactional
    * handoff Open uses.
    *
@@ -157,7 +300,7 @@ export class ProjectPersistenceCoordinator {
       return newFailure("BUSY", "A project operation is already in progress.");
     if (opening === undefined)
       return newFailure("TARGET_UNAVAILABLE", "New Project is unavailable.");
-    this.operation = "new";
+    this.beginOperation("new");
     try {
       const project = new ProjectSession(this.createProject());
       this.requestingReplacement = true;
@@ -177,13 +320,12 @@ export class ProjectPersistenceCoordinator {
         );
       // The previous project's approved file must never follow a different
       // project, so the fresh one starts unbacked and Save falls back to Save As.
-      this.backingProject = null;
-      this.backingValue = null;
+      this.setBacking(null, null);
       return { status: "created" };
     } catch {
       return newFailure("RUNTIME_FAILED", "The new project could not be activated.");
     } finally {
-      this.operation = null;
+      this.endOperation();
     }
   }
 
@@ -205,7 +347,7 @@ export class ProjectPersistenceCoordinator {
       return recoveryFailure("BUSY", "A project operation is already in progress.");
     if (opening === undefined)
       return recoveryFailure("TARGET_UNAVAILABLE", "Project recovery is unavailable.");
-    this.operation = "recover";
+    this.beginOperation("recover");
     try {
       let project: ProjectSession;
       try {
@@ -235,13 +377,12 @@ export class ProjectPersistenceCoordinator {
           "RUNTIME_FAILED",
           "The recovered drawing could not be opened. The current project was preserved.",
         );
-      this.backingProject = null;
-      this.backingValue = null;
+      this.setBacking(null, null);
       return { status: "activated" };
     } catch {
       return recoveryFailure("RUNTIME_FAILED", "The recovered drawing could not be opened.");
     } finally {
-      this.operation = null;
+      this.endOperation();
     }
   }
 
@@ -274,7 +415,7 @@ export class ProjectPersistenceCoordinator {
       return openFailure("BUSY", "A project operation is already in progress.");
     if (opening === undefined)
       return openFailure("TARGET_UNAVAILABLE", "Project Open is unavailable.");
-    this.operation = "open";
+    this.beginOperation("open");
     let provisional: string | null = null;
     let activated = false;
     let adopted = false;
@@ -318,8 +459,7 @@ export class ProjectPersistenceCoordinator {
           "The project runtime could not be activated. The current project was preserved.",
         );
       activated = true;
-      this.backingProject = null;
-      this.backingValue = null;
+      this.setBacking(null, null);
       const target = await opening.port.adopt(provisional);
       if (
         target?.status !== "adopted" ||
@@ -334,13 +474,13 @@ export class ProjectPersistenceCoordinator {
               "The project is active, but its file target could not be confirmed. Use Save As.",
           },
         };
-      this.backingProject = project;
-      this.backingValue = Object.freeze({ ...target.backing });
+      const backing = Object.freeze({ ...target.backing });
+      this.setBacking(project, backing);
       // The file holds the decoded bytes, not whatever was drawn while adoption
       // was in flight, so the baseline is the only identity the disk confirms.
       project.confirmDurableCheckpoint(project.baselineStateId);
       adopted = true;
-      return { status: "opened", backing: this.backingValue };
+      return { status: "opened", backing };
     } catch {
       return activated
         ? {
@@ -362,7 +502,7 @@ export class ProjectPersistenceCoordinator {
           /* Main revokes orphans on the next Open, navigation, crash or close. */
         }
       }
-      this.operation = null;
+      this.endOperation();
     }
   }
 
@@ -380,7 +520,7 @@ export class ProjectPersistenceCoordinator {
   private async performSave(saveAs: boolean): Promise<ProjectSaveResult> {
     if (this.operation !== null || !this.canSave())
       return saveFailure("BUSY", "A project operation is already in progress.");
-    this.operation = "save";
+    this.beginOperation("save");
     const project = this.currentProject();
     try {
       let content: string;
@@ -399,8 +539,7 @@ export class ProjectPersistenceCoordinator {
           : { kind: "save", targetId: this.backing!.id, content },
       );
       if (result.status === "saved") {
-        this.backingProject = project;
-        this.backingValue = Object.freeze({ ...result.backing });
+        this.setBacking(project, Object.freeze({ ...result.backing }));
         // Checkpoint what the disk actually received. Editing continued during
         // the write, so a later state must stay dirty.
         project.confirmDurableCheckpoint(capture.stateId);
@@ -409,7 +548,7 @@ export class ProjectPersistenceCoordinator {
     } catch {
       return saveFailure("UNKNOWN", "The desktop save result could not be confirmed.");
     } finally {
-      this.operation = null;
+      this.endOperation();
     }
   }
 }
