@@ -156,7 +156,9 @@ describe("ProjectSession", () => {
         "utf8",
       ),
     ]);
-    expect(workspace).toContain("useState(() => new ProjectSession(createEmptyFolioProject()))");
+    expect(workspace).toContain("useState(() => {");
+    expect(workspace).toContain("new ProjectSession(createEmptyFolioProject())");
+    expect(workspace).toContain("const projectSession = entry.project;");
     expect(workspace).toContain("session={projectSession.documentSession}");
     expect(host).toContain("session={session}");
     expect(host).not.toContain("new InkDocumentSession");

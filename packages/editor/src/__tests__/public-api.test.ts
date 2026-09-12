@@ -32,6 +32,7 @@ describe("@folio/editor public API", () => {
       "PAGE_PRESETS",
       "PAPER_COLOR_PRESETS",
       "PAPER_TYPES",
+      "ProjectRuntimeHost",
       "ProjectSession",
       "RECENT_COLOR_CAPACITY",
       "SPECTRUM_ACHROMATIC_CHROMA",

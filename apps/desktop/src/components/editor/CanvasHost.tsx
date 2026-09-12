@@ -1,3 +1,4 @@
+import { useRuntimeEffect } from "./useRuntimeEffect";
 import {
   CanvasSurface,
   type ArtworkColorSampleResult,
@@ -14,7 +15,7 @@ import {
   type EditorViewportSnapshot,
   type ViewportActions,
 } from "@folio/editor";
-import { memo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useCallback, useLayoutEffect, useRef } from "react";
 import {
   brushCursorDiameter,
   cursorPresentationForTool,
@@ -28,6 +29,7 @@ import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./wo
 
 interface CanvasHostProps {
   readonly session: CanvasSurfaceProps["session"];
+  readonly runtime?: CanvasSurfaceProps["runtime"];
   readonly onEditorError: NonNullable<CanvasSurfaceProps["onError"]>;
   readonly activeTool: EditorTool;
   readonly armedShape: ShapeToolKind | null;
@@ -55,6 +57,7 @@ interface CanvasHostProps {
 
 export const CanvasHost = memo(function CanvasHost({
   session,
+  runtime,
   onEditorError,
   activeTool,
   armedShape,
@@ -100,9 +103,16 @@ export const CanvasHost = memo(function CanvasHost({
   const redo = useCallback((): void => {
     historyControllerRef.current?.redo();
   }, []);
-  useEffect(() => {
-    onHistoryActionsReady(Object.freeze({ undo, redo }));
-    return () => onHistoryActionsReady(null);
+  useRuntimeEffect(runtime, () => {
+    const publish = (actions: WorkspaceHistoryActions | null) => {
+      if (runtime === undefined) onHistoryActionsReady(actions);
+      else
+        runtime.entry.activation?.publish(historyControllerRef, () =>
+          onHistoryActionsReady(actions),
+        );
+    };
+    publish(Object.freeze({ undo, redo }));
+    return () => publish(null);
   }, [onHistoryActionsReady, redo, undo]);
   const handleHistoryControllerReady: NonNullable<CanvasSurfaceProps["onHistoryControllerReady"]> =
     useCallback((controller) => {
@@ -137,7 +147,7 @@ export const CanvasHost = memo(function CanvasHost({
                   : activeTool === "Shapes" && armedShape !== null
                     ? armedShape
                     : "disabled";
-  useEffect(() => {
+  useRuntimeEffect(runtime, () => {
     const inkCanvas = hostRef.current?.querySelector<HTMLCanvasElement>(
       'canvas[data-folio-layer="ink"]',
     );
@@ -174,7 +184,7 @@ export const CanvasHost = memo(function CanvasHost({
     inkCanvas.addEventListener("pointermove", activateAdaptiveCursor, { once: true });
     return () => inkCanvas.removeEventListener("pointermove", activateAdaptiveCursor);
   }, [activeTool, armedShape, artworkSamplingActive]);
-  useEffect(() => {
+  useRuntimeEffect(runtime, () => {
     const outerHost = hostRef.current;
     const brushCursor = brushCursorRef.current;
     const inkCanvas = outerHost?.querySelector<HTMLCanvasElement>('canvas[data-folio-layer="ink"]');
@@ -291,7 +301,7 @@ export const CanvasHost = memo(function CanvasHost({
       if (brushActive && inkCanvas.style.cursor === "none") inkCanvas.style.cursor = "default";
     };
   }, [activeTool, artworkSamplingActive, drawingStyle.width, viewportSnapshot.zoom]);
-  useEffect(() => {
+  useRuntimeEffect(runtime, () => {
     if (!artworkSamplingActive) return;
     const outerHost = hostRef.current;
     const brushCursor = brushCursorRef.current;
@@ -352,6 +362,7 @@ export const CanvasHost = memo(function CanvasHost({
     >
       <CanvasSurface
         session={session}
+        {...(runtime === undefined ? {} : { runtime })}
         onError={onEditorError}
         className="relative size-full"
         interactionMode={interactionMode}

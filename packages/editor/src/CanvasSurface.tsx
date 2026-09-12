@@ -63,6 +63,8 @@ import {
   type SelectionState,
 } from "@folio/selection";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { RuntimeActivation, runtimeCallback } from "./runtime-activation";
+import type { ProjectRuntime, ProjectRuntimeHost } from "./project-runtime-host";
 import {
   createCanvasArtworkColorSampler,
   type ArtworkColorSampleResult,
@@ -319,6 +321,8 @@ export interface ShapeEditingSnapshot {
 export interface CanvasSurfaceProps {
   /** Project-owned document authority; keep its identity stable for this canvas lifetime. */
   readonly session: InkDocumentSession;
+  /** Optional transactional host. Candidates prepare resources without active input/publications. */
+  readonly runtime?: Readonly<{ host: ProjectRuntimeHost; entry: ProjectRuntime }>;
   /** Optional host class name supplied by the desktop shell. */
   readonly className?: string;
   /** Active pointer-input mode without remounting the canvas lifecycle. */
@@ -463,6 +467,7 @@ interface ActiveLineEndpointInteraction {
 /** Mounts and owns one editor canvas stack for the lifetime of the React host. */
 export function CanvasSurface({
   session,
+  runtime,
   className,
   interactionMode = "ink",
   drawingStyle,
@@ -492,6 +497,7 @@ export function CanvasSurface({
   onViewportNavigationLearned,
   onError,
 }: CanvasSurfaceProps) {
+  const activationRef = useRef<RuntimeActivation | null>(null);
   const renderCountRef = useRef(0);
   const hostRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -553,7 +559,7 @@ export function CanvasSurface({
     }
     resetManipulationCursorRef.current?.();
     resetVectorHoverRef.current?.();
-    toolRegistryRef.current?.activate(interactionMode);
+    if (activationRef.current?.active) toolRegistryRef.current?.activate(interactionMode);
     updateToolDiagnosticsRef.current?.();
   }, [interactionMode]);
 
@@ -665,6 +671,42 @@ export function CanvasSurface({
       return;
     }
 
+    const activation = new RuntimeActivation(
+      () => runtime === undefined || runtime.host.active === runtime.entry,
+      (error) => errorRef.current?.(error),
+    );
+    activationRef.current = activation;
+    if (runtime !== undefined) runtime.host.attach(runtime.entry, activation);
+    const callbacks = {
+      shapeEditingChangeRef: runtimeCallback(activation, shapeEditingChangeRef),
+      selectionChangeRef: runtimeCallback(activation, selectionChangeRef),
+      historyChangeRef: runtimeCallback(activation, historyChangeRef, false),
+      artworkColorUsedRef: runtimeCallback(activation, artworkColorUsedRef, false),
+      shapeEditingActionsReadyRef: runtimeCallback(activation, shapeEditingActionsReadyRef),
+      layersChangeRef: runtimeCallback(activation, layersChangeRef),
+      pagesChangeRef: runtimeCallback(activation, pagesChangeRef),
+      pageActionsReadyRef: runtimeCallback(activation, pageActionsReadyRef),
+      layerActionsReadyRef: runtimeCallback(activation, layerActionsReadyRef),
+      objectLifecycleActionsReadyRef: runtimeCallback(activation, objectLifecycleActionsReadyRef),
+      manipulationChangeRef: runtimeCallback(activation, manipulationChangeRef),
+      viewportChangeRef: runtimeCallback(activation, viewportChangeRef),
+      diagnosticsRef: runtimeCallback(activation, diagnosticsRef),
+      viewportActionsReadyRef: runtimeCallback(activation, viewportActionsReadyRef),
+      viewportNavigationLearnedRef: runtimeCallback(
+        activation,
+        viewportNavigationLearnedRef,
+        false,
+      ),
+      activeLayerRefusalRef: runtimeCallback(activation, activeLayerRefusalRef, false),
+      artworkSampleRef: runtimeCallback(activation, artworkSampleRef, false),
+      toolRegistryReadyRef: runtimeCallback(activation, toolRegistryReadyRef),
+      escapeActionsReadyRef: runtimeCallback(activation, escapeActionsReadyRef),
+      controllerReadyRef: runtimeCallback(activation, controllerReadyRef),
+      selectionControllerReadyRef: runtimeCallback(activation, selectionControllerReadyRef),
+      manipulationControllerReadyRef: runtimeCallback(activation, manipulationControllerReadyRef),
+      historyControllerReadyRef: runtimeCallback(activation, historyControllerReadyRef),
+      errorRef: { current: (error: Error) => activation.report(error) },
+    };
     const documentSession = session;
     const editorClipboard = new EditorClipboard();
     const editorSelection = new EditorSelectionSet();
@@ -672,20 +714,30 @@ export function CanvasSurface({
     // One resolver owns every Layer eligibility rule for this editor instance.
     const effective = createEffectiveObjectState(() => documentSession.page);
     let synchronizeViewportLayers: (snapshot: CanvasControllerSnapshot) => void = () => undefined;
-    const controller = new CanvasController({
-      theme: readTheme(),
-      overlayHooks: [
-        createPageObjectRenderHook(
-          () => documentSession.collection.objects,
-          (objectIds) => {
-            host.dataset.renderedObjectOrder = JSON.stringify(objectIds);
-          },
-          effective,
-        ),
-      ],
-      onViewportChange: (snapshot) => synchronizeViewportLayers(snapshot),
-      onError: (error) => errorRef.current?.(error),
-    });
+    let controller: CanvasController;
+    try {
+      controller = new CanvasController({
+        theme: readTheme(),
+        overlayHooks: [
+          createPageObjectRenderHook(
+            () => documentSession.collection.objects,
+            (objectIds) => {
+              host.dataset.renderedObjectOrder = JSON.stringify(objectIds);
+            },
+            effective,
+          ),
+        ],
+        onViewportChange: (snapshot) => synchronizeViewportLayers(snapshot),
+        onError: (error) => callbacks.errorRef.current?.(error),
+      });
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error("Canvas construction failed.");
+      activation.report(error);
+      const result = activation.finishPreparation(() => undefined);
+      if (runtime !== undefined) runtime.host.prepared(runtime.entry, result);
+      else errorRef.current?.(error);
+      return () => activation.dispose();
+    }
     let themeObserver: MutationObserver | null = null;
     let pointerInput: PointerInputController | null = null;
     let strokeRenderer: StrokeRenderer | null = null;
@@ -1053,7 +1105,7 @@ export function CanvasSurface({
           String(state.selectionVersion),
         );
         updateEditorSelectionDiagnostics();
-        shapeEditingChangeRef.current?.(
+        callbacks.shapeEditingChangeRef.current?.(
           createSelectionEditingSnapshot({
             objects: editorSelection.selectedObjects(documentSession.collection),
             page: documentSession.page,
@@ -1063,7 +1115,7 @@ export function CanvasSurface({
           }),
         );
         if (selectionState === "empty") resetManipulationCursor();
-        if (notify) selectionChangeRef.current?.(state);
+        if (notify) callbacks.selectionChangeRef.current?.(state);
       };
       let synchronizePrimaryIntoEditorSelection = true;
       unsubscribeSelection = activeSelectionController.subscribe((state) => {
@@ -1342,7 +1394,7 @@ export function CanvasSurface({
         ["pointercancel", loupePointerExit],
       ];
       for (const [type, listener] of loupePointerListeners) {
-        host.addEventListener(type, listener, true);
+        activation.listen(host, type, listener, true);
       }
       const hideRotationIndicator = (): void => {
         if (rotationIndicatorFrame !== null) {
@@ -1534,14 +1586,15 @@ export function CanvasSurface({
               publishPagesRef?.();
             }
           }
-          historyChangeRef.current?.(notification);
+          callbacks.historyChangeRef.current?.(notification);
         },
-        onError: (error) => errorRef.current?.(error),
+        onError: (error) => callbacks.errorRef.current?.(error),
       });
       const activeHistoryCoordinator = historyCoordinator;
       uninstallHistoryShortcuts = installEditorHistoryShortcuts({
+        eventTarget: activation.eventTarget(window),
         controller: activeHistoryCoordinator.controller,
-        onError: (error) => errorRef.current?.(error),
+        onError: (error) => callbacks.errorRef.current?.(error),
       });
       updateHistoryDiagnostics(activeHistoryCoordinator.controller.getHistoryState());
       manipulationController = createManipulationController({
@@ -1576,21 +1629,23 @@ export function CanvasSurface({
               cause instanceof Error
                 ? cause
                 : new Error("History transform execution failed.", { cause });
-            errorRef.current?.(error);
+            callbacks.errorRef.current?.(error);
             return false;
           }
         },
-        onError: (error) => errorRef.current?.(error),
+        onError: (error) => callbacks.errorRef.current?.(error),
       });
       const activeManipulationController = manipulationController;
       manipulationControllerRef.current = activeManipulationController;
       const reportEditingFailure = (cause: unknown, message: string): false => {
-        errorRef.current?.(cause instanceof Error ? cause : new Error(message, { cause }));
+        callbacks.errorRef.current?.(
+          cause instanceof Error ? cause : new Error(message, { cause }),
+        );
         return false;
       };
       const reportArtworkColorUsed = (color: string): void => {
         try {
-          artworkColorUsedRef.current?.(color);
+          callbacks.artworkColorUsedRef.current?.(color);
         } catch {
           // Application observers cannot interrupt a successful document commit.
         }
@@ -1639,7 +1694,7 @@ export function CanvasSurface({
             if (edit.initialStyle.color !== edit.finalStyle.color) {
               const committed = documentSession.collection.lookup(edit.objectId);
               if (committed !== undefined)
-                artworkColorUsedRef.current?.(committedArtworkColor(committed));
+                callbacks.artworkColorUsedRef.current?.(committedArtworkColor(committed));
             }
           }
           return state;
@@ -1726,7 +1781,7 @@ export function CanvasSurface({
         },
         cancelContinuousStyleEdit,
       });
-      shapeEditingActionsReadyRef.current?.(shapeEditingActions);
+      callbacks.shapeEditingActionsReadyRef.current?.(shapeEditingActions);
       const publishLayers = (): void => {
         const page = documentSession.page;
         host.dataset.layerCount = String(page.layerCount);
@@ -1735,7 +1790,7 @@ export function CanvasSurface({
         host.dataset.layerMembership = JSON.stringify(
           page.layers.map((layer) => layer.objectIds.length),
         );
-        layersChangeRef.current?.(
+        callbacks.layersChangeRef.current?.(
           Object.freeze({
             layers: Object.freeze(
               page.layers.map((layer) =>
@@ -1881,7 +1936,7 @@ export function CanvasSurface({
         host.dataset.pageOrientation = active.orientation;
         host.dataset.pagePaperType = active.paper.type;
         host.dataset.pagePaperColor = active.paper.color;
-        pagesChangeRef.current?.(
+        callbacks.pagesChangeRef.current?.(
           Object.freeze({
             pages: Object.freeze(
               sketchbook.pages.map((page, index) =>
@@ -2081,8 +2136,8 @@ export function CanvasSurface({
           documentSession.sketchbook.page(pageId)?.hasArtworkOutsideBounds() ?? false,
         getPage: (pageId: string): Page | null => documentSession.sketchbook.page(pageId) ?? null,
       });
-      pageActionsReadyRef.current?.(pageActions);
-      layerActionsReadyRef.current?.(layerActions);
+      callbacks.pageActionsReadyRef.current?.(pageActions);
+      callbacks.layerActionsReadyRef.current?.(layerActions);
       publishLayersRef = publishLayers;
       publishPagesRef = publishPages;
       applyActivePageToViewport(false);
@@ -2174,15 +2229,16 @@ export function CanvasSurface({
       });
       editingActionsRef.current = editingActions;
       uninstallEditingShortcuts = installEditorEditingShortcuts({
+        eventTarget: activation.eventTarget(window),
         actions: editingActions,
-        onError: (error) => errorRef.current?.(error),
+        onError: (error) => callbacks.errorRef.current?.(error),
       });
       updateClipboardDiagnostics();
       const objectLifecycleActions: ObjectLifecycleActions = Object.freeze({
         deleteSelection: editingActions.deleteSelection,
         duplicateSelection: editingActions.duplicate,
       });
-      objectLifecycleActionsReadyRef.current?.(objectLifecycleActions);
+      callbacks.objectLifecycleActionsReadyRef.current?.(objectLifecycleActions);
       const updateManipulation = (state: ManipulationState, notify: boolean): void => {
         host.dataset.manipulationPhase = state.phase;
         host.dataset.manipulationKind = state.kind ?? "";
@@ -2343,7 +2399,7 @@ export function CanvasSurface({
         if (state.phase === "committing" || state.phase === "cancelling") {
           releaseManipulationPointerCapture();
         }
-        if (notify) manipulationChangeRef.current?.(state);
+        if (notify) callbacks.manipulationChangeRef.current?.(state);
       };
       unsubscribeManipulation = activeManipulationController.subscribe((state) =>
         updateManipulation(state, true),
@@ -2361,7 +2417,7 @@ export function CanvasSurface({
           viewportPresentationFrame = null;
           const presentation = latestViewportPresentation;
           latestViewportPresentation = null;
-          if (presentation !== null) viewportChangeRef.current?.(presentation);
+          if (presentation !== null) callbacks.viewportChangeRef.current?.(presentation);
         });
       };
       synchronizeViewportLayers = (snapshot): void => {
@@ -2374,7 +2430,7 @@ export function CanvasSurface({
         updateManipulation(activeManipulationController.getManipulationState(), false);
         updateDocumentDiagnostics();
         publishViewportPresentation(snapshot);
-        diagnosticsRef.current?.(snapshot);
+        callbacks.diagnosticsRef.current?.(snapshot);
       };
       const viewportActions: ViewportActions = Object.freeze({
         zoomIn: () =>
@@ -2402,7 +2458,7 @@ export function CanvasSurface({
         fitPage: () => controller.fitPage(),
         fitWidth: () => controller.fitWidth(),
       });
-      viewportActionsReadyRef.current?.(viewportActions);
+      callbacks.viewportActionsReadyRef.current?.(viewportActions);
       synchronizeViewportLayers(controller.snapshot());
 
       const editorPointerIds = new Set<number>();
@@ -2507,7 +2563,7 @@ export function CanvasSurface({
               if (active.source === "space" && !navigationTeachingReported && cameraMoved) {
                 navigationTeachingReported = true;
                 host.dataset.navigationTeachingLearned = "true";
-                viewportNavigationLearnedRef.current?.();
+                callbacks.viewportNavigationLearnedRef.current?.();
               }
               active.lastViewportPoint = point;
             }
@@ -2764,7 +2820,7 @@ export function CanvasSurface({
         const refusal = effective.activeLayerRefusal(documentSession.activeLayerId);
         if (refusal === null) return false;
         host.dataset.activeLayerWriteRefusal = refusal;
-        activeLayerRefusalRef.current?.(refusal);
+        callbacks.activeLayerRefusalRef.current?.(refusal);
         return true;
       };
 
@@ -3094,7 +3150,7 @@ export function CanvasSurface({
             host.dataset.artworkSampleDurationMs = String(result.durationMs);
           }
         }
-        artworkSampleRef.current?.(result);
+        callbacks.artworkSampleRef.current?.(result);
       };
       const handleArtworkSamplingPointer = (
         phase: SelectionPointerInput["phase"],
@@ -3145,7 +3201,7 @@ export function CanvasSurface({
             }
           }
         };
-        inkLayer?.canvas.addEventListener(type, listener, true);
+        activation.listen(inkLayer!.canvas, type, listener, true);
         editorPointerListeners.push([type, listener]);
       };
       addEditorPointerListener("pointerdown", "down");
@@ -3191,7 +3247,7 @@ export function CanvasSurface({
           });
         }
       };
-      inkLayer.canvas.addEventListener("wheel", wheelListener, { capture: true, passive: false });
+      activation.listen(inkLayer.canvas, "wheel", wheelListener, { capture: true, passive: false });
       editorPointerListeners.push(["wheel", wheelListener]);
       host.dataset.viewportWheelPolicy = "ctrl-zoom-wheel-pan";
       const cursorLeaveListener: EventListener = () => {
@@ -3204,7 +3260,7 @@ export function CanvasSurface({
         }
         activeVectorInteractionRenderer.setHover(null);
       };
-      inkLayer.canvas.addEventListener("pointerleave", cursorLeaveListener, true);
+      activation.listen(inkLayer.canvas, "pointerleave", cursorLeaveListener, true);
       editorPointerListeners.push(["pointerleave", cursorLeaveListener]);
       contextMenuListener = (event): void => {
         event.preventDefault();
@@ -3241,7 +3297,7 @@ export function CanvasSurface({
           }),
         );
       };
-      inkLayer.canvas.addEventListener("contextmenu", contextMenuListener);
+      activation.listen(inkLayer.canvas, "contextmenu", contextMenuListener as EventListener);
       const resolveDrawingStyle = (): Readonly<{
         color: string;
         width: number;
@@ -3354,11 +3410,11 @@ export function CanvasSurface({
               cause instanceof Error
                 ? cause
                 : new Error("History stroke execution failed.", { cause });
-            errorRef.current?.(error);
+            callbacks.errorRef.current?.(error);
           }
         },
         onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
-        onError: (error) => errorRef.current?.(error),
+        onError: (error) => callbacks.errorRef.current?.(error),
       });
       const activePointerInput = pointerInput;
       const activeInkCanvas = inkLayer.canvas;
@@ -3799,9 +3855,19 @@ export function CanvasSurface({
       };
       toolRegistryRef.current = activeToolRegistry;
       updateToolDiagnosticsRef.current = updateToolDiagnostics;
-      activeToolRegistry.activate(interactionModeRef.current);
+      activation.onActive(() => {
+        // PointerInput attaches only at activation; no candidate window-blur subscription.
+        try {
+          activeToolRegistry.activate(interactionModeRef.current);
+          updateToolDiagnostics();
+        } catch (cause) {
+          activePointerInput.detach();
+          throw cause;
+        }
+        return () => activePointerInput.detach();
+      });
       updateToolDiagnostics();
-      toolRegistryReadyRef.current?.(activeToolRegistry);
+      callbacks.toolRegistryReadyRef.current?.(activeToolRegistry);
       toolKeyboardDownListener = (event) => {
         if (!handleViewportKeyboard("down", event)) {
           activeToolRegistry.handleKeyboard("down", event);
@@ -3816,9 +3882,9 @@ export function CanvasSurface({
         cancelContinuousStyleEdit();
         cancelViewportPan();
       };
-      window.addEventListener("keydown", toolKeyboardDownListener, true);
-      window.addEventListener("keyup", toolKeyboardUpListener, true);
-      window.addEventListener("blur", viewportBlurListener);
+      activation.listen(window, "keydown", toolKeyboardDownListener as EventListener, true);
+      activation.listen(window, "keyup", toolKeyboardUpListener as EventListener, true);
+      activation.listen(window, "blur", viewportBlurListener);
       host.dataset.rendererState = "ready";
       host.dataset.inkState = "ready";
       host.dataset.documentState = "ready";
@@ -3871,22 +3937,27 @@ export function CanvasSurface({
           return false;
         },
       });
-      escapeActionsReadyRef.current?.(escapeActions);
-      controllerReadyRef.current?.(controller);
-      selectionControllerReadyRef.current?.(activeSelectionController);
-      manipulationControllerReadyRef.current?.(activeManipulationController);
-      historyControllerReadyRef.current?.(activeHistoryCoordinator.controller);
-      diagnosticsRef.current?.(controller.snapshot());
+      callbacks.escapeActionsReadyRef.current?.(escapeActions);
+      callbacks.controllerReadyRef.current?.(controller);
+      callbacks.selectionControllerReadyRef.current?.(activeSelectionController);
+      callbacks.manipulationControllerReadyRef.current?.(activeManipulationController);
+      callbacks.historyControllerReadyRef.current?.(activeHistoryCoordinator.controller);
+      callbacks.diagnosticsRef.current?.(controller.snapshot());
       themeObserver = new MutationObserver(() => {
         if (controller.status === "mounted") {
           controller.setTheme(readTheme());
-          diagnosticsRef.current?.(controller.snapshot());
+          callbacks.diagnosticsRef.current?.(controller.snapshot());
         }
       });
       themeObserver.observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["data-theme", "style", "class"],
       });
+      // Include the first artwork render in preparation, not after disposing the old runtime.
+      controller.flushRender();
+      if (latestViewportPresentation !== null) {
+        callbacks.viewportChangeRef.current?.(latestViewportPresentation);
+      }
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error("Canvas initialization failed.");
       host.dataset.rendererState = "error";
@@ -3897,11 +3968,12 @@ export function CanvasSurface({
       host.dataset.objectLifecycleCapability = "error";
       host.dataset.clipboardCapability = "error";
       host.dataset.contextMenuCapability = "error";
-      errorRef.current?.(error);
+      callbacks.errorRef.current?.(error);
     }
 
-    return () => {
+    const cleanup = () => {
       continuousVectorStyleEdit?.cancel();
+      continuousSelectionStyleEdit?.cancel();
       continuousPaperColorEdit?.cancel();
       themeObserver?.disconnect();
       for (const [type, listener] of editorPointerListeners) {
@@ -3927,7 +3999,7 @@ export function CanvasSurface({
         cancelAnimationFrame(rotationIndicatorFrame);
         rotationIndicatorFrame = null;
       }
-      viewportActionsReadyRef.current?.(null);
+      callbacks.viewportActionsReadyRef.current?.(null);
       unsubscribeSelection?.();
       unsubscribeManipulation?.();
       manipulationController?.destroy();
@@ -3942,7 +4014,7 @@ export function CanvasSurface({
       releaseShapePointerCapture();
       toolRegistryRef.current = null;
       updateToolDiagnosticsRef.current = null;
-      toolRegistryReadyRef.current?.(null);
+      callbacks.toolRegistryReadyRef.current?.(null);
       uninstallHistoryShortcuts?.();
       uninstallEditingShortcuts?.();
       editingActionsRef.current = null;
@@ -3950,12 +4022,12 @@ export function CanvasSurface({
       editorSelection.clear();
       selectionGeometry.clear();
       historyCoordinator?.destroy();
-      objectLifecycleActionsReadyRef.current?.(null);
-      escapeActionsReadyRef.current?.(null);
-      pageActionsReadyRef.current?.(null);
-      layerActionsReadyRef.current?.(null);
-      shapeEditingActionsReadyRef.current?.(null);
-      shapeEditingChangeRef.current?.(null);
+      callbacks.objectLifecycleActionsReadyRef.current?.(null);
+      callbacks.escapeActionsReadyRef.current?.(null);
+      callbacks.pageActionsReadyRef.current?.(null);
+      callbacks.layerActionsReadyRef.current?.(null);
+      callbacks.shapeEditingActionsReadyRef.current?.(null);
+      callbacks.shapeEditingChangeRef.current?.(null);
       selectionController?.destroy();
       pointerInput?.destroy();
       selectionOverlayRenderer?.destroy();
@@ -3982,7 +4054,24 @@ export function CanvasSurface({
       loupeElement?.remove();
       controller.destroy();
     };
-  }, [session]);
+
+    const result = activation.finishPreparation(cleanup);
+    if (runtime !== undefined)
+      queueMicrotask(() => {
+        if (runtime.entry.activation === activation) runtime.host.prepared(runtime.entry, result);
+      });
+    else if (result.status === "ready") {
+      const armed = activation.arm();
+      if (armed.status === "ready") {
+        const committed = activation.commit();
+        if (committed.status === "failed") {
+          activation.dispose();
+          errorRef.current?.(committed.error);
+        }
+      } else errorRef.current?.(armed.error);
+    } else errorRef.current?.(result.error);
+    return () => activation.dispose();
+  }, [session, runtime]);
 
   const performContextMenuAction = (action: EditorContextMenuAction): void => {
     const actions = editingActionsRef.current;

@@ -1,4 +1,4 @@
-import { ProjectSession } from "@folio/editor";
+import { ProjectSession, ProjectRuntimeHost, type ProjectRuntime } from "@folio/editor";
 import { createEmptyFolioProject } from "@folio/persistence/project";
 import { ProjectPersistenceCoordinator } from "../../persistence/project-persistence-coordinator";
 import type {
@@ -19,7 +19,16 @@ import type {
   EditorViewportSnapshot,
   ViewportActions,
 } from "@folio/editor";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { EditorTool, ShapeToolKind } from "./editor-types";
 import type { FloatingToolWidgetId } from "./floating-tool-widget-registry";
 import { CanvasHost } from "./CanvasHost";
@@ -48,6 +57,7 @@ import type { ToolOptionsDescriptor } from "./tool-options-registry";
 import type { WorkspaceHistoryActions, WorkspaceHistoryAvailability } from "./workspace-history";
 
 interface EditorWorkspaceProps {
+  onProjectRuntimeReady?: (host: ProjectRuntimeHost | null) => void;
   onProjectPersistenceReady?: (coordinator: ProjectPersistenceCoordinator | null) => void;
   pageNavigatorOpen: boolean;
   onDismissPageNavigator: () => void;
@@ -101,8 +111,55 @@ interface EditorWorkspaceProps {
   onViewportNavigationLearned: () => void;
 }
 
-export function EditorWorkspace({
-  onProjectPersistenceReady,
+export function EditorWorkspace(props: EditorWorkspaceProps) {
+  const [{ host, persistence }] = useState(() => {
+    const runtimeHost = new ProjectRuntimeHost(
+      new ProjectSession(createEmptyFolioProject()),
+      () => !coordinator.isSaving,
+    );
+    const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
+      () => runtimeHost.active.project,
+      { save: (request) => window.folio.projects.save(request) },
+      () => !runtimeHost.replacing,
+    );
+    return { host: runtimeHost, persistence: coordinator };
+  });
+  const runtimes = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
+  const escapeActionsRef = useRef<EditorEscapeActions | null>(null);
+  const publishEscape = useCallback((actions: EditorEscapeActions | null) => {
+    escapeActionsRef.current = actions;
+  }, []);
+  // The shared fallback belongs to the stable host, never to an inert candidate.
+  useEffect(() => registerCanvasEscape(() => escapeActionsRef.current?.escape() ?? false), []);
+  useEffect(() => host.connect(), [host]);
+  const { onProjectPersistenceReady, onProjectRuntimeReady } = props;
+  useEffect(() => {
+    onProjectPersistenceReady?.(persistence);
+    onProjectRuntimeReady?.(host);
+    return () => {
+      onProjectPersistenceReady?.(null);
+      onProjectRuntimeReady?.(null);
+    };
+  }, [host, persistence, onProjectPersistenceReady, onProjectRuntimeReady]);
+  return (
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      {runtimes.map((entry) => (
+        <ProjectWorkspace
+          key={entry.id}
+          {...props}
+          host={host}
+          entry={entry}
+          publishEscape={publishEscape}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProjectWorkspace({
+  host,
+  entry,
+  publishEscape,
   pageNavigatorOpen,
   onDismissPageNavigator,
   pageSettingsOpen,
@@ -149,19 +206,14 @@ export function EditorWorkspace({
   onViewportActionsReady,
   onViewportChange,
   onViewportNavigationLearned,
-}: EditorWorkspaceProps) {
-  // One project survives tool/page/panel rerenders and canvas controller lifetimes.
-  const [projectSession] = useState(() => new ProjectSession(createEmptyFolioProject()));
-  const [projectPersistence] = useState(
-    () =>
-      new ProjectPersistenceCoordinator(projectSession, {
-        save: (request) => window.folio.projects.save(request),
-      }),
-  );
-  useEffect(() => {
-    onProjectPersistenceReady?.(projectPersistence);
-    return () => onProjectPersistenceReady?.(null);
-  }, [onProjectPersistenceReady, projectPersistence]);
+}: EditorWorkspaceProps & {
+  host: ProjectRuntimeHost;
+  entry: ProjectRuntime;
+  publishEscape: (actions: EditorEscapeActions | null) => void;
+}) {
+  const projectSession = entry.project;
+  const active = host.active === entry;
+  const runtime = useMemo(() => ({ host, entry }), [host, entry]);
   const workspaceRef = useRef<HTMLElement | null>(null);
   const historyActionsRef = useRef<WorkspaceHistoryActions | null>(null);
   const handleHistoryActionsReady = useCallback(
@@ -271,12 +323,6 @@ export function EditorWorkspace({
     },
     [],
   );
-  const escapeActionsRef = useRef<EditorEscapeActions | null>(null);
-  const handleEscapeActionsReady = useCallback((actions: EditorEscapeActions | null) => {
-    escapeActionsRef.current = actions;
-  }, []);
-  // The canvas sits beneath every floating surface in the shared dismissal stack.
-  useEffect(() => registerCanvasEscape(() => escapeActionsRef.current?.escape() ?? false), []);
   const handleShapeEditingActionsReady = useCallback((actions: ShapeEditingActions | null) => {
     shapeEditingActionsRef.current = actions;
   }, []);
@@ -397,7 +443,7 @@ export function EditorWorkspace({
   const stackPageId = pagesSnapshot.activePageId;
   const stackOpenedOnPage = useRef<string | null>(null);
   useEffect(() => {
-    if (!stackOpen) {
+    if (!active || !stackOpen) {
       stackOpenedOnPage.current = null;
       return;
     }
@@ -406,7 +452,7 @@ export function EditorWorkspace({
       return;
     }
     if (stackOpenedOnPage.current !== stackPageId) onDismissLayers();
-  }, [onDismissLayers, stackOpen, stackPageId]);
+  }, [active, onDismissLayers, stackOpen, stackPageId]);
   const resolveCreationColorForOwnershipChange = useCallback((): void => {
     const resolution = resolveCreationColorSession(
       colorPicker.snapshot?.target.id ?? null,
@@ -490,12 +536,21 @@ export function EditorWorkspace({
   return (
     <section
       ref={workspaceRef}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
+      className={
+        active
+          ? "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
+          : "absolute inset-0 overflow-hidden"
+      }
+      style={active ? undefined : { visibility: "hidden", pointerEvents: "none" }}
+      inert={!active}
+      aria-hidden={!active}
+      data-project-runtime={active ? "active" : "candidate"}
       aria-label="Notebook workspace"
       data-testid="editor-workspace"
     >
       <CanvasHost
         session={projectSession.documentSession}
+        runtime={runtime}
         onEditorError={handleEditorError}
         activeTool={activeTool}
         armedShape={armedShape}
@@ -505,7 +560,7 @@ export function EditorWorkspace({
         onArtworkSample={handleArtworkSample}
         viewportSnapshot={viewportSnapshot}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}
-        onEscapeActionsReady={handleEscapeActionsReady}
+        onEscapeActionsReady={publishEscape}
         onActiveLayerRefusal={handleActiveLayerRefusal}
         onShapeEditingActionsReady={handleShapeEditingActionsReady}
         onShapeEditingChange={handleShapeEditingChange}
@@ -520,134 +575,140 @@ export function EditorWorkspace({
         onViewportChange={onViewportChange}
         onViewportNavigationLearned={onViewportNavigationLearned}
       />
-      <SpatialLayersView
-        open={layersOpen && layersView === "stack"}
-        page={pageActions?.getPage(pagesSnapshot.activePageId) ?? null}
-        snapshot={layersSnapshot}
-        revision={thumbnailRevision}
-        actions={layerActions}
-        onActivateLayer={handleActivateStackLayer}
-        onShowList={() => onShowLayersView("list")}
-        onDismiss={onDismissLayers}
-        onNotify={notifyLayerDeleted}
-      />
-      <RadialBrushLibrary
-        open={brushLibraryOpen}
-        anchorSlotId={activeDockSlotId}
-        selectedBrushId={activeSlotBrushId}
-        onSelectBrush={handleSelectLibraryBrush}
-        onDismiss={onDismissBrushLibrary}
-      />
-      <ToolDock
-        activeTool={activeTool}
-        activeDrawingSlotId={activeDrawingSlotId}
-        slotFamilies={slotFamilies}
-        slotBrushIds={slotBrushIds}
-        slotBrushNames={slotBrushNames}
-        slotDrawingColors={slotDrawingColors}
-        onSelectDrawingSlot={handleSelectDrawingSlot}
-        onSelectTool={handleSelectTool}
-      />
-      <PageNavigator
-        open={pageNavigatorOpen}
-        snapshot={pagesSnapshot}
-        actions={pageActions}
-        getPage={pageActions?.getPage ?? null}
-        thumbnailRevision={thumbnailRevision}
-        onDismiss={onDismissPageNavigator}
-        onOpenPageSettings={onOpenPageSettings}
-        onNotify={notifyPageDeleted}
-      />
-      <PageSettingsPanel
-        open={pageSettingsOpen}
-        snapshot={pagesSnapshot}
-        actions={pageActions}
-        onDismiss={onDismissPageSettings}
-      />
-      <LayersPanel
-        open={layersOpen && layersView === "list"}
-        snapshot={layersSnapshot}
-        actions={layerActions}
-        onShowStack={() => onShowLayersView("stack")}
-        onDismiss={onDismissLayers}
-        onNotify={notifyLayerDeleted}
-      />
-      <ShapesWidget
-        open={activeTool === "Shapes" && activeFloatingWidget === "shapes"}
-        activeShape={activeShape}
-        onSelectShape={handleSelectShape}
-        onDismiss={onDismissFloatingWidget}
-      />
-      <ShapeEditingToolbar
-        snapshot={shapeEditingSnapshot}
-        onBeginStyleEdit={beginContinuousShapeStyleEdit}
-        onPreviewStyle={previewContinuousShapeStyle}
-        onCommitStyleEdit={commitContinuousShapeStyleEdit}
-        onCancelStyleEdit={cancelContinuousShapeStyleEdit}
-        onOpenColorPicker={openSelectedVectorPicker}
-        onDuplicate={duplicateSelection}
-        onDelete={deleteSelection}
-        layers={layersSnapshot.layers}
-        onMoveToLayer={handleMoveSelectionToLayer}
-      />
-      <DrawingPropertyRail
-        model={propertyRailModel}
-        onOpenToolOptions={onOpenToolOptions}
-        onOpenColorPicker={(anchor) => openCreationPicker(anchor, "tool-settings")}
-      />
-      <ToolOptionsWidget
-        descriptor={toolOptions}
-        onSelectPreset={onSelectDrawingPreset}
-        onOpenColorPicker={(anchor, ownerScope) =>
-          openCreationPicker(anchor, "tool-settings", ownerScope)
-        }
-        onChangeWidth={onChangeDrawingWidth}
-        onChangeOpacity={onChangeDrawingOpacity}
-        onChangeSmoothing={onChangeDrawingSmoothing}
-        onDismiss={onDismissFloatingWidget}
-        previewScale={viewportSnapshot.zoom}
-      />
-      {/*
+      {active ? (
+        <>
+          <SpatialLayersView
+            open={layersOpen && layersView === "stack"}
+            page={pageActions?.getPage(pagesSnapshot.activePageId) ?? null}
+            snapshot={layersSnapshot}
+            revision={thumbnailRevision}
+            actions={layerActions}
+            onActivateLayer={handleActivateStackLayer}
+            onShowList={() => onShowLayersView("list")}
+            onDismiss={onDismissLayers}
+            onNotify={notifyLayerDeleted}
+          />
+          <RadialBrushLibrary
+            open={brushLibraryOpen}
+            anchorSlotId={activeDockSlotId}
+            selectedBrushId={activeSlotBrushId}
+            onSelectBrush={handleSelectLibraryBrush}
+            onDismiss={onDismissBrushLibrary}
+          />
+          <ToolDock
+            activeTool={activeTool}
+            activeDrawingSlotId={activeDrawingSlotId}
+            slotFamilies={slotFamilies}
+            slotBrushIds={slotBrushIds}
+            slotBrushNames={slotBrushNames}
+            slotDrawingColors={slotDrawingColors}
+            onSelectDrawingSlot={handleSelectDrawingSlot}
+            onSelectTool={handleSelectTool}
+          />
+          <PageNavigator
+            open={pageNavigatorOpen}
+            snapshot={pagesSnapshot}
+            actions={pageActions}
+            getPage={pageActions?.getPage ?? null}
+            thumbnailRevision={thumbnailRevision}
+            onDismiss={onDismissPageNavigator}
+            onOpenPageSettings={onOpenPageSettings}
+            onNotify={notifyPageDeleted}
+          />
+          <PageSettingsPanel
+            open={pageSettingsOpen}
+            snapshot={pagesSnapshot}
+            actions={pageActions}
+            onDismiss={onDismissPageSettings}
+          />
+          <LayersPanel
+            open={layersOpen && layersView === "list"}
+            snapshot={layersSnapshot}
+            actions={layerActions}
+            onShowStack={() => onShowLayersView("stack")}
+            onDismiss={onDismissLayers}
+            onNotify={notifyLayerDeleted}
+          />
+          <ShapesWidget
+            open={activeTool === "Shapes" && activeFloatingWidget === "shapes"}
+            activeShape={activeShape}
+            onSelectShape={handleSelectShape}
+            onDismiss={onDismissFloatingWidget}
+          />
+          <ShapeEditingToolbar
+            snapshot={shapeEditingSnapshot}
+            onBeginStyleEdit={beginContinuousShapeStyleEdit}
+            onPreviewStyle={previewContinuousShapeStyle}
+            onCommitStyleEdit={commitContinuousShapeStyleEdit}
+            onCancelStyleEdit={cancelContinuousShapeStyleEdit}
+            onOpenColorPicker={openSelectedVectorPicker}
+            onDuplicate={duplicateSelection}
+            onDelete={deleteSelection}
+            layers={layersSnapshot.layers}
+            onMoveToLayer={handleMoveSelectionToLayer}
+          />
+          <DrawingPropertyRail
+            model={propertyRailModel}
+            onOpenToolOptions={onOpenToolOptions}
+            onOpenColorPicker={(anchor) => openCreationPicker(anchor, "tool-settings")}
+          />
+          <ToolOptionsWidget
+            descriptor={toolOptions}
+            onSelectPreset={onSelectDrawingPreset}
+            onOpenColorPicker={(anchor, ownerScope) =>
+              openCreationPicker(anchor, "tool-settings", ownerScope)
+            }
+            onChangeWidth={onChangeDrawingWidth}
+            onChangeOpacity={onChangeDrawingOpacity}
+            onChangeSmoothing={onChangeDrawingSmoothing}
+            onDismiss={onDismissFloatingWidget}
+            previewScale={viewportSnapshot.zoom}
+          />
+          {/*
         One Layers entry point. Which presentation it opens -- the spatial
         stack or the mature list panel -- is decided inside the experience.
       */}
-      <WorkspaceUtilityRail layersOpen={layersOpen} onToggleLayers={handleToggleLayers}>
-        <QuickColorRail
-          activeTool={activeTool}
-          target={colorTarget}
-          palette={colors.activePalette}
-          onOpenPicker={(anchor) => openCreationPicker(anchor, "quick-rail")}
-          onApplyColor={(color) => {
-            if (colorTarget !== null) colorPicker.applyDirect(colorTarget, color);
-          }}
-        />
-      </WorkspaceUtilityRail>
-      {colorPicker.snapshot === null ? null : (
-        <FullColorPicker
-          key={colorPicker.snapshot.target.id}
-          session={colorPicker.snapshot}
-          colors={colors}
-          eyedropperActive={eyedropperActive}
-          eyedropperMessage={eyedropperState.message}
-          eyedropperSampledColor={
-            eyedropperState.targetId === activePickerTargetId ? eyedropperState.sampledColor : null
-          }
-          floatingScope={colorPickerFloatingScope}
-          workspaceAvoidRect={
-            colorPicker.snapshot.source === "selected-vector"
-              ? shapeEditingSnapshot?.viewportBounds
-              : undefined
-          }
-          onPreviewHex={colorPicker.previewHex}
-          onPreviewHsv={colorPicker.previewHsv}
-          onSelectPalette={onSelectColorPalette}
-          onToggleFavorite={onToggleFavoriteColor}
-          onEyedropperActiveChange={setEyedropperActive}
-          onRequestPageNavigatorYield={onDismissPageNavigator}
-          onCommit={commitColorPicker}
-          onCancel={cancelColorPicker}
-        />
-      )}
+          <WorkspaceUtilityRail layersOpen={layersOpen} onToggleLayers={handleToggleLayers}>
+            <QuickColorRail
+              activeTool={activeTool}
+              target={colorTarget}
+              palette={colors.activePalette}
+              onOpenPicker={(anchor) => openCreationPicker(anchor, "quick-rail")}
+              onApplyColor={(color) => {
+                if (colorTarget !== null) colorPicker.applyDirect(colorTarget, color);
+              }}
+            />
+          </WorkspaceUtilityRail>
+          {colorPicker.snapshot === null ? null : (
+            <FullColorPicker
+              key={colorPicker.snapshot.target.id}
+              session={colorPicker.snapshot}
+              colors={colors}
+              eyedropperActive={eyedropperActive}
+              eyedropperMessage={eyedropperState.message}
+              eyedropperSampledColor={
+                eyedropperState.targetId === activePickerTargetId
+                  ? eyedropperState.sampledColor
+                  : null
+              }
+              floatingScope={colorPickerFloatingScope}
+              workspaceAvoidRect={
+                colorPicker.snapshot.source === "selected-vector"
+                  ? shapeEditingSnapshot?.viewportBounds
+                  : undefined
+              }
+              onPreviewHex={colorPicker.previewHex}
+              onPreviewHsv={colorPicker.previewHsv}
+              onSelectPalette={onSelectColorPalette}
+              onToggleFavorite={onToggleFavoriteColor}
+              onEyedropperActiveChange={setEyedropperActive}
+              onRequestPageNavigatorYield={onDismissPageNavigator}
+              onCommit={commitColorPicker}
+              onCancel={cancelColorPicker}
+            />
+          )}
+        </>
+      ) : null}
     </section>
   );
 }

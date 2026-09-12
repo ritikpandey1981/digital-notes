@@ -11,14 +11,24 @@ import {
 export class ProjectPersistenceCoordinator {
   private backingValue: DesktopProjectBacking | null = null;
   private busy = false;
+  private backingProject: ProjectSession | null = null;
 
   constructor(
-    private readonly project: ProjectSession,
+    private readonly project: ProjectSession | (() => ProjectSession),
     private readonly port: DesktopProjectSavePort,
+    private readonly canSave: () => boolean = () => true,
   ) {}
 
   get backing(): DesktopProjectBacking | null {
-    return this.backingValue;
+    return this.backingProject === this.currentProject() ? this.backingValue : null;
+  }
+
+  get isSaving(): boolean {
+    return this.busy;
+  }
+
+  private currentProject(): ProjectSession {
+    return typeof this.project === "function" ? this.project() : this.project;
   }
 
   save(): Promise<ProjectSaveResult> {
@@ -29,24 +39,29 @@ export class ProjectPersistenceCoordinator {
   }
 
   private async performSave(saveAs: boolean): Promise<ProjectSaveResult> {
-    if (this.busy) return saveFailure("BUSY", "A project save is already in progress.");
+    if (this.busy || !this.canSave())
+      return saveFailure("BUSY", "A project operation is already in progress.");
     this.busy = true;
+    const project = this.currentProject();
     try {
       let content: string;
       let title: string;
       try {
-        const snapshot = this.project.captureSnapshot();
+        const snapshot = project.captureSnapshot();
         title = snapshot.metadata.title;
         content = encodeFolioProject(snapshot);
       } catch {
         return saveFailure("ENCODE_FAILED", "The project could not be encoded for saving.");
       }
       const result = await this.port.save(
-        saveAs || this.backingValue === null
+        saveAs || this.backing === null
           ? { kind: "saveAs", title, content }
-          : { kind: "save", targetId: this.backingValue.id, content },
+          : { kind: "save", targetId: this.backing!.id, content },
       );
-      if (result.status === "saved") this.backingValue = Object.freeze({ ...result.backing });
+      if (result.status === "saved") {
+        this.backingProject = project;
+        this.backingValue = Object.freeze({ ...result.backing });
+      }
       return result;
     } catch {
       return saveFailure("UNKNOWN", "The desktop save result could not be confirmed.");

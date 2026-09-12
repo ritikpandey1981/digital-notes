@@ -1,4 +1,6 @@
-import { ProjectSession } from "@folio/editor";
+import { ProjectSession, ProjectRuntimeHost } from "@folio/editor";
+import { RuntimeActivation } from "../../../../../packages/editor/src/runtime-activation";
+import { createEditorHistoryCoordinator } from "../../../../../packages/editor/src/history/editor-history-coordinator";
 import { createEmptyFolioProject, decodeFolioProject } from "@folio/persistence/project";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -21,6 +23,86 @@ function setup() {
 }
 
 describe("project manual save coordinator", () => {
+  it("retains A after failed preparation, then captures edited B after a successful handoff", async () => {
+    const a = new ProjectSession(createEmptyFolioProject({ documentId: "A" }));
+    const host = new ProjectRuntimeHost(a, () => !coordinator.isSaving);
+    const save = vi
+      .fn<(request: ProjectSaveRequest) => Promise<ProjectSaveResult>>()
+      .mockResolvedValue(success());
+    const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
+      () => host.active.project,
+      { save },
+      () => !host.replacing,
+    );
+    const activate = (fail = false) => {
+      const entry = host.getSnapshot().at(-1)!;
+      const scope = new RuntimeActivation(() => host.active === entry, vi.fn());
+      entry.activation = scope;
+      if (fail) scope.report(new Error("candidate failure"));
+      host.prepared(
+        entry,
+        scope.finishPreparation(() => undefined),
+      );
+    };
+    activate();
+    await coordinator.saveAs();
+    const failed = host.replace(
+      new ProjectSession(createEmptyFolioProject({ documentId: "failed" })),
+    );
+    expect(await coordinator.save()).toMatchObject({ status: "failed", error: { code: "BUSY" } });
+    activate(true);
+    expect(await failed).toMatchObject({ status: "failed" });
+    expect(host.active.project).toBe(a);
+    expect(coordinator.backing).toEqual(FIRST);
+    await coordinator.save();
+    expect(decodeFolioProject(save.mock.calls.at(-1)![0].content).metadata.documentId).toBe("A");
+    for (const documentId of ["B", "C"]) {
+      const project = new ProjectSession(createEmptyFolioProject({ documentId }));
+      const replacement = host.replace(project);
+      activate();
+      expect(await replacement).toMatchObject({ status: "activated" });
+      expect(coordinator.backing).toBeNull();
+      const history = createEditorHistoryCoordinator({
+        documentSession: project.documentSession,
+        onDocumentChange: () => undefined,
+      });
+      history.executePageRename(project.documentSession.activePageId, `Edited ${documentId}`);
+      await coordinator.save();
+      const request = save.mock.calls.at(-1)![0];
+      expect(request.kind).toBe("saveAs");
+      const captured = decodeFolioProject(request.content);
+      expect(captured.metadata.documentId).toBe(documentId);
+      expect(captured.sketchbook.firstPage.name).toBe(`Edited ${documentId}`);
+      await coordinator.save();
+      expect(save.mock.calls.at(-1)![0].kind).toBe("save");
+      history.destroy();
+    }
+    expect(a.documentSession.activePage.name).not.toBe("Edited C");
+    host.active.activation?.dispose();
+  });
+
+  it("refuses replacement while an existing Save is awaiting its result", async () => {
+    let finish!: (result: ProjectSaveResult) => void;
+    const a = new ProjectSession(createEmptyFolioProject());
+    const host = new ProjectRuntimeHost(a, () => !coordinator.isSaving);
+    const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
+      () => host.active.project,
+      {
+        save: () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      },
+      () => !host.replacing,
+    );
+    const saving = coordinator.save();
+    expect(await host.replace(new ProjectSession(createEmptyFolioProject()))).toEqual({
+      status: "busy",
+    });
+    finish(success());
+    expect(await saving).toEqual(success());
+    expect(host.active.project).toBe(a);
+  });
   it("saves as, then saves current content to the returned opaque target", async () => {
     const { project, save, coordinator } = setup();
     expect(coordinator.backing).toBeNull();

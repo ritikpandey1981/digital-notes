@@ -1,6 +1,12 @@
 export {};
 export { ProjectSession } from "./project-session";
 export {
+  ProjectRuntimeHost,
+  type ProjectRuntime,
+  type ProjectRuntimeReplacementResult,
+} from "./project-runtime-host";
+export type { RuntimePreparationResult } from "./runtime-activation";
+export {
   FAVORITE_COLOR_CAPACITY,
   RECENT_COLOR_CAPACITY,
   createEditorColorSystem,
