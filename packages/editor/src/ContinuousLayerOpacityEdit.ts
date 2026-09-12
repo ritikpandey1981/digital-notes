@@ -1,5 +1,5 @@
 import type { Layer, PageDocument } from "@folio/document";
-import type { IHistoryState } from "@folio/history";
+import type { DocumentContentStateId, IHistoryState } from "@folio/history";
 import type { InkDocumentSession } from "./InkDocumentSession";
 
 interface ContinuousLayerOpacityEditOptions {
@@ -11,6 +11,7 @@ interface ContinuousLayerOpacityEditOptions {
 interface ActiveLayerOpacityEdit {
   readonly layerId: string;
   readonly initialOpacity: number;
+  readonly previewStateId: DocumentContentStateId;
   currentOpacity: number;
 }
 
@@ -45,7 +46,12 @@ export class ContinuousLayerOpacityEdit {
     this.cancel();
     const layer = this.#currentLayer(layerId);
     if (layer === undefined) return false;
-    this.#active = { layerId, initialOpacity: layer.opacity, currentOpacity: layer.opacity };
+    this.#active = {
+      layerId,
+      initialOpacity: layer.opacity,
+      previewStateId: this.#documentSession.contentStateId,
+      currentOpacity: layer.opacity,
+    };
     return true;
   }
 
@@ -95,10 +101,17 @@ export class ContinuousLayerOpacityEdit {
 
   #restore(active: ActiveLayerOpacityEdit): void {
     const layer = this.#currentLayer(active.layerId);
-    if (layer === undefined || layer.opacity === active.initialOpacity) return;
-    this.#documentSession.replacePageDocument(
-      this.#documentSession.page.updateLayer(active.layerId, { opacity: active.initialOpacity }),
-    );
-    this.#onPreviewDocumentChange(this.#documentSession.page);
+    if (layer === undefined) return;
+    if (layer.opacity !== active.initialOpacity) {
+      this.#documentSession.replacePageDocument(
+        this.#documentSession.page.updateLayer(active.layerId, { opacity: active.initialOpacity }),
+      );
+      this.#onPreviewDocumentChange(this.#documentSession.page);
+    }
+    // Preview successors are not History, so returning the pre-gesture content
+    // must also return the identity it had. Otherwise a cancelled gesture would
+    // leave a saved project permanently dirty, and a committed one would record
+    // a before-identity no Undo could reach.
+    this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }

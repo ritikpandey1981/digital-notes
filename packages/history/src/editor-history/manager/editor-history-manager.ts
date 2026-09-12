@@ -1,8 +1,11 @@
 import { HistoryError, isHistoryError } from "../../errors";
 import type { EditorCommand } from "../interfaces/editor-command";
-import type { HistoryDocumentSession } from "../interfaces/history-document-session";
+import type {
+  DocumentContentStateId,
+  HistoryDocumentSession,
+} from "../interfaces/history-document-session";
 import type { IHistoryManager } from "../interfaces/history-manager";
-import { createHistoryEntry } from "../model/history-entry";
+import { createHistoryEntry, withContentStateIdentity } from "../model/history-entry";
 import type { HistoryEntry } from "../model/history-entry";
 import type {
   HistoryCommandMetadata,
@@ -107,16 +110,17 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
 
     try {
       const current = this.#documentSession.getDocument();
+      const beforeStateId = this.#contentStateId();
       const successor = command.execute(current);
       if (successor !== current) {
-        const nextTransaction = this.#activeTransaction
-          ? appendTransactionEntry(this.#activeTransaction, entry)
-          : null;
         this.#installSuccessor(current, successor);
-        if (nextTransaction) {
-          this.#activeTransaction = nextTransaction;
+        // Identity is recorded only after installation, so a command that
+        // changes nothing and one that fails both leave content identity alone.
+        const committed = withContentStateIdentity(entry, beforeStateId, this.#contentStateId());
+        if (this.#activeTransaction) {
+          this.#activeTransaction = appendTransactionEntry(this.#activeTransaction, committed);
         } else {
-          this.#undoStack.push(entry);
+          this.#undoStack.push(committed);
           this.#redoStack.clear();
         }
         this.#historyVersion += 1;
@@ -153,6 +157,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       const successor = entry.command.undo(current);
       assertDistinctSuccessor(current, successor, "undo");
       this.#installSuccessor(current, successor);
+      this.#restoreContentStateId(entry.beforeStateId);
       this.#undoStack.pop();
       this.#redoStack.push(entry);
       this.#historyVersion += 1;
@@ -188,6 +193,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       const successor = entry.command.redo(current);
       assertDistinctSuccessor(current, successor, "redo");
       this.#installSuccessor(current, successor);
+      this.#restoreContentStateId(entry.afterStateId);
       this.#redoStack.pop();
       this.#undoStack.push(entry);
       this.#historyVersion += 1;
@@ -266,7 +272,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
         { details: Object.freeze({ transactionId: this.#activeTransaction.metadata.id }) },
       );
     }
-    this.#activeTransaction = createActiveHistoryTransaction(options);
+    this.#activeTransaction = createActiveHistoryTransaction(options, this.#contentStateId());
     return createTransactionState(this.#activeTransaction);
   }
 
@@ -277,7 +283,9 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
     try {
       if (transaction.entries.length > 0) {
         const entry = createTransactionHistoryEntry(transaction);
-        this.#undoStack.push(entry);
+        this.#undoStack.push(
+          withContentStateIdentity(entry, transaction.beforeStateId, this.#contentStateId()),
+        );
         this.#redoStack.clear();
       }
       this.#activeTransaction = null;
@@ -299,6 +307,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
         const current = this.#documentSession.getDocument();
         const successor = rollbackTransactionCommands(transaction, current);
         this.#installSuccessor(current, successor);
+        this.#restoreContentStateId(transaction.beforeStateId);
         this.#historyVersion += 1;
       }
       this.#activeTransaction = null;
@@ -344,7 +353,19 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
     }
   }
 
+  /** Reads the session's content identity, or null when it keeps none. */
+  #contentStateId(): DocumentContentStateId | null {
+    return this.#documentSession.getContentStateId?.() ?? null;
+  }
+
+  /** Reinstalls a recorded identity so revisited content is recognised as the same state. */
+  #restoreContentStateId(stateId: DocumentContentStateId | null): void {
+    if (stateId === null) return;
+    this.#documentSession.restoreContentStateId?.(stateId);
+  }
+
   #installSuccessor(current: TDocument, successor: TDocument): void {
+    const restoredStateId = this.#contentStateId();
     try {
       this.#documentSession.replaceDocument(successor);
       if (this.#documentSession.getDocument() !== successor) {
@@ -353,6 +374,9 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
     } catch (error) {
       try {
         this.#documentSession.replaceDocument(current);
+        // Restoring the predecessor must also restore its identity; otherwise a
+        // failed command would leave a saved project looking edited.
+        this.#restoreContentStateId(restoredStateId);
       } catch (recoveryError) {
         throw new AggregateError(
           [error, recoveryError],

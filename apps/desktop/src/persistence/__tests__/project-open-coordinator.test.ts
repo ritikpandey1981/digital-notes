@@ -112,6 +112,8 @@ async function setup() {
     viewport: a.documentSession.viewportMemory("A-page"),
     backing: coordinator.backing,
     clipboard: state.clipboard.snapshot(),
+    content: a.contentState(),
+    persistence: coordinator.persistenceState,
   };
   let candidate: ReturnType<typeof prepare> | undefined;
   const unsubscribe = host.subscribe(() => {
@@ -143,6 +145,8 @@ async function setup() {
       expect(state.clipboard.snapshot()).toEqual(before.clipboard);
       expect(a.documentSession.viewportMemory("A-page")).toBe(before.viewport);
       expect(coordinator.backing).toBe(before.backing);
+      expect(a.contentState()).toEqual(before.content);
+      expect(coordinator.persistenceState).toEqual(before.persistence);
       expect(projection).toBe("A");
       expect(state.dispose).not.toHaveBeenCalled();
     },
@@ -247,6 +251,39 @@ describe("transactional project Open coordinator", () => {
     }
   });
 
+  it("starts a fully opened project clean against the file it was loaded from", async () => {
+    const s = await setup();
+    try {
+      expect((await s.coordinator.open()).status).toBe("opened");
+      const b = s.host.active.project;
+
+      expect(b.contentStateId).toBe(b.baselineStateId);
+      expect(b.checkpointStateId).toBe(b.baselineStateId);
+      expect(s.coordinator.persistenceState).toEqual({
+        isDirty: false,
+        hasBackingFile: true,
+        hasConfirmedCheckpoint: true,
+        hasUnsavedRisk: false,
+      });
+      expect(s.candidate()?.history.controller.getHistoryState().undoDepth).toBe(0);
+      // B must not inherit A's checkpoint, and A must keep its own.
+      expect(b.checkpointStateId).not.toBe(s.a.checkpointStateId);
+      expect(s.a.isDirty).toBe(false);
+
+      s.candidate()!.history.executePageRename("B-page", "Edited after opening");
+      expect(s.coordinator.persistenceState).toMatchObject({ isDirty: true, hasBackingFile: true });
+      s.candidate()!.history.undo();
+      expect(s.coordinator.persistenceState.isDirty).toBe(false);
+
+      s.candidate()!.history.executePageRename("B-page", "Saved after opening");
+      expect((await s.coordinator.save()).status).toBe("saved");
+      expect(s.coordinator.persistenceState.isDirty).toBe(false);
+      expect(b.checkpointStateId).toBe(b.contentStateId);
+    } finally {
+      s.cleanup();
+    }
+  });
+
   it.each(["reject", "lost-reply"])(
     "reports B active but unbacked after adoption %s; Save uses Save As",
     async (mode) => {
@@ -265,9 +302,25 @@ describe("transactional project Open coordinator", () => {
         expect(s.host.active.project.metadata.documentId).toBe("B");
         expect(s.coordinator.backing).toBeNull();
         expect(s.port.release).toHaveBeenCalledTimes(1);
+        const b = s.host.active.project;
+        // Bytes came from disk, but no writable association was confirmed, so
+        // nothing may claim a durable copy of B.
+        expect(b.checkpointStateId).toBeNull();
+        expect(s.coordinator.persistenceState).toEqual({
+          isDirty: false,
+          hasBackingFile: false,
+          hasConfirmedCheckpoint: false,
+          hasUnsavedRisk: true,
+        });
         s.chooseDestination.mockResolvedValue(`${s.bPath}.copy.folio`);
         expect((await s.coordinator.save()).status).toBe("saved");
         expect(s.chooseDestination).toHaveBeenCalledTimes(2);
+        expect(s.coordinator.persistenceState).toEqual({
+          isDirty: false,
+          hasBackingFile: true,
+          hasConfirmedCheckpoint: true,
+          hasUnsavedRisk: false,
+        });
       } finally {
         s.cleanup();
       }

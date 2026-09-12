@@ -7,7 +7,7 @@ import {
   type PageObject,
   type VectorPageObject,
 } from "@folio/document";
-import type { IHistoryState } from "@folio/history";
+import type { DocumentContentStateId, IHistoryState } from "@folio/history";
 import type { InkDocumentSession } from "./InkDocumentSession";
 import { createVectorStyleReplacement } from "./history/update-vector-style-command";
 import { applyInkStyle, inkStyleValues, type InkStylePatch } from "./InkStyleEdit";
@@ -41,6 +41,7 @@ interface ContinuousSelectionStyleEditOptions {
 
 interface ActiveSelectionStyleEdit {
   readonly originals: readonly PageObject[];
+  readonly previewStateId: DocumentContentStateId;
   current: SelectionStylePatch;
 }
 
@@ -77,7 +78,11 @@ export class ContinuousSelectionStyleEdit {
       .map((objectId) => this.#documentSession.page.lookup(objectId))
       .filter((object): object is PageObject => object !== undefined && this.#isEditable(object));
     if (originals.length === 0) return false;
-    this.#active = { originals: Object.freeze(originals), current: {} };
+    this.#active = {
+      originals: Object.freeze(originals),
+      previewStateId: this.#documentSession.contentStateId,
+      current: {},
+    };
     return true;
   }
 
@@ -183,15 +188,27 @@ export class ContinuousSelectionStyleEdit {
   #restore(active: ActiveSelectionStyleEdit): void {
     let page = this.#documentSession.page;
     let changed = false;
+    let missing = false;
     for (const original of active.originals) {
       const current = page.lookup(original.id);
-      if (current === undefined || current === original) continue;
+      if (current === undefined) {
+        missing = true;
+        continue;
+      }
+      if (current === original) continue;
       page = page.replace(original);
       changed = true;
     }
-    if (!changed) return;
-    this.#documentSession.replacePageDocument(page);
-    this.#onPreviewDocumentChange(this.#documentSession.page);
+    if (changed) {
+      this.#documentSession.replacePageDocument(page);
+      this.#onPreviewDocumentChange(this.#documentSession.page);
+    }
+    // Preview successors are not History, so returning the pre-gesture content
+    // must also return the identity it had. Otherwise a cancelled gesture would
+    // leave a saved project permanently dirty, and a committed one would record
+    // a before-identity no Undo could reach. An object removed mid-gesture is a
+    // real change this cannot undo, so identity then stays where it is.
+    if (!missing) this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }
 

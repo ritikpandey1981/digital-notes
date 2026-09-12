@@ -1,4 +1,5 @@
 import { HistoryError } from "../../errors";
+import type { DocumentContentStateId } from "../interfaces/history-document-session";
 import type { HistoryEntry } from "../model/history-entry";
 import type { HistoryCommandMetadata, HistoryTransactionOptions } from "../model/history-metadata";
 import type { HistoryTransactionState } from "../state/history-state";
@@ -7,16 +8,24 @@ import type { HistoryTransactionState } from "../state/history-state";
 export interface ActiveHistoryTransaction<TDocument> {
   readonly metadata: HistoryCommandMetadata;
   readonly entries: readonly HistoryEntry<TDocument>[];
+  /**
+   * Content identity held before the first child command ran.
+   *
+   * A rollback restores it, and a commit records it as the composite entry's
+   * before-identity, so one gesture reads as one content transition.
+   */
+  readonly beforeStateId: DocumentContentStateId | null;
 }
 
 export function createActiveHistoryTransaction<TDocument>(
   options: HistoryTransactionOptions = {},
+  beforeStateId: DocumentContentStateId | null = null,
 ): ActiveHistoryTransaction<TDocument> {
   if (options === null || typeof options !== "object" || Array.isArray(options)) {
     throw invalidTransactionMetadata();
   }
   const metadata = resolveTransactionMetadata(options);
-  return Object.freeze({ metadata, entries: Object.freeze([]) });
+  return Object.freeze({ metadata, entries: Object.freeze([]), beforeStateId });
 }
 
 export function appendTransactionEntry<TDocument>(
@@ -26,6 +35,7 @@ export function appendTransactionEntry<TDocument>(
   return Object.freeze({
     metadata: transaction.metadata,
     entries: Object.freeze([...transaction.entries, entry]),
+    beforeStateId: transaction.beforeStateId,
   });
 }
 

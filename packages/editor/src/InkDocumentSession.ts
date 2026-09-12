@@ -20,7 +20,7 @@ import type {
   LineGeometry,
   RectangleGeometry,
 } from "@folio/document";
-import type { HistoryDocumentSession } from "@folio/history";
+import type { DocumentContentStateId, HistoryDocumentSession } from "@folio/history";
 import type { Stroke } from "@folio/ink";
 
 export interface InkDocumentSessionSnapshot {
@@ -47,6 +47,21 @@ export interface InkDocumentSessionOptions extends ObjectFactoryOptions {
   readonly createLayerId?: () => string;
 }
 
+let documentSessionOrdinal = 0;
+
+/**
+ * Mints process-unique content identities for one session.
+ *
+ * A per-session prefix keeps two projects' identities disjoint, so a replaced
+ * runtime can never mistake the incoming project's content for the outgoing
+ * project's save checkpoint.
+ */
+function createContentStateIdFactory(): () => DocumentContentStateId {
+  const session = (documentSessionOrdinal += 1);
+  let version = 0;
+  return () => `content-${session}-${(version += 1)}` as DocumentContentStateId;
+}
+
 function defaultIdFactory(prefix: string): () => string {
   let ordinal = 0;
   return () => {
@@ -67,6 +82,8 @@ function defaultIdFactory(prefix: string): () => string {
  */
 export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocument> {
   private readonly factory: ObjectFactory;
+  private readonly createContentStateIdValue = createContentStateIdFactory();
+  private contentStateIdValue: DocumentContentStateId;
   private readonly createPageIdValue: () => string;
   private readonly createLayerIdValue: () => string;
   private readonly createObjectIdValue: () => string;
@@ -85,6 +102,7 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
       throw new TypeError("InkDocumentSession requires an immutable initial SketchbookDocument.");
     }
     this.documentValue = initialDocument;
+    this.contentStateIdValue = this.createContentStateIdValue();
     this.activePageIdValue = this.documentValue.firstPage.id;
   }
 
@@ -153,11 +171,39 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     return this.documentValue;
   }
 
+  /**
+   * Runtime-only identity of the content this session currently holds.
+   *
+   * Persistence compares it against a save checkpoint. It is never serialized
+   * and never derived from History depth, so undoing back to saved content is
+   * recognised as that same content.
+   */
+  get contentStateId(): DocumentContentStateId {
+    return this.contentStateIdValue;
+  }
+
+  /** Reads content identity at the generic History boundary. */
+  getContentStateId(): DocumentContentStateId {
+    return this.contentStateIdValue;
+  }
+
+  /** Reinstalls an identity minted earlier, after History revisits existing content. */
+  restoreContentStateId(stateId: DocumentContentStateId): void {
+    if (typeof stateId !== "string" || stateId.length === 0) {
+      throw new TypeError("InkDocumentSession requires a previously minted content identity.");
+    }
+    this.contentStateIdValue = stateId;
+  }
+
   /** Installs the exact immutable successor produced by an editor command. */
   replaceDocument(document: SketchbookDocument): void {
     if (!(document instanceof SketchbookDocument) || !Object.isFrozen(document)) {
       throw new TypeError("InkDocumentSession requires an immutable SketchbookDocument successor.");
     }
+    // Session state changes alone must never advance content identity, so only
+    // an actual document replacement mints one.
+    if (document !== this.documentValue)
+      this.contentStateIdValue = this.createContentStateIdValue();
     this.documentValue = document;
     this.activePageIdValue = document.resolveActivePageId(this.activePageIdValue);
     for (const pageId of [...this.activeLayerByPage.keys()]) {
@@ -262,6 +308,7 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
   }
 
   clear(): void {
+    this.contentStateIdValue = this.createContentStateIdValue();
     this.documentValue = SketchbookDocument.empty();
     this.activePageIdValue = this.documentValue.firstPage.id;
     this.activeLayerByPage.clear();

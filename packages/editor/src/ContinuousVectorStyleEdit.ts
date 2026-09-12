@@ -6,7 +6,7 @@ import {
   type PageDocument,
   type VectorPageObject,
 } from "@folio/document";
-import type { IHistoryState } from "@folio/history";
+import type { DocumentContentStateId, IHistoryState } from "@folio/history";
 import type { InkDocumentSession } from "./InkDocumentSession";
 import { createVectorStyleReplacement } from "./history/update-vector-style-command";
 
@@ -20,6 +20,7 @@ interface ContinuousVectorStyleEditOptions {
 
 interface ActiveVectorStyleEdit {
   readonly original: VectorPageObject;
+  readonly previewStateId: DocumentContentStateId;
   current: VectorPageObject;
 }
 
@@ -47,7 +48,11 @@ export class ContinuousVectorStyleEdit {
     this.cancel();
     const current = this.#documentSession.page.lookup(object.id);
     if (!isVectorObject(current) || !this.#isEditable(current)) return false;
-    this.#active = { original: current, current };
+    this.#active = {
+      original: current,
+      previewStateId: this.#documentSession.contentStateId,
+      current,
+    };
     return true;
   }
 
@@ -100,9 +105,17 @@ export class ContinuousVectorStyleEdit {
   #restore(active: ActiveVectorStyleEdit): void {
     const current = this.#documentSession.page.lookup(active.original.id);
     if (!isVectorObject(current)) return;
-    if (current === active.original) return;
-    this.#documentSession.replacePageDocument(this.#documentSession.page.replace(active.original));
-    this.#onPreviewDocumentChange(this.#documentSession.page);
+    if (current !== active.original) {
+      this.#documentSession.replacePageDocument(
+        this.#documentSession.page.replace(active.original),
+      );
+      this.#onPreviewDocumentChange(this.#documentSession.page);
+    }
+    // Preview successors are not History, so returning the pre-gesture content
+    // must also return the identity it had. Otherwise a cancelled gesture would
+    // leave a saved project permanently dirty, and a committed one would record
+    // a before-identity no Undo could reach.
+    this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }
 

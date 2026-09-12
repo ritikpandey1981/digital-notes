@@ -1,4 +1,4 @@
-import type { IHistoryState } from "@folio/history";
+import type { DocumentContentStateId, IHistoryState } from "@folio/history";
 import type { InkDocumentSession } from "./InkDocumentSession";
 
 interface ContinuousPaperColorEditOptions {
@@ -10,6 +10,7 @@ interface ContinuousPaperColorEditOptions {
 interface ActivePaperColorEdit {
   readonly pageId: string;
   readonly initialColor: string;
+  readonly previewStateId: DocumentContentStateId;
   currentColor: string;
 }
 
@@ -48,6 +49,7 @@ export class ContinuousPaperColorEdit {
     this.#active = {
       pageId,
       initialColor: page.paper.color,
+      previewStateId: this.#documentSession.contentStateId,
       currentColor: page.paper.color,
     };
     return true;
@@ -92,9 +94,16 @@ export class ContinuousPaperColorEdit {
 
   #restore(active: ActivePaperColorEdit): void {
     const page = this.#documentSession.sketchbook.page(active.pageId);
-    if (page === undefined || page.paper.color === active.initialColor) return;
-    const restored = page.withPaper({ color: active.initialColor });
-    this.#documentSession.replaceDocument(this.#documentSession.sketchbook.replacePage(restored));
-    this.#onPreviewDocumentChange(active.pageId);
+    if (page === undefined) return;
+    if (page.paper.color !== active.initialColor) {
+      const restored = page.withPaper({ color: active.initialColor });
+      this.#documentSession.replaceDocument(this.#documentSession.sketchbook.replacePage(restored));
+      this.#onPreviewDocumentChange(active.pageId);
+    }
+    // Preview successors are not History, so returning the pre-gesture content
+    // must also return the identity it had. Otherwise a cancelled gesture would
+    // leave a saved project permanently dirty, and a committed one would record
+    // a before-identity no Undo could reach.
+    this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }

@@ -1,4 +1,8 @@
-import { ProjectSession, type ProjectRuntimeHost } from "@folio/editor";
+import {
+  ProjectSession,
+  type ProjectPersistenceCapture,
+  type ProjectRuntimeHost,
+} from "@folio/editor";
 import {
   encodeFolioProject,
   decodeFolioProject,
@@ -16,6 +20,21 @@ import {
   type DesktopProjectSavePort,
   type ProjectSaveResult,
 } from "../../electron/project-save-contract";
+
+/**
+ * Two separate questions, deliberately not collapsed into one boolean.
+ *
+ * `isDirty` asks whether content changed relative to its reference state.
+ * `hasUnsavedRisk` asks whether closing could lose content because no confirmed
+ * durable copy of the current content exists, which is also true for a project
+ * that was activated without a confirmed backing target.
+ */
+export interface ProjectPersistenceState {
+  readonly isDirty: boolean;
+  readonly hasBackingFile: boolean;
+  readonly hasConfirmedCheckpoint: boolean;
+  readonly hasUnsavedRisk: boolean;
+}
 
 /** Raw lifecycle commands, intentionally not exposed in File UI until unsaved protection exists. */
 export class ProjectPersistenceCoordinator {
@@ -37,6 +56,17 @@ export class ProjectPersistenceCoordinator {
 
   get isSaving(): boolean {
     return this.operation === "save";
+  }
+
+  /** Narrow read model for the future unsaved-change guard. It mutates nothing. */
+  get persistenceState(): ProjectPersistenceState {
+    const content = this.currentProject().contentState();
+    return Object.freeze({
+      isDirty: content.isDirty,
+      hasBackingFile: this.backing !== null,
+      hasConfirmedCheckpoint: content.hasConfirmedCheckpoint,
+      hasUnsavedRisk: content.isDirty || !content.hasConfirmedCheckpoint,
+    });
   }
 
   get canReplaceRuntime(): boolean {
@@ -111,6 +141,9 @@ export class ProjectPersistenceCoordinator {
         };
       this.backingProject = project;
       this.backingValue = Object.freeze({ ...target.backing });
+      // The file holds the decoded bytes, not whatever was drawn while adoption
+      // was in flight, so the baseline is the only identity the disk confirms.
+      project.confirmDurableCheckpoint(project.baselineStateId);
       adopted = true;
       return { status: "opened", backing: this.backingValue };
     } catch {
@@ -157,10 +190,11 @@ export class ProjectPersistenceCoordinator {
     try {
       let content: string;
       let title: string;
+      let capture: ProjectPersistenceCapture;
       try {
-        const snapshot = project.captureSnapshot();
-        title = snapshot.metadata.title;
-        content = encodeFolioProject(snapshot);
+        capture = project.capturePersistenceSnapshot();
+        title = capture.project.metadata.title;
+        content = encodeFolioProject(capture.project);
       } catch {
         return saveFailure("ENCODE_FAILED", "The project could not be encoded for saving.");
       }
@@ -172,6 +206,9 @@ export class ProjectPersistenceCoordinator {
       if (result.status === "saved") {
         this.backingProject = project;
         this.backingValue = Object.freeze({ ...result.backing });
+        // Checkpoint what the disk actually received. Editing continued during
+        // the write, so a later state must stay dirty.
+        project.confirmDurableCheckpoint(capture.stateId);
       }
       return result;
     } catch {

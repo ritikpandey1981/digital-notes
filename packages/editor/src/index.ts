@@ -1,5 +1,9 @@
 export {};
-export { ProjectSession } from "./project-session";
+export {
+  ProjectSession,
+  type ProjectContentState,
+  type ProjectPersistenceCapture,
+} from "./project-session";
 export {
   ProjectRuntimeHost,
   type ProjectRuntime,
