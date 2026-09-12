@@ -53,6 +53,7 @@ export class ContinuousVectorStyleEdit {
       previewStateId: this.#documentSession.contentStateId,
       current,
     };
+    this.#documentSession.beginTransientEdit();
     return true;
   }
 
@@ -103,19 +104,25 @@ export class ContinuousVectorStyleEdit {
   }
 
   #restore(active: ActiveVectorStyleEdit): void {
-    const current = this.#documentSession.page.lookup(active.original.id);
-    if (!isVectorObject(current)) return;
-    if (current !== active.original) {
-      this.#documentSession.replacePageDocument(
-        this.#documentSession.page.replace(active.original),
-      );
-      this.#onPreviewDocumentChange(this.#documentSession.page);
+    try {
+      const current = this.#documentSession.page.lookup(active.original.id);
+      if (!isVectorObject(current)) return;
+      if (current !== active.original) {
+        this.#documentSession.replacePageDocument(
+          this.#documentSession.page.replace(active.original),
+        );
+        this.#onPreviewDocumentChange(this.#documentSession.page);
+      }
+      // Preview successors are not History, so returning the pre-gesture content
+      // must also return the identity it had. Otherwise a cancelled gesture would
+      // leave a saved project permanently dirty, and a committed one would record
+      // a before-identity no Undo could reach.
+      this.#documentSession.restoreContentStateId(active.previewStateId);
+    } finally {
+      // The gesture always ends here, on every exit, so the settled state is
+      // announced exactly once whether it committed or was abandoned.
+      this.#documentSession.endTransientEdit();
     }
-    // Preview successors are not History, so returning the pre-gesture content
-    // must also return the identity it had. Otherwise a cancelled gesture would
-    // leave a saved project permanently dirty, and a committed one would record
-    // a before-identity no Undo could reach.
-    this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }
 

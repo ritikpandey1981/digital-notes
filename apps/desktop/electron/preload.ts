@@ -11,6 +11,12 @@ import type {
   ProjectSaveResult,
 } from "./project-save-contract";
 import type {
+  DesktopRecoveryPort,
+  RecoveryClearResult,
+  RecoverySnapshotRequest,
+  RecoveryStoreResult,
+} from "./recovery-contract";
+import type {
   DesktopWindowClosePort,
   WindowCloseDecision,
   WindowCloseDecisionResult,
@@ -28,6 +34,14 @@ const folioApi = Object.freeze({
     save: (request: ProjectSaveRequest): Promise<ProjectSaveResult> =>
       ipcRenderer.invoke("folio:projects:save", request),
   } satisfies DesktopProjectSavePort & DesktopProjectOpenPort),
+  // Replace or drop this window's own recovery snapshot. No list, no read, and
+  // no path: recovery files are named by an id main validates.
+  recovery: Object.freeze({
+    store: (request: RecoverySnapshotRequest): Promise<RecoveryStoreResult> =>
+      ipcRenderer.invoke("folio:recovery:store", request),
+    clear: (recoveryId: string): Promise<RecoveryClearResult> =>
+      ipcRenderer.invoke("folio:recovery:clear", recoveryId),
+  } satisfies DesktopRecoveryPort),
   // The renderer may answer a close question main asked, and nothing more. It
   // cannot close, open, move, or inspect a window on its own.
   window: Object.freeze({

@@ -52,6 +52,7 @@ export class ContinuousPaperColorEdit {
       previewStateId: this.#documentSession.contentStateId,
       currentColor: page.paper.color,
     };
+    this.#documentSession.beginTransientEdit();
     return true;
   }
 
@@ -93,17 +94,25 @@ export class ContinuousPaperColorEdit {
   }
 
   #restore(active: ActivePaperColorEdit): void {
-    const page = this.#documentSession.sketchbook.page(active.pageId);
-    if (page === undefined) return;
-    if (page.paper.color !== active.initialColor) {
-      const restored = page.withPaper({ color: active.initialColor });
-      this.#documentSession.replaceDocument(this.#documentSession.sketchbook.replacePage(restored));
-      this.#onPreviewDocumentChange(active.pageId);
+    try {
+      const page = this.#documentSession.sketchbook.page(active.pageId);
+      if (page === undefined) return;
+      if (page.paper.color !== active.initialColor) {
+        const restored = page.withPaper({ color: active.initialColor });
+        this.#documentSession.replaceDocument(
+          this.#documentSession.sketchbook.replacePage(restored),
+        );
+        this.#onPreviewDocumentChange(active.pageId);
+      }
+      // Preview successors are not History, so returning the pre-gesture content
+      // must also return the identity it had. Otherwise a cancelled gesture would
+      // leave a saved project permanently dirty, and a committed one would record
+      // a before-identity no Undo could reach.
+      this.#documentSession.restoreContentStateId(active.previewStateId);
+    } finally {
+      // The gesture always ends here, on every exit, so the settled state is
+      // announced exactly once whether it committed or was abandoned.
+      this.#documentSession.endTransientEdit();
     }
-    // Preview successors are not History, so returning the pre-gesture content
-    // must also return the identity it had. Otherwise a cancelled gesture would
-    // leave a saved project permanently dirty, and a committed one would record
-    // a before-identity no Undo could reach.
-    this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }

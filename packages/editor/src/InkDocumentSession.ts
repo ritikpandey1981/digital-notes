@@ -45,6 +45,14 @@ export interface InkDocumentSessionOptions extends ObjectFactoryOptions {
   readonly initialDocument?: SketchbookDocument;
   readonly createPageId?: () => string;
   readonly createLayerId?: () => string;
+  /**
+   * Reports that this session settled on a different content state.
+   *
+   * It fires once per settled identity, never during a live preview gesture and
+   * never for session-only state, so a listener can treat every notification as
+   * a committed state worth acting on.
+   */
+  readonly onContentStateChange?: () => void;
 }
 
 let documentSessionOrdinal = 0;
@@ -84,6 +92,10 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
   private readonly factory: ObjectFactory;
   private readonly createContentStateIdValue = createContentStateIdFactory();
   private contentStateIdValue: DocumentContentStateId;
+  private publishedStateIdValue: DocumentContentStateId;
+  private readonly onContentStateChangeValue: (() => void) | undefined;
+  /** Depth of open live-preview gestures, whose intermediate content is not a state. */
+  private transientEditDepth = 0;
   private readonly createPageIdValue: () => string;
   private readonly createLayerIdValue: () => string;
   private readonly createObjectIdValue: () => string;
@@ -103,6 +115,8 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     }
     this.documentValue = initialDocument;
     this.contentStateIdValue = this.createContentStateIdValue();
+    this.publishedStateIdValue = this.contentStateIdValue;
+    this.onContentStateChangeValue = options.onContentStateChange;
     this.activePageIdValue = this.documentValue.firstPage.id;
   }
 
@@ -193,6 +207,37 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
       throw new TypeError("InkDocumentSession requires a previously minted content identity.");
     }
     this.contentStateIdValue = stateId;
+    this.publishContentState();
+  }
+
+  /**
+   * Opens a live-preview gesture.
+   *
+   * A gesture writes successor documents the user has not committed to, so the
+   * states it passes through are not states anything should persist. They are
+   * announced as one settled state when the gesture resolves, which for a
+   * cancelled gesture is the state it started from.
+   */
+  beginTransientEdit(): void {
+    this.transientEditDepth += 1;
+  }
+
+  endTransientEdit(): void {
+    if (this.transientEditDepth === 0) return;
+    this.transientEditDepth -= 1;
+    this.publishContentState();
+  }
+
+  /** True while a live-preview gesture is holding uncommitted content. */
+  get hasTransientEdit(): boolean {
+    return this.transientEditDepth > 0;
+  }
+
+  private publishContentState(): void {
+    if (this.transientEditDepth > 0) return;
+    if (this.contentStateIdValue === this.publishedStateIdValue) return;
+    this.publishedStateIdValue = this.contentStateIdValue;
+    this.onContentStateChangeValue?.();
   }
 
   /** Installs the exact immutable successor produced by an editor command. */
@@ -212,6 +257,7 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     for (const pageId of [...this.viewportByPage.keys()]) {
       if (document.page(pageId) === undefined) this.viewportByPage.delete(pageId);
     }
+    this.publishContentState();
   }
 
   /** Replaces only the active page's artwork document. */
@@ -309,6 +355,7 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
 
   clear(): void {
     this.contentStateIdValue = this.createContentStateIdValue();
+    this.publishedStateIdValue = this.contentStateIdValue;
     this.documentValue = SketchbookDocument.empty();
     this.activePageIdValue = this.documentValue.firstPage.id;
     this.activeLayerByPage.clear();

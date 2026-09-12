@@ -1,9 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopProjectFileService } from "./project-file-service";
 import { registerProjectSaveIpc } from "./project-save-ipc";
 import { registerWindowCloseIpc } from "./window-close-ipc";
+import { DesktopRecoveryFileService } from "./recovery-file-service";
+import { registerRecoveryIpc } from "./recovery-ipc";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -100,16 +102,24 @@ function createMainWindow(): void {
       ? pathToFileURL(path.join(__dirname, "../dist/renderer/index.html")).href
       : new URL(developmentServerUrl).href;
   registerProjectSaveIpc(ipcMain, projectWindow, projectFiles, trustedUrl);
-  // Quitting the app closes this window, so intentional exit reaches the same
-  // unsaved-work question the close button does.
-  registerWindowCloseIpc(
+  const authorizeProjectSender = (event: IpcMainInvokeEvent): boolean =>
+    !projectWindow.isDestroyed() &&
+    event.sender === projectWindow.webContents &&
+    event.senderFrame === projectWindow.webContents.mainFrame;
+  // Recovery state belongs to the application, not to the user's folder, so it
+  // lives under userData and never beside the project file being edited.
+  registerRecoveryIpc(
     ipcMain,
     projectWindow,
-    (event) =>
-      !projectWindow.isDestroyed() &&
-      event.sender === projectWindow.webContents &&
-      event.senderFrame === projectWindow.webContents.mainFrame,
+    new DesktopRecoveryFileService({
+      directory: path.join(app.getPath("userData"), "recovery"),
+      resolveBackingPath: (targetId) => projectFiles.sourcePathForTarget(targetId),
+    }),
+    authorizeProjectSender,
   );
+  // Quitting the app closes this window, so intentional exit reaches the same
+  // unsaved-work question the close button does.
+  registerWindowCloseIpc(ipcMain, projectWindow, authorizeProjectSender);
   mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
     const allowedUrl = developmentServerUrl
       ? new URL(navigationUrl).origin === new URL(developmentServerUrl).origin

@@ -7,6 +7,7 @@ import {
   type UnsavedChangesDecision,
   type UnsavedChangesRequest,
 } from "../../persistence/project-lifecycle-coordinator";
+import { RecoveryAutosaveCoordinator } from "../../persistence/recovery-autosave-coordinator";
 import { useProjectCloseProtection } from "../../persistence/useProjectCloseProtection";
 import type {
   ArtworkColorSampleResult,
@@ -127,7 +128,7 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace(props: EditorWorkspaceProps) {
-  const [{ host, persistence, lifecycle, unsavedPrompt }] = useState(() => {
+  const [{ host, persistence, lifecycle, recovery, unsavedPrompt }] = useState(() => {
     const runtimeHost = new ProjectRuntimeHost(
       new ProjectSession(createEmptyFolioProject()),
       () => coordinator.canReplaceRuntime,
@@ -150,6 +151,14 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
       host: runtimeHost,
       persistence: coordinator,
       lifecycle: new ProjectLifecycleCoordinator(coordinator, prompt),
+      recovery: new RecoveryAutosaveCoordinator({
+        store: {
+          store: (request) => window.folio.recovery.store(request),
+          clear: (recoveryId) => window.folio.recovery.clear(recoveryId),
+        },
+        persistenceState: () => coordinator.persistenceState,
+        backingTargetId: () => coordinator.backing?.id ?? null,
+      }),
       unsavedPrompt: prompt,
     };
   });
@@ -158,7 +167,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     unsavedPrompt.setHandler(onConfirmUnsavedChanges ?? null);
     return () => unsavedPrompt.setHandler(null);
   }, [unsavedPrompt, onConfirmUnsavedChanges]);
-  useProjectCloseProtection(lifecycle);
+  useProjectCloseProtection(lifecycle, recovery);
   const runtimes = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
   const escapeActionsRef = useRef<EditorEscapeActions | null>(null);
   const publishEscape = useCallback((actions: EditorEscapeActions | null) => {
@@ -167,6 +176,13 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
   // The shared fallback belongs to the stable host, never to an inert candidate.
   useEffect(() => registerCanvasEscape(() => escapeActionsRef.current?.escape() ?? false), []);
   useEffect(() => host.connect(), [host]);
+  useEffect(() => recovery.connect(), [recovery]);
+  // Following the active project is also how a committed replacement retires the
+  // project it replaced: the previous snapshot goes only once B is really live.
+  const activeProject = host.active.project;
+  useEffect(() => {
+    recovery.setProject(activeProject);
+  }, [recovery, activeProject]);
   const { onProjectLifecycleReady, onProjectPersistenceReady, onProjectRuntimeReady } = props;
   useEffect(() => {
     onProjectPersistenceReady?.(persistence);

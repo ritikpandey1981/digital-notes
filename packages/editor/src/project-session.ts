@@ -34,6 +34,9 @@ export interface ProjectContentState {
   readonly isDisposableBaseline: boolean;
 }
 
+/** Observes settled project state. Never called for a live preview or session-only change. */
+export type ProjectContentStateListener = (state: ProjectContentState) => void;
+
 /** One immutable project snapshot together with the content identity it holds. */
 export interface ProjectPersistenceCapture {
   readonly project: FolioProjectSnapshot;
@@ -54,12 +57,50 @@ export class ProjectSession {
   /** Null until a durable copy of a known content state is confirmed. */
   #checkpointStateId: DocumentContentStateId | null = null;
 
+  readonly #listeners = new Set<ProjectContentStateListener>();
+
   constructor(initialProject: FolioProjectSnapshot, options: ProjectSessionOptions = {}) {
     this.metadata = Object.freeze({ ...initialProject.metadata });
-    this.documentSession = new InkDocumentSession({ initialDocument: initialProject.sketchbook });
+    this.documentSession = new InkDocumentSession({
+      initialDocument: initialProject.sketchbook,
+      onContentStateChange: () => this.#publishContentState(),
+    });
     this.#baselineStateId = this.documentSession.contentStateId;
     this.#origin = options.origin ?? "created";
     Object.freeze(this);
+  }
+
+  /**
+   * Observes settled project state.
+   *
+   * Recovery scheduling needs to know when committed content changes, which
+   * query-only access could only discover by polling the document. Listeners see
+   * committed content transitions and confirmed checkpoints, never preview
+   * frames, and never active page, layer, selection or viewport changes.
+   */
+  subscribeContentState(listener: ProjectContentStateListener): () => void {
+    if (typeof listener !== "function") {
+      throw new TypeError("A project content-state listener must be a function.");
+    }
+    this.#listeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #publishContentState(): void {
+    if (this.#listeners.size === 0) return;
+    const state = this.contentState();
+    for (const listener of [...this.#listeners]) {
+      try {
+        listener(state);
+      } catch {
+        // A recovery observer cannot interrupt the editing it is watching.
+      }
+    }
   }
 
   /** Where this project's baseline content came from. */
@@ -156,5 +197,8 @@ export class ProjectSession {
       throw new TypeError("A durable checkpoint requires a captured content identity.");
     }
     this.#checkpointStateId = stateId;
+    // A confirmed durable copy can make an outstanding recovery snapshot
+    // unnecessary, so durability changes are announced alongside content ones.
+    this.#publishContentState();
   }
 }

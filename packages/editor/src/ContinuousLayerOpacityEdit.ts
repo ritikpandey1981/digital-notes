@@ -52,6 +52,7 @@ export class ContinuousLayerOpacityEdit {
       previewStateId: this.#documentSession.contentStateId,
       currentOpacity: layer.opacity,
     };
+    this.#documentSession.beginTransientEdit();
     return true;
   }
 
@@ -100,18 +101,26 @@ export class ContinuousLayerOpacityEdit {
   }
 
   #restore(active: ActiveLayerOpacityEdit): void {
-    const layer = this.#currentLayer(active.layerId);
-    if (layer === undefined) return;
-    if (layer.opacity !== active.initialOpacity) {
-      this.#documentSession.replacePageDocument(
-        this.#documentSession.page.updateLayer(active.layerId, { opacity: active.initialOpacity }),
-      );
-      this.#onPreviewDocumentChange(this.#documentSession.page);
+    try {
+      const layer = this.#currentLayer(active.layerId);
+      if (layer === undefined) return;
+      if (layer.opacity !== active.initialOpacity) {
+        this.#documentSession.replacePageDocument(
+          this.#documentSession.page.updateLayer(active.layerId, {
+            opacity: active.initialOpacity,
+          }),
+        );
+        this.#onPreviewDocumentChange(this.#documentSession.page);
+      }
+      // Preview successors are not History, so returning the pre-gesture content
+      // must also return the identity it had. Otherwise a cancelled gesture would
+      // leave a saved project permanently dirty, and a committed one would record
+      // a before-identity no Undo could reach.
+      this.#documentSession.restoreContentStateId(active.previewStateId);
+    } finally {
+      // The gesture always ends here, on every exit, so the settled state is
+      // announced exactly once whether it committed or was abandoned.
+      this.#documentSession.endTransientEdit();
     }
-    // Preview successors are not History, so returning the pre-gesture content
-    // must also return the identity it had. Otherwise a cancelled gesture would
-    // leave a saved project permanently dirty, and a committed one would record
-    // a before-identity no Undo could reach.
-    this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }

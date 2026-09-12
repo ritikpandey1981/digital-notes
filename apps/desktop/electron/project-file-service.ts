@@ -40,6 +40,16 @@ export class DesktopProjectFileService {
 
   constructor(private readonly options: ProjectFileServiceOptions) {}
 
+  /**
+   * The original location behind an adopted target, for main-owned metadata.
+   *
+   * Recovery records keep it so a future Open Original can work. It is never
+   * returned over the preload bridge, which is why this stays in main.
+   */
+  sourcePathForTarget(targetId: string): string | null {
+    return this.target?.id === targetId ? this.target.path : null;
+  }
+
   /** Navigation drops capabilities belonging to the previous renderer document. */
   revoke(): void {
     this.generation += 1;

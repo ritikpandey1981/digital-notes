@@ -83,6 +83,7 @@ export class ContinuousSelectionStyleEdit {
       previewStateId: this.#documentSession.contentStateId,
       current: {},
     };
+    this.#documentSession.beginTransientEdit();
     return true;
   }
 
@@ -186,29 +187,35 @@ export class ContinuousSelectionStyleEdit {
   }
 
   #restore(active: ActiveSelectionStyleEdit): void {
-    let page = this.#documentSession.page;
-    let changed = false;
-    let missing = false;
-    for (const original of active.originals) {
-      const current = page.lookup(original.id);
-      if (current === undefined) {
-        missing = true;
-        continue;
+    try {
+      let page = this.#documentSession.page;
+      let changed = false;
+      let missing = false;
+      for (const original of active.originals) {
+        const current = page.lookup(original.id);
+        if (current === undefined) {
+          missing = true;
+          continue;
+        }
+        if (current === original) continue;
+        page = page.replace(original);
+        changed = true;
       }
-      if (current === original) continue;
-      page = page.replace(original);
-      changed = true;
+      if (changed) {
+        this.#documentSession.replacePageDocument(page);
+        this.#onPreviewDocumentChange(this.#documentSession.page);
+      }
+      // Preview successors are not History, so returning the pre-gesture content
+      // must also return the identity it had. Otherwise a cancelled gesture would
+      // leave a saved project permanently dirty, and a committed one would record
+      // a before-identity no Undo could reach. An object removed mid-gesture is a
+      // real change this cannot undo, so identity then stays where it is.
+      if (!missing) this.#documentSession.restoreContentStateId(active.previewStateId);
+    } finally {
+      // The gesture always ends here, on every exit, so the settled state is
+      // announced exactly once whether it committed or was abandoned.
+      this.#documentSession.endTransientEdit();
     }
-    if (changed) {
-      this.#documentSession.replacePageDocument(page);
-      this.#onPreviewDocumentChange(this.#documentSession.page);
-    }
-    // Preview successors are not History, so returning the pre-gesture content
-    // must also return the identity it had. Otherwise a cancelled gesture would
-    // leave a saved project permanently dirty, and a committed one would record
-    // a before-identity no Undo could reach. An object removed mid-gesture is a
-    // real change this cannot undo, so identity then stays where it is.
-    if (!missing) this.#documentSession.restoreContentStateId(active.previewStateId);
   }
 }
 

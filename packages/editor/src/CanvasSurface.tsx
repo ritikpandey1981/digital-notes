@@ -761,6 +761,7 @@ export function CanvasSurface({
     let manipulationController: ManipulationController<ManipulationResult> | null = null;
     let unsubscribeManipulation: (() => void) | null = null;
     let historyCoordinator: EditorHistoryCoordinator | null = null;
+    let continuousLayerOpacityEdit: ContinuousLayerOpacityEdit | null = null;
     let continuousVectorStyleEdit: ContinuousVectorStyleEdit | null = null;
     let continuousSelectionStyleEdit: ContinuousSelectionStyleEdit | null = null;
     let continuousPaperColorEdit: ContinuousPaperColorEdit | null = null;
@@ -1808,7 +1809,7 @@ export function CanvasSurface({
           }),
         );
       };
-      const continuousLayerOpacityEdit = new ContinuousLayerOpacityEdit({
+      continuousLayerOpacityEdit = new ContinuousLayerOpacityEdit({
         documentSession,
         commit: (layerId, _initialOpacity, finalOpacity) => {
           const state =
@@ -3975,6 +3976,9 @@ export function CanvasSurface({
       continuousVectorStyleEdit?.cancel();
       continuousSelectionStyleEdit?.cancel();
       continuousPaperColorEdit?.cancel();
+      // An opacity drag interrupted by unmount would otherwise leave its preview
+      // opacity in the document with no History entry to undo it.
+      continuousLayerOpacityEdit?.cancel();
       themeObserver?.disconnect();
       for (const [type, listener] of editorPointerListeners) {
         inkLayer?.canvas.removeEventListener(type, listener, true);

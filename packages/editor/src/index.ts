@@ -3,6 +3,7 @@ export {
   ProjectSession,
   type ProjectContentOrigin,
   type ProjectContentState,
+  type ProjectContentStateListener,
   type ProjectPersistenceCapture,
   type ProjectSessionOptions,
 } from "./project-session";
