@@ -65,6 +65,14 @@ function createMainWindow(): void {
   const developmentServerUrl = process.env.VITE_DEV_SERVER_URL;
   const projectWindow = mainWindow;
   const projectFiles = new DesktopProjectFileService({
+    chooseSource: async () => {
+      const result = await dialog.showOpenDialog(projectWindow, {
+        title: "Open Folio Project",
+        filters: [{ name: "Folio Project", extensions: ["folio"] }],
+        properties: ["openFile"],
+      });
+      return result.canceled ? null : result.filePaths;
+    },
     chooseDestination: async (suggestedName) => {
       const result = await dialog.showSaveDialog(projectWindow, {
         title: "Save Folio Project",

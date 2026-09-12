@@ -1,5 +1,15 @@
-import type { ProjectSession } from "@folio/editor";
-import { encodeFolioProject } from "@folio/persistence/project";
+import { ProjectSession, type ProjectRuntimeHost } from "@folio/editor";
+import {
+  encodeFolioProject,
+  decodeFolioProject,
+  FolioProjectCodecError,
+} from "@folio/persistence/project";
+import {
+  openFailure,
+  isProjectTargetId,
+  type DesktopProjectOpenPort,
+  type ProjectOpenResult,
+} from "../../electron/project-open-contract";
 import {
   saveFailure,
   type DesktopProjectBacking,
@@ -7,16 +17,18 @@ import {
   type ProjectSaveResult,
 } from "../../electron/project-save-contract";
 
-/** One manual save at a time for the workspace's existing project authority. */
+/** Raw lifecycle commands, intentionally not exposed in File UI until unsaved protection exists. */
 export class ProjectPersistenceCoordinator {
   private backingValue: DesktopProjectBacking | null = null;
-  private busy = false;
+  private operation: "save" | "open" | null = null;
+  private requestingReplacement = false;
   private backingProject: ProjectSession | null = null;
 
   constructor(
     private readonly project: ProjectSession | (() => ProjectSession),
     private readonly port: DesktopProjectSavePort,
     private readonly canSave: () => boolean = () => true,
+    private readonly opening?: Readonly<{ host: ProjectRuntimeHost; port: DesktopProjectOpenPort }>,
   ) {}
 
   get backing(): DesktopProjectBacking | null {
@@ -24,7 +36,106 @@ export class ProjectPersistenceCoordinator {
   }
 
   get isSaving(): boolean {
-    return this.busy;
+    return this.operation === "save";
+  }
+
+  get canReplaceRuntime(): boolean {
+    return this.operation === null || this.requestingReplacement;
+  }
+
+  async open(): Promise<ProjectOpenResult> {
+    const opening = this.opening;
+    if (this.operation !== null || !this.canSave())
+      return openFailure("BUSY", "A project operation is already in progress.");
+    if (opening === undefined)
+      return openFailure("TARGET_UNAVAILABLE", "Project Open is unavailable.");
+    this.operation = "open";
+    let provisional: string | null = null;
+    let activated = false;
+    let adopted = false;
+    try {
+      const read = await opening.port.open();
+      if (read?.status === "cancelled" || read?.status === "failed") return read;
+      if (read?.status === "read" && isProjectTargetId(read.backing?.id))
+        provisional = read.backing.id;
+      if (
+        read?.status !== "read" ||
+        !isProjectTargetId(read.backing?.id) ||
+        typeof read.backing.displayName !== "string" ||
+        typeof read.content !== "string"
+      )
+        return openFailure("UNKNOWN", "The desktop Open result could not be confirmed.");
+      provisional = read.backing.id;
+      let project: ProjectSession;
+      try {
+        project = new ProjectSession(decodeFolioProject(read.content));
+      } catch (error) {
+        const code =
+          error instanceof FolioProjectCodecError &&
+          (error.code === "UNSUPPORTED_VERSION" || error.code === "RESOURCE_LIMIT")
+            ? error.code
+            : "INVALID_PROJECT";
+        return openFailure(code, "The selected file is not a supported, valid Folio project.");
+      }
+      this.requestingReplacement = true;
+      let replacement: ReturnType<ProjectRuntimeHost["replace"]>;
+      try {
+        replacement = opening.host.replace(project);
+      } finally {
+        this.requestingReplacement = false;
+      }
+      const result = await replacement;
+      if (result.status === "busy")
+        return openFailure("BUSY", "A project replacement is already in progress.");
+      if (result.status === "failed")
+        return openFailure(
+          "RUNTIME_FAILED",
+          "The project runtime could not be activated. The current project was preserved.",
+        );
+      activated = true;
+      this.backingProject = null;
+      this.backingValue = null;
+      const target = await opening.port.adopt(provisional);
+      if (
+        target?.status !== "adopted" ||
+        target.backing?.id !== provisional ||
+        typeof target.backing.displayName !== "string"
+      )
+        return {
+          status: "activated-unbacked",
+          error: {
+            code: "TARGET_UNAVAILABLE",
+            message:
+              "The project is active, but its file target could not be confirmed. Use Save As.",
+          },
+        };
+      this.backingProject = project;
+      this.backingValue = Object.freeze({ ...target.backing });
+      adopted = true;
+      return { status: "opened", backing: this.backingValue };
+    } catch {
+      return activated
+        ? {
+            status: "activated-unbacked",
+            error: {
+              code: "UNKNOWN",
+              message: "The project is active without a confirmed file target. Use Save As.",
+            },
+          }
+        : openFailure(
+            "UNKNOWN",
+            "The desktop Open result could not be confirmed. The current project was preserved.",
+          );
+    } finally {
+      if (!adopted) {
+        try {
+          await opening.port.release(provisional ?? undefined);
+        } catch {
+          /* Main revokes orphans on the next Open, navigation, crash or close. */
+        }
+      }
+      this.operation = null;
+    }
   }
 
   private currentProject(): ProjectSession {
@@ -39,9 +150,9 @@ export class ProjectPersistenceCoordinator {
   }
 
   private async performSave(saveAs: boolean): Promise<ProjectSaveResult> {
-    if (this.busy || !this.canSave())
+    if (this.operation !== null || !this.canSave())
       return saveFailure("BUSY", "A project operation is already in progress.");
-    this.busy = true;
+    this.operation = "save";
     const project = this.currentProject();
     try {
       let content: string;
@@ -66,7 +177,7 @@ export class ProjectPersistenceCoordinator {
     } catch {
       return saveFailure("UNKNOWN", "The desktop save result could not be confirmed.");
     } finally {
-      this.busy = false;
+      this.operation = null;
     }
   }
 }

@@ -1,9 +1,10 @@
 import type { DesktopProjectSavePort } from "../../electron/project-save-contract";
+import type { DesktopProjectOpenPort } from "../../electron/project-open-contract";
 
 declare global {
   interface Window {
     folio: {
-      readonly projects: DesktopProjectSavePort;
+      readonly projects: DesktopProjectSavePort & DesktopProjectOpenPort;
       platform: NodeJS.Platform;
       runtime: {
         chromium: string;

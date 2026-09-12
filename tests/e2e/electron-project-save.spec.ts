@@ -24,7 +24,7 @@ test("exposes a narrow save bridge and writes projects without File UI", async (
           node: typeof (window as unknown as { require?: unknown }).require,
         };
       }),
-    ).toEqual({ methods: ["save"], node: "undefined" });
+    ).toEqual({ methods: ["open", "adopt", "release", "save"], node: "undefined" });
     // Stub only the native destination picker; the production IPC, authorization,
     // target registry, and atomic writer all run unchanged against a temp directory.
     await app.evaluate(({ dialog }, filePath) => {

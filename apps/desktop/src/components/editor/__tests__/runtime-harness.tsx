@@ -7,7 +7,7 @@ import {
   type ProjectRuntime,
   type ViewportActions,
 } from "@folio/editor";
-import { createEmptyFolioProject } from "@folio/persistence/project";
+import { createEmptyFolioProject, encodeFolioProject } from "@folio/persistence/project";
 import { EditorWorkspace } from "../EditorWorkspace";
 import { useEditorWorkspaceState } from "../useEditorWorkspaceState";
 import { useEditorViewportState } from "../useEditorViewportState";
@@ -27,9 +27,29 @@ let historyActions: WorkspaceHistoryActions | null = null;
 let historyAvailability: WorkspaceHistoryAvailability = { canUndo: false, canRedo: false };
 let saved: { entry: ProjectRuntime; root: unknown; surface: Element | null } | null = null;
 let delayedPublication: (() => void) | null = null;
+let automaticActivation = false;
 const noop = () => undefined;
 
 const runtimeHarness = {
+  async open() {
+    automaticActivation = true;
+    try {
+      return await persistence.open();
+    } finally {
+      automaticActivation = false;
+    }
+  },
+  save: () => persistence.save(),
+  saveAs: () => persistence.saveAs(),
+  get backing() {
+    return persistence.backing;
+  },
+  get metadata() {
+    return host.active.project.metadata;
+  },
+  get encoded() {
+    return encodeFolioProject(host.active.project.captureSnapshot());
+  },
   capture() {
     saved = {
       entry: host.active,
@@ -138,7 +158,8 @@ export function Harness() {
     host = value;
     const prepare = value.prepared.bind(value);
     value.prepared = (entry: ProjectRuntime, result: RuntimePreparationResult) => {
-      if (entry !== value.active && result.status === "ready") held = () => prepare(entry, result);
+      if (!automaticActivation && entry !== value.active && result.status === "ready")
+        held = () => prepare(entry, result);
       else prepare(entry, result);
     };
   }, []);

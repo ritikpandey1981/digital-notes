@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { MAXIMUM_PROJECT_BYTES, ProjectReadLimitError, readDesktopProject } from "./project-read";
+import {
+  isProjectTargetId,
+  openFailure,
+  type ProjectReadResult,
+  type ProjectTargetResult,
+  type ProjectReleaseResult,
+} from "./project-open-contract";
 import {
   ProjectWriteError,
   projectFileSystem,
@@ -13,9 +21,9 @@ import {
   type ProjectSaveResult,
 } from "./project-save-contract";
 
-const MAXIMUM_PROJECT_BYTES = 256 * 1024 * 1024;
-
 export interface ProjectFileServiceOptions {
+  readonly chooseSource?: () => Promise<readonly string[] | null>;
+  readonly read?: typeof readDesktopProject;
   readonly chooseDestination: (suggestedName: string) => Promise<string | null>;
   readonly confirmReplacement: (displayName: string) => Promise<boolean>;
   readonly write?: typeof writeProjectAtomically;
@@ -24,8 +32,10 @@ export interface ProjectFileServiceOptions {
 /** One window's file authority. Paths never cross the preload bridge. */
 export class DesktopProjectFileService {
   private target: Readonly<{ id: string; path: string }> | null = null;
+  private provisional: Readonly<{ id: string; path: string }> | null = null;
   private busy = false;
   private generation = 0;
+  private openGeneration = 0;
   private disposed = false;
 
   constructor(private readonly options: ProjectFileServiceOptions) {}
@@ -34,6 +44,7 @@ export class DesktopProjectFileService {
   revoke(): void {
     this.generation += 1;
     this.target = null;
+    this.provisional = null;
   }
 
   dispose(): void {
@@ -41,9 +52,87 @@ export class DesktopProjectFileService {
     this.revoke();
   }
 
+  async open(input?: unknown): Promise<ProjectReadResult> {
+    if (input !== undefined)
+      return openFailure("INVALID_REQUEST", "Open takes no path or payload.");
+    if (this.disposed) return openFailure("TARGET_UNAVAILABLE", "The project window is closed.");
+    if (this.busy) return openFailure("BUSY", "A project operation is already in progress.");
+    this.busy = true;
+    // At most one provisional capability. A fresh request retires any orphaned lost reply.
+    this.provisional = null;
+    const generation = this.generation;
+    const openGeneration = ++this.openGeneration;
+    const current = () =>
+      !this.disposed && generation === this.generation && openGeneration === this.openGeneration;
+    try {
+      const paths = await this.options.chooseSource?.();
+      if (!current()) return openFailure("TARGET_UNAVAILABLE", "The project window changed.");
+      if (paths === null) return { status: "cancelled" };
+      if (
+        !Array.isArray(paths) ||
+        paths.length !== 1 ||
+        typeof paths[0] !== "string" ||
+        !/\.folio$/i.test(paths[0]) ||
+        projectDestination(paths[0]) !== paths[0]
+      )
+        return openFailure("INVALID_REQUEST", "Choose one regular .folio project file.");
+      const filename = paths[0];
+      const content = await (this.options.read ?? readDesktopProject)(filename);
+      if (!current()) return openFailure("TARGET_UNAVAILABLE", "The project window changed.");
+      const target = { id: randomUUID(), path: filename };
+      this.provisional = target;
+      return {
+        status: "read",
+        content,
+        backing: { id: target.id, displayName: path.basename(filename) },
+      };
+    } catch (error) {
+      const errno = platformErrorCode(error);
+      return openFailure(
+        error instanceof ProjectReadLimitError
+          ? "FILE_TOO_LARGE"
+          : errno === "EACCES" || errno === "EPERM"
+            ? "PERMISSION_DENIED"
+            : "READ_FAILED",
+        "The selected project could not be read.",
+      );
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  adopt(input: unknown): ProjectTargetResult {
+    if (!isProjectTargetId(input)) return openFailure("INVALID_REQUEST", "Invalid project target.");
+    if (this.disposed || this.busy || this.provisional?.id !== input)
+      return openFailure("TARGET_UNAVAILABLE", "The opened project target is no longer available.");
+    // No filesystem work here; only promote the already-authorized capability.
+    this.target = this.provisional;
+    this.provisional = null;
+    return {
+      status: "adopted",
+      backing: { id: this.target.id, displayName: path.basename(this.target.path) },
+    };
+  }
+
+  release(input?: unknown): ProjectReleaseResult {
+    if (input === undefined) {
+      // A lost read reply has no ID at the renderer. Cancel only the pending Open grant,
+      // never A's adopted Save capability, including a read still finishing in main.
+      this.openGeneration += 1;
+      this.provisional = null;
+      return { status: "released" };
+    }
+    if (!isProjectTargetId(input)) return openFailure("INVALID_REQUEST", "Invalid project target.");
+    if (this.provisional?.id === input) this.provisional = null;
+    // Also handles a successful adoption whose IPC acknowledgement was lost.
+    if (this.target?.id === input) this.target = null;
+    return { status: "released" };
+  }
+
   async save(input: unknown): Promise<ProjectSaveResult> {
     if (this.disposed) return saveFailure("TARGET_UNAVAILABLE", "The project window is closed.");
-    if (this.busy) return saveFailure("BUSY", "A project save is already in progress.");
+    if (this.busy || this.provisional !== null)
+      return saveFailure("BUSY", "A project operation is already in progress.");
     if (!isProjectSaveRequest(input))
       return saveFailure("INVALID_REQUEST", "Invalid project save request.");
     this.busy = true;

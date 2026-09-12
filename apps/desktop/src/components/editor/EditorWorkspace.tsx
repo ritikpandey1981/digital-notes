@@ -115,12 +115,20 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
   const [{ host, persistence }] = useState(() => {
     const runtimeHost = new ProjectRuntimeHost(
       new ProjectSession(createEmptyFolioProject()),
-      () => !coordinator.isSaving,
+      () => coordinator.canReplaceRuntime,
     );
     const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
       () => runtimeHost.active.project,
       { save: (request) => window.folio.projects.save(request) },
       () => !runtimeHost.replacing,
+      {
+        host: runtimeHost,
+        port: {
+          open: () => window.folio.projects.open(),
+          adopt: (targetId) => window.folio.projects.adopt(targetId),
+          release: (targetId) => window.folio.projects.release(targetId),
+        },
+      },
     );
     return { host: runtimeHost, persistence: coordinator };
   });
