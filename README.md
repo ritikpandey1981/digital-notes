@@ -5,9 +5,10 @@ React, TypeScript, and Canvas 2D.
 
 The repository contains a live multi-page, multi-layer editor with immutable Ink and
 vector objects, command-based undo/redo, selection and manipulation, drawing tools,
-color workflows, and Electron integration. The current persistence package serves an
-older notebook model and is not yet connected to the live sketchbook; see the roadmap
-before assuming Open/Save is complete.
+color workflows, and Electron integration. Projects are saved to and opened from a
+single canonical `.folio` file, with unsaved-change protection and crash recovery. The
+folder serialization in the persistence package still serves an older notebook model
+and is unrelated to that flow.
 
 ## Requirements
 
@@ -42,19 +43,20 @@ pnpm package
 
 ## Repository shape
 
-| Path                                      | Purpose                                                   |
-| ----------------------------------------- | --------------------------------------------------------- |
-| `apps/desktop`                            | Electron host, React workspace, and product UI            |
-| `packages/document`                       | Live pages, layers, and artwork objects                   |
-| `packages/editor`                         | Sessions, tools, commands, selection workflows, and color |
-| `packages/history`                        | Generic command History and compatibility History         |
-| `packages/ink`                            | Pointer capture, strokes, brushes, and ink geometry       |
-| `packages/rendering`                      | Canvas, viewport, compositor, and overlays                |
-| `packages/selection`                      | Low-level selection and hit testing                       |
-| `packages/manipulation`                   | Model-neutral object transformations                      |
-| `packages/domain`, `packages/persistence` | Older notebook persistence path                           |
-| `packages/ui`                             | Shared React primitives                                   |
-| `tests/e2e`                               | Playwright Electron tests                                 |
+| Path                    | Purpose                                                       |
+| ----------------------- | ------------------------------------------------------------- |
+| `apps/desktop`          | Electron host, React workspace, and product UI                |
+| `packages/document`     | Live pages, layers, and artwork objects                       |
+| `packages/editor`       | Sessions, tools, commands, selection workflows, and color     |
+| `packages/history`      | Generic command History and compatibility History             |
+| `packages/ink`          | Pointer capture, strokes, brushes, and ink geometry           |
+| `packages/rendering`    | Canvas, viewport, compositor, and overlays                    |
+| `packages/selection`    | Low-level selection and hit testing                           |
+| `packages/manipulation` | Model-neutral object transformations                          |
+| `packages/persistence`  | Canonical `.folio` project codec, and the older notebook path |
+| `packages/domain`       | Older notebook model behind that legacy path                  |
+| `packages/ui`           | Shared React primitives                                       |
+| `tests/e2e`             | Playwright Electron tests                                     |
 
 ## Documentation
 

@@ -17,9 +17,13 @@ current repository. Completed implementation detail belongs in
   brush snapshots, and exact retained source samples.
 - One Layers experience: a Spatial Layers Stack over truthful per-Layer previews, and
   the Layers list for add, rename, visibility, lock, opacity, reorder, and delete.
+- Desktop project persistence: a canonical `.folio` file, New/Open/Save/Save As with
+  unsaved-change protection, a live project title and dirty marker, background crash
+  snapshots, and startup recovery.
 
-This baseline is not a claim that live file persistence, every named brush engine, or
-physical-device validation is complete.
+This baseline is not a claim that every named brush engine or physical-device
+validation is complete, or that file workflows beyond a single open project — recent
+files, rename, export, sync — exist.
 
 ## Now — finish Professional Sketchbook UI/UX v1
 
@@ -42,10 +46,11 @@ and the List. Remaining Layers work is deliberately deferred rather than unfinis
 
 - Pages and Page Navigator presentation polish.
 - Page Settings visual refinement.
-- Top bar and document controls. File actions stay placeholders until the persistence
-  boundary exists.
+- Top bar and document controls: done. The application menu carries real New, Open,
+  Save, Save As and recovery actions, and the title island shows the project's own
+  title and whether it has unsaved changes.
 - Zoom and viewport navigation control consistency.
-- Floating panel and dialog consistency, including the placeholder shell dialogs.
+- Floating panel and dialog consistency across the surfaces that remain.
 - Tooltip, focus, hover, and keyboard-affordance consistency, plus a discoverability
   surface for existing shortcuts.
 - Light/dark parity and minimum-window/responsive QA across the whole workspace.
@@ -61,20 +66,23 @@ approval. Automated green is not a freeze.
 
 ## After UI v1 — make the live sketchbook durable
 
-### Connect persistence to the live document
+### Connect persistence to the live document — done
 
-- Decide the versioned on-disk representation for `SketchbookDocument`, Pages, Layers,
-  vector objects, Ink source samples, paper, and metadata.
-- Choose and document migration from, or replacement of, the older `@folio/domain`
-  Notebook format.
-- Connect real New/Open/Save/Save As/autosave/recovery flows to the Electron editor.
-- Replace placeholder shell dialogs and recent-file data with that live boundary.
-- Define failure recovery, atomic-write guarantees, compatibility fixtures, and
-  end-to-end round trips before treating file UI as complete.
+Delivered for the desktop: a versioned `.folio` project format for `SketchbookDocument`
+with pages, layers, vector objects, Ink source samples, paper and metadata; atomic
+writes; transactional Open and New behind one unsaved-change guard; content-identity
+dirty state with manual checkpoints; background crash snapshots kept separately from
+the project file; startup recovery with Recover, Open Original and Discard; and the
+application-menu file actions, accelerators, project title and dirty marker that expose
+all of it. The older `@folio/domain` folder format was left isolated rather than
+migrated.
 
-Exit condition: a live multi-page, multi-layer sketchbook with Ink and vectors can be
-saved, closed, recovered when interrupted, reopened, and compared without semantic
+Exit condition met: a live multi-page, multi-layer sketchbook with Ink and vectors can
+be saved, closed, recovered when interrupted, reopened, and compared without semantic
 loss.
+
+Deliberately not built, and not planned as part of this: recent files, project rename,
+export, printing, cloud sync, and any mobile document provider.
 
 ### Validate physical input and rendering budgets
 

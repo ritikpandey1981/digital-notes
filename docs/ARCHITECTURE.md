@@ -43,8 +43,8 @@ the authority for actual import edges.
 | `packages/rendering` | Canvas controller, camera/viewport, coordinate conversion, render scheduling, and overlays |
 | `packages/selection` | Low-level selection state and hit testing for one primary identity |
 | `packages/manipulation` | Model-neutral translation, rotation, scale, delete, and duplicate results |
-| `packages/domain` | Older notebook model retained for the legacy persistence path |
-| `packages/persistence` | Folder save/load, autosave, and recovery for the older notebook model |
+| `packages/domain` | Older notebook model retained for the legacy folder persistence path |
+| `packages/persistence` | Canonical `.folio` project codec, plus folder save/load and recovery for the older notebook model |
 | `packages/ui` | Shared React UI primitives |
 
 `packages/search`, `packages/shared`, and `packages/testing` currently expose empty or
@@ -341,24 +341,80 @@ inertial brush-ring movement.
 Tool navigation uses roving tab stops and Arrow/Home/End keys. Interactive text fields
 retain text selection while editor chrome suppresses accidental label selection.
 
-## Persistence boundary
+## Persistence
 
-`@folio/persistence` implements versioned folder serialization, atomic writes,
-autosave, dirty tracking, load validation, and recovery for the older
-`@folio/domain` Notebook model. The live desktop editor uses `@folio/document`
-`SketchbookDocument` and is not connected to that persistence path.
+The live sketchbook has an end-to-end open/save flow, built on `SketchbookDocument`
+rather than on the older `@folio/domain` Notebook model. The folder serialization in
+`@folio/persistence` still serves that older model and is unrelated to the paths
+below; the project codec in the same package is what the desktop editor uses.
 
-Therefore Folio does not yet have a trustworthy end-to-end open/save/autosave flow for
-the live sketchbook, including durable Ink and Layer state. This is an explicit gap,
-not an implication that the existing persistence package is unused or incorrect. The
-next persistence design must choose migration or replacement without creating a third
-document authority.
+### The project file
+
+`.folio` is one canonical JSON document, discriminated by `format: "folio-project"`
+and `formatVersion`, holding project metadata and the whole sketchbook: pages, layers,
+objects, ink with its pressure dynamics, and paper. It is platform-neutral. Nothing
+about where a file lives, what it is called, or which window opened it appears in it,
+so the same bytes mean the same project on any host.
+
+### Ownership
+
+```text
+ProjectSession        one project's lifetime: metadata, its document session,
+                      and its content-identity/checkpoint state
+ProjectRuntimeHost    one active project and at most one inert candidate,
+                      swapped by a prepare -> arm -> commit -> dispose activation
+```
+
+A replacement is transactional. The candidate is prepared and armed before the
+authority changes, and the outgoing project is disposed only once the incoming one is
+live, so a failure anywhere along the way leaves the current project exactly as it
+was.
+
+### Dirty state and checkpoints
+
+Every committed document state has a runtime-only content identity. A project is dirty
+when its current identity differs from the last identity a durable write or load
+actually confirmed, which is why undoing back to a saved state is clean again and
+redoing is dirty again. Those identities never reach disk; they describe this run.
+
+Only a confirmed Save or Open sets a checkpoint. A save captures artwork and identity
+together, so editing that continues during the write stays dirty afterwards, and a
+result Folio cannot confirm leaves the previous checkpoint standing.
+
+Dirtiness is separate from risk. An untouched blank sketch is not dirty and is not at
+risk; a project whose file could not be confirmed is not dirty but is at risk. New,
+Open and Close consult risk, and the title marker shows dirtiness.
+
+### Lifecycle and protection
+
+One guard covers every destructive replacement -- New, Open, Close and recovery --
+offering Save, Discard or Cancel. Discard is permission to replace, never an
+instruction to clear anything: the current project survives until its replacement
+actually commits. A save that cannot be confirmed blocks the replacement rather than
+assuming the disk took it. Window close runs the same guard through an asynchronous
+handshake with the main process.
+
+### Crash recovery
+
+A background snapshot of unsaved work is kept under the application data directory in
+its own `folio-recovery` envelope, which embeds the canonical project payload. It
+never writes to the user's `.folio`, never changes the checkpoint, dirty state, or
+backing target, and is excluded during live preview gestures. At startup those records
+are discovered, validated and offered; a valid record is never deleted for being old,
+and is consumed only after the replacement it produced has committed. Recovered
+artwork is deliberately detached -- no file, no checkpoint -- so the next save asks
+where to put it and the original it was rescued from is never silently overwritten.
 
 ## Electron boundary
 
 The Electron main and preload code provide the desktop host. The React renderer owns
-the live editor composition. File-operation dialogs in older shell components are
-placeholders and are not proof of connected persistence.
+the live editor composition.
+
+Paths live in main. The renderer holds opaque capability ids for a save target and a
+recovery record, and the preload surface exposes only the operations those ids name:
+it cannot list a directory, read an arbitrary file, or learn where anything is. Writes
+are atomic -- a temporary file in the destination directory, then a rename -- so a
+failed or interrupted write never destroys the previous good file.
 
 End-to-end tests launch the real Electron application. Screenshot output defaults to
 Playwright's ignored test output; documentation screenshots are written only when an

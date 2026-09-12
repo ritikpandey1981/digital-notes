@@ -168,18 +168,18 @@ The common motion is restrained and honors reduced-motion settings.
 **Consequence:** new popovers and portals integrate with the shared ownership contract
 instead of adding document-level outside-click listeners.
 
-## D-014 — Legacy persistence remains isolated pending migration
+## D-014 — Legacy folder persistence remains isolated
 
-**Status:** accepted constraint; replacement decision pending
+**Status:** accepted; resolved by D-023
 
-`@folio/persistence` correctly serves the older `@folio/domain` Notebook model, while
-the live editor uses `@folio/document`. It is not connected to the live desktop
-session.
+`@folio/persistence` still serves the older `@folio/domain` Notebook model through its
+folder serialization. The live editor was never connected to it, and is not now: the
+question of migrating that format or introducing a new one was settled by introducing
+a versioned `SketchbookDocument` project format alongside it.
 
-**Consequence:** do not present current placeholder file UI as durable save support.
-Before live persistence is implemented, decide whether to migrate the existing format
-or introduce a versioned SketchbookDocument format, and define Ink/Layer recovery and
-compatibility. Do not create a third canonical model.
+**Consequence:** the legacy folder path and the live project path are separate and stay
+separate. Do not connect the live editor to the folder format, and do not create a
+third canonical model.
 
 ## D-015 — Teaching and AI are transient until accepted
 
@@ -319,3 +319,72 @@ on every exit, cancelling when their control unmounts mid-interaction.
 **Consequence:** a capability is added to the model first and surfaced in both views, or
 in neither. An operation the model does not support — duplicate, merge, flatten, blend
 modes, grouping, masks — is offered by neither.
+
+## D-023 — `.folio` is the canonical, platform-neutral project format
+
+**Status:** accepted
+
+One JSON document holds project metadata and the whole sketchbook — pages, layers,
+objects, ink with its pressure dynamics, paper — discriminated by
+`format: "folio-project"` and an explicit `formatVersion`. Decoding validates and
+bounds its input rather than trusting it.
+
+**Consequence:** the same bytes mean the same project on any host, so a future tablet
+or web client reads what the desktop wrote. Nothing host-specific may enter the format,
+and a change to what it means is a version change, not an in-place edit.
+
+## D-024 — Where a project lives is host state, not project data
+
+**Status:** accepted
+
+A file location belongs to the session that opened it. Paths stay in the Electron main
+process; the renderer holds an opaque capability id for the current save target and for
+each recovery record, and can only name operations those ids permit.
+
+**Consequence:** the project file never records its own location, a filename never
+becomes the project's title, and Save As does not rename the project. The renderer
+cannot list a directory, read an arbitrary file, or learn where anything is, so a
+compromised renderer gains no filesystem reach.
+
+## D-025 — Dirty state is content identity; checkpoints are runtime-only
+
+**Status:** accepted
+
+Every committed document state has a runtime identity. A project is dirty when its
+current identity differs from the one a durable write or load actually confirmed.
+History entries carry the identities they move between, so undo and redo restore
+identity rather than recomputing it, and undo depth is never used as a proxy for
+dirtiness.
+
+**Consequence:** undoing back to a saved state is clean again and redoing is dirty
+again, without hashing the project or writing anything. These identities describe one
+run and are never serialized. Only a confirmed result may set a checkpoint: an
+unconfirmed write leaves the previous one standing.
+
+## D-026 — Replacing a project is transactional and guarded
+
+**Status:** accepted
+
+New, Open, recovery, and window close all pass through one guard offering Save, Discard
+or Cancel, and then through one transactional activation: a candidate is prepared and
+armed before the authority changes, and the outgoing project is disposed only after the
+incoming one is live.
+
+**Consequence:** Discard is permission to replace, never an instruction to clear, so a
+failed activation leaves the current project untouched. A save that cannot be confirmed
+blocks the replacement rather than assuming the disk took it. New entry points reuse
+this guard instead of carrying a copy of it.
+
+## D-027 — Recovery is separate from the project file, and recovered work is detached
+
+**Status:** accepted
+
+Background snapshots of unsaved work live under the application data directory in their
+own `folio-recovery` envelope, which embeds the canonical project payload. They never
+write to the user's `.folio` and never change its checkpoint, dirty state, or backing.
+Recovered artwork is activated with no file and no checkpoint.
+
+**Consequence:** recovery can never overwrite artwork it was rescuing, because the next
+save asks where to put it; opening the original is a separate, deliberate choice. A
+valid record is never deleted for being old, and is consumed only after the replacement
+it produced has committed.
