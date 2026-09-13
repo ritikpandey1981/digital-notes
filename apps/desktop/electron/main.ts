@@ -112,7 +112,7 @@ function createMainWindow(): void {
     directory: path.join(app.getPath("userData"), "recovery"),
     resolveBackingPath: (targetId) => projectFiles.sourcePathForTarget(targetId),
   });
-  registerRecoveryIpc(ipcMain, projectWindow, recoveryFiles, authorizeProjectSender, (filename) =>
+  registerRecoveryIpc(ipcMain, projectWindow, recoveryFiles, trustedUrl, (filename) =>
     projectFiles.openSource(filename),
   );
   // A hard termination mid-write can strand this service's own temporary files.

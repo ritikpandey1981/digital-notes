@@ -2,6 +2,7 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import { DesktopProjectFileService } from "./project-file-service";
 import { saveFailure, type ProjectSaveResult } from "./project-save-contract";
 import { openFailure } from "./project-open-contract";
+import { createTrustedSender } from "./trusted-sender";
 
 export const PROJECT_SAVE_CHANNEL = "folio:projects:save";
 export const PROJECT_OPEN_CHANNEL = "folio:projects:open";
@@ -9,12 +10,7 @@ export const PROJECT_ADOPT_CHANNEL = "folio:projects:adopt";
 export const PROJECT_RELEASE_CHANNEL = "folio:projects:release";
 
 function authorized(window: BrowserWindow, event: IpcMainInvokeEvent, trustedUrl: string): boolean {
-  return (
-    !window.isDestroyed() &&
-    event.sender === window.webContents &&
-    event.senderFrame === window.webContents.mainFrame &&
-    event.senderFrame?.url === trustedUrl
-  );
+  return createTrustedSender(window, trustedUrl)(event);
 }
 
 export function createProjectOpenHandlers(

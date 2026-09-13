@@ -1,6 +1,7 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import { openFailure, type ProjectReadResult } from "./project-open-contract";
 import type { DesktopRecoveryFileService } from "./recovery-file-service";
+import { createTrustedSender } from "./trusted-sender";
 import {
   RECOVERY_CLEAR_CHANNEL,
   RECOVERY_LIST_CHANNEL,
@@ -9,7 +10,6 @@ import {
   RECOVERY_STORE_CHANNEL,
   isRecoveryId,
   recoveryFailure,
-  toRecoveryCandidateSummary,
   type RecoveryListResult,
   type RecoveryReadResult,
 } from "./recovery-contract";
@@ -34,8 +34,7 @@ export function createRecoveryHandlers(
       if (!authorized(event)) return denied();
       // Only the safe half of each record crosses: a title, a time, and whether
       // an original is still reachable. Its location and payload stay here.
-      const records = await service.list();
-      return { status: "listed", candidates: records.map(toRecoveryCandidateSummary) };
+      return { status: "listed", candidates: await service.list() };
     },
     read: async (event: IpcMainInvokeEvent, input: unknown): Promise<RecoveryReadResult> => {
       if (!authorized(event)) return denied();
@@ -79,15 +78,30 @@ export function registerRecoveryIpc(
   ipc: IpcMain,
   window: BrowserWindow,
   service: DesktopRecoveryFileService,
-  authorized: (event: IpcMainInvokeEvent) => boolean,
+  trustedUrl: string,
   openOriginal: RecoveryOriginalOpener,
 ): void {
-  const handlers = createRecoveryHandlers(service, authorized, openOriginal);
+  // The same rule the project channels use. Recovery reaches the user's own
+  // files through Open Original, so it cannot be the weaker door.
+  const handlers = createRecoveryHandlers(
+    service,
+    createTrustedSender(window, trustedUrl),
+    openOriginal,
+  );
   ipc.handle(RECOVERY_STORE_CHANNEL, handlers.store);
   ipc.handle(RECOVERY_CLEAR_CHANNEL, handlers.clear);
   ipc.handle(RECOVERY_LIST_CHANNEL, handlers.list);
   ipc.handle(RECOVERY_READ_CHANNEL, handlers.read);
   ipc.handle(RECOVERY_OPEN_ORIGINAL_CHANNEL, handlers.openOriginal);
+  // A page that navigated away, or a renderer that died, is not the page that
+  // was given this authority; anything it started must not be allowed to land.
+  window.webContents.on("did-start-navigation", (event) => {
+    if (event.isMainFrame && !event.isSameDocument) service.revoke();
+  });
+  window.webContents.on("render-process-gone", () => service.revoke());
+  window.webContents.on("did-finish-load", () => {
+    if (window.webContents.mainFrame?.url === trustedUrl) service.restore();
+  });
   window.once("closed", () => {
     service.dispose();
     for (const channel of [

@@ -10,13 +10,34 @@ export const RECOVERY_FORMAT = "folio-recovery";
 export const CURRENT_RECOVERY_VERSION = 1;
 export const RECOVERY_FILE_EXTENSION = ".folio-recovery";
 
-/** Recovery payloads are application-owned but still disk input on the way back. */
-export const MAXIMUM_RECOVERY_BYTES = 64 * 1024 * 1024;
+/**
+ * The largest project recovery will keep a copy of.
+ *
+ * Recovery is an application-owned safety net rather than the user's own file,
+ * so it is bounded well below the project format's own ceiling. A project above
+ * this is not recovery-protected, and the store says so rather than failing
+ * quietly.
+ */
+export const MAXIMUM_RECOVERY_PROJECT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The largest record on disk, derived so anything accepted always fits.
+ *
+ * The project is embedded as a JSON string, and escaping can double it in the
+ * worst case. Measuring the write against the payload and the read against the
+ * whole envelope is how a snapshot gets written that nothing can ever read, so
+ * both sides measure the envelope and this ceiling is large enough to hold any
+ * project the limit above admits.
+ */
+export const MAXIMUM_RECOVERY_BYTES = MAXIMUM_RECOVERY_PROJECT_BYTES * 2 + 64 * 1024;
+
+/** Metadata bounds, matched to what a project file itself accepts. */
+export const MAXIMUM_RECOVERY_TITLE_LENGTH = 1024;
+export const MAXIMUM_RECOVERY_DOCUMENT_ID_LENGTH = 512;
 /** How many candidates a startup scan will offer. Generous; the usual count is one. */
 export const MAXIMUM_RECOVERY_CANDIDATES = 20;
 /** How many directory entries one scan will parse, so a flooded directory cannot hang startup. */
 export const MAXIMUM_RECOVERY_SCAN_ENTRIES = 200;
-export const MAXIMUM_RECOVERY_TITLE_LENGTH = 500;
 
 /**
  * The abandoned temporary files an interrupted atomic write can leave behind.
@@ -158,7 +179,7 @@ export function isRecoverySnapshotRequest(value: unknown): value is RecoverySnap
   return (
     isRecoveryId(record.recoveryId) &&
     isRecoveryId(record.sessionId) &&
-    isNonBlankString(record.documentId, 200) &&
+    isNonBlankString(record.documentId, MAXIMUM_RECOVERY_DOCUMENT_ID_LENGTH) &&
     typeof record.title === "string" &&
     record.title.length <= MAXIMUM_RECOVERY_TITLE_LENGTH &&
     isNonBlankString(record.capturedAt, 40) &&
@@ -187,7 +208,7 @@ export function isRecoveryRecord(value: unknown): value is RecoveryRecord {
     isRecoveryId(record.sessionId) &&
     isNonBlankString(record.capturedAt, 40) &&
     Number.isFinite(Date.parse(record.capturedAt as string)) &&
-    isNonBlankString(record.documentId, 200) &&
+    isNonBlankString(record.documentId, MAXIMUM_RECOVERY_DOCUMENT_ID_LENGTH) &&
     typeof record.title === "string" &&
     record.title.length <= MAXIMUM_RECOVERY_TITLE_LENGTH &&
     typeof record.hadBacking === "boolean" &&

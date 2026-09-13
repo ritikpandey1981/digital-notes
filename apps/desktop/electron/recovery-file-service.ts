@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
+import { mkdir, lstat, open, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import {
   projectFileSystem,
@@ -9,6 +9,7 @@ import {
   CURRENT_RECOVERY_VERSION,
   MAXIMUM_RECOVERY_BYTES,
   MAXIMUM_RECOVERY_CANDIDATES,
+  MAXIMUM_RECOVERY_PROJECT_BYTES,
   MAXIMUM_RECOVERY_SCAN_ENTRIES,
   RECOVERY_FILE_EXTENSION,
   RECOVERY_FORMAT,
@@ -17,6 +18,8 @@ import {
   isRecoveryRecord,
   isRecoverySnapshotRequest,
   recoveryFailure,
+  toRecoveryCandidateSummary,
+  type RecoveryCandidateSummary,
   type RecoveryClearResult,
   type RecoveryRecord,
   type RecoveryStoreResult,
@@ -45,11 +48,37 @@ export interface RecoveryFileServiceOptions {
  */
 export class DesktopRecoveryFileService {
   private disposed = false;
+  private suspended = false;
+  private generation = 0;
 
   constructor(private readonly options: RecoveryFileServiceOptions) {}
 
   dispose(): void {
     this.disposed = true;
+    this.revoke();
+  }
+
+  /**
+   * Withdraws authority from the document that held it.
+   *
+   * Navigation and a lost renderer both mean the page that could ask for this
+   * is gone. A write already in flight for that page must not commit, and
+   * nothing is served again until the trusted document is back.
+   */
+  revoke(): void {
+    this.suspended = true;
+    this.generation += 1;
+  }
+
+  /** The trusted document loaded again, so it may use recovery again. */
+  restore(): void {
+    if (this.disposed) return;
+    this.suspended = false;
+  }
+
+  /** Whether the caller that started an operation may still finish it. */
+  private available(generation: number): boolean {
+    return !this.disposed && !this.suspended && generation === this.generation;
   }
 
   /** Absolute path for one record. The id shape is validated before it reaches here. */
@@ -58,10 +87,11 @@ export class DesktopRecoveryFileService {
   }
 
   async store(input: unknown): Promise<RecoveryStoreResult> {
-    if (this.disposed) return recoveryFailure("STORE_UNAVAILABLE", "The recovery store is closed.");
+    if (!this.available(this.generation))
+      return recoveryFailure("STORE_UNAVAILABLE", "The recovery store is closed.");
     if (!isRecoverySnapshotRequest(input))
       return recoveryFailure("INVALID_REQUEST", "Invalid recovery snapshot request.");
-    if (Buffer.byteLength(input.content, "utf8") > MAXIMUM_RECOVERY_BYTES)
+    if (Buffer.byteLength(input.content, "utf8") > MAXIMUM_RECOVERY_PROJECT_BYTES)
       return recoveryFailure("TOO_LARGE", "The project is too large to keep a recovery copy of.");
     const record: RecoveryRecord = {
       format: RECOVERY_FORMAT,
@@ -80,13 +110,19 @@ export class DesktopRecoveryFileService {
           : resolveSource(this.options.resolveBackingPath?.(input.backingTargetId)),
       project: input.content,
     };
+    const serialized = JSON.stringify(record);
+    // Measured as it will be read. A payload that passes on its own can still
+    // produce an envelope no read would ever accept.
+    if (Buffer.byteLength(serialized, "utf8") > MAXIMUM_RECOVERY_BYTES)
+      return recoveryFailure("TOO_LARGE", "The project is too large to keep a recovery copy of.");
+    const generation = this.generation;
     try {
       await (this.options.ensureDirectory ?? ensureDirectory)(this.options.directory);
       await (this.options.write ?? writeProjectAtomically)(
         this.pathFor(input.recoveryId),
-        JSON.stringify(record),
+        serialized,
         projectFileSystem,
-        () => !this.disposed,
+        () => this.available(generation),
       );
       return { status: "stored" };
     } catch (error) {
@@ -121,7 +157,7 @@ export class DesktopRecoveryFileService {
    */
   async read(input: unknown): Promise<RecoveryRecord | null> {
     if (!isRecoveryId(input)) return null;
-    return this.readRecord(`${input}${RECOVERY_FILE_EXTENSION}`);
+    return this.readRecord(input);
   }
 
   /**
@@ -131,9 +167,9 @@ export class DesktopRecoveryFileService {
    * housekeeping rule. Beyond the offered count the extras simply stay on disk
    * for a later startup to find.
    */
-  async list(): Promise<readonly RecoveryRecord[]> {
+  async list(): Promise<readonly RecoveryCandidateSummary[]> {
     const entries = await this.entries();
-    const records: RecoveryRecord[] = [];
+    const summaries: RecoveryCandidateSummary[] = [];
     let scanned = 0;
     const scanLimit = this.options.maximumScanEntries ?? MAXIMUM_RECOVERY_SCAN_ENTRIES;
     for (const entry of entries) {
@@ -142,14 +178,16 @@ export class DesktopRecoveryFileService {
       // of everything in it; the records past this bound are left alone.
       if (scanned >= scanLimit) break;
       scanned += 1;
-      const record = await this.readRecord(entry);
-      if (record !== null) records.push(record);
+      const record = await this.readRecord(entry.slice(0, -RECOVERY_FILE_EXTENSION.length));
+      // Only the summary is kept. Deciding what to offer must not mean holding
+      // every project in a recovery directory in memory at once.
+      if (record !== null) summaries.push(toRecoveryCandidateSummary(record));
     }
     // Chronology comes from the capture itself, not from a filesystem timestamp
     // that a copy, a backup tool, or a restore would have rewritten.
-    records.sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt));
+    summaries.sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt));
     return Object.freeze(
-      records.slice(0, this.options.maximumCandidates ?? MAXIMUM_RECOVERY_CANDIDATES),
+      summaries.slice(0, this.options.maximumCandidates ?? MAXIMUM_RECOVERY_CANDIDATES),
     );
   }
 
@@ -184,12 +222,15 @@ export class DesktopRecoveryFileService {
     }
   }
 
-  private async readRecord(entry: string): Promise<RecoveryRecord | null> {
+  private async readRecord(recoveryId: string): Promise<RecoveryRecord | null> {
+    if (!isRecoveryId(recoveryId)) return null;
     try {
-      const raw = await readFile(path.join(this.options.directory, entry), "utf8");
-      if (raw.length > MAXIMUM_RECOVERY_BYTES) return null;
+      const raw = await readBoundedFile(this.pathFor(recoveryId));
+      if (raw === null) return null;
       const parsed: unknown = JSON.parse(raw);
-      return isRecoveryRecord(parsed) ? parsed : null;
+      if (!isRecoveryRecord(parsed)) return null;
+      // A record copied or renamed under another id is not that id's record.
+      return parsed.recoveryId === recoveryId ? parsed : null;
     } catch {
       // A truncated or unreadable record is not a recovery candidate. The crash
       // that produced it must not also stop the others being found, and it is
@@ -214,4 +255,36 @@ function mapRecoveryError(error: unknown): "PERMISSION_DENIED" | "WRITE_FAILED" 
   if (code === "EACCES" || code === "EPERM" || code === "PERMISSION_DENIED")
     return "PERMISSION_DENIED";
   return code === undefined ? "UNKNOWN" : "WRITE_FAILED";
+}
+
+/**
+ * Reads a recovery file without letting its size decide how much memory to use.
+ *
+ * The same shape as the project reader: check the entry is a regular file
+ * rather than a link or a directory, bound every read, and stop the moment the
+ * content exceeds what recovery accepts, so an oversized or hostile file costs
+ * one buffer rather than its whole length.
+ */
+async function readBoundedFile(filename: string): Promise<string | null> {
+  const entry = await lstat(filename);
+  if (!entry.isFile() || entry.isSymbolicLink()) return null;
+  if (entry.size > MAXIMUM_RECOVERY_BYTES) return null;
+  const handle = await open(filename, "r");
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > MAXIMUM_RECOVERY_BYTES) return null;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, MAXIMUM_RECOVERY_BYTES - total + 1));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > MAXIMUM_RECOVERY_BYTES) return null;
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, total));
+  } finally {
+    await handle.close();
+  }
 }

@@ -115,18 +115,23 @@ describe("recovery file storage", () => {
     expect(resolveBackingPath).toHaveBeenCalledWith(TARGET_ID);
     // The path is written for a future Open Original, and is absent from the reply.
     expect(JSON.stringify(result)).not.toContain("Sketches");
-    const [record] = await s.service.list();
-    expect(record?.source).toEqual({ path: "C:\\Users\\someone\\Sketches\\A.folio" });
-    expect(record?.hadBacking).toBe(true);
+    const [candidate] = await s.service.list();
+    expect(candidate?.hadBacking).toBe(true);
+    expect(candidate?.canOpenOriginal).toBe(true);
+    // The location lives on the record main keeps, never on what it offers.
+    expect(await s.service.read(RECOVERY_ID)).toMatchObject({
+      source: { path: "C:\\Users\\someone\\Sketches\\A.folio" },
+    });
   });
 
   it("records a project as unbacked when main cannot resolve its target", async () => {
     const s = await setup({ resolveBackingPath: () => null });
     await s.service.store(s.request({ backingTargetId: TARGET_ID }));
 
-    const [record] = await s.service.list();
-    expect(record?.source).toBeNull();
-    expect(record?.hadBacking).toBe(true);
+    const [candidate] = await s.service.list();
+    expect(candidate?.hadBacking).toBe(true);
+    expect(candidate?.canOpenOriginal).toBe(false);
+    expect(await s.service.read(RECOVERY_ID)).toMatchObject({ source: null });
   });
 
   it("rejects malformed requests and oversized payloads", async () => {
