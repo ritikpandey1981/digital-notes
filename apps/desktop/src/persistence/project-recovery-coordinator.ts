@@ -53,6 +53,16 @@ export interface ProjectRecoveryPort {
   readonly clear: (recoveryId: string) => Promise<RecoveryClearResult>;
 }
 
+/**
+ * Who keeps rescued artwork protected once it is on screen.
+ *
+ * Background recovery takes over from the record the artwork came from, and is
+ * the only thing that knows when this run has a durable copy of its own.
+ */
+export interface ProjectRecoveryHandover {
+  readonly adoptPredecessorRecovery: (recoveryId: string) => void;
+}
+
 function failure(code: ProjectRecoveryErrorCode, message: string): ProjectRecoveryResult {
   return { status: "failed", error: { code, message } };
 }
@@ -71,6 +81,8 @@ export class ProjectRecoveryCoordinator {
     private readonly persistence: ProjectPersistenceCoordinator,
     private readonly lifecycle: ProjectLifecycleCoordinator,
     private readonly port: ProjectRecoveryPort,
+    /** Keeps a rescued drawing protected until this run has its own copy. */
+    private readonly handover: ProjectRecoveryHandover,
     /** The record protecting the drawing that is open right now, if any. */
     private readonly activeRecoveryId: () => string | null = () => null,
   ) {}
@@ -110,9 +122,11 @@ export class ProjectRecoveryCoordinator {
           return failure(readErrorCode(read.error.code), read.error.message);
         const activation = await this.persistence.adoptRecoveredProject(read.content);
         if (activation.status !== "activated") return activationFailure(activation);
-        // Only now. Until the drawing is really on screen, the record is the
-        // only copy of it that exists.
-        await this.retire(recoveryId);
+        // Not deleted here. Between this line and the first snapshot of the
+        // rescued drawing, that record is the only copy of it anywhere, so it
+        // is handed over rather than dropped: background recovery removes it
+        // once something durable holds the same artwork.
+        this.handover.adoptPredecessorRecovery(recoveryId);
         return { status: "recovered" };
       },
       (refusal) => refused(refusal),

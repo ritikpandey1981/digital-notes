@@ -160,11 +160,19 @@ test("offers a drawing left behind by a crash, and restores it detached", async 
       // The rescued stroke is on the canvas.
       await expect(surfaceOf(window)).toHaveAttribute("data-document-object-count", "1");
 
-      // The candidate is consumed, and the rescued drawing -- which no file
-      // holds -- is immediately protected again under a record of its own.
+      // The rescued drawing -- which no file holds -- is protected again under a
+      // record of its own, and only then is the candidate it came from released.
+      // Until that successor exists the candidate is the only copy of the
+      // artwork anywhere, so both are on disk for a moment.
       await expect
-        .poll(async () => (await recoveryFiles(userData)).length, { timeout: 30_000 })
-        .toBe(1);
+        .poll(
+          async () => {
+            const files = await recoveryFiles(userData);
+            return files.length === 1 && files[0] !== abandoned ? files[0] : null;
+          },
+          { timeout: 30_000 },
+        )
+        .not.toBeNull();
       const replacement = (await recoveryFiles(userData))[0] ?? "";
       expect(replacement).not.toBe(abandoned);
       expect(

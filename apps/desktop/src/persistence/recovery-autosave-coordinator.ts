@@ -9,6 +9,14 @@ export const RECOVERY_DEBOUNCE_MS = 3_000;
 export const RECOVERY_MAXIMUM_AGE_MS = 30_000;
 export const RECOVERY_RETRY_DELAY_MS = 5_000;
 export const RECOVERY_MAXIMUM_RETRIES = 3;
+/**
+ * How long cleanup of a record that protects nothing may hold anything up.
+ *
+ * Removing a stale snapshot is housekeeping. Putting a project away must never
+ * wait on it indefinitely, because a leftover file costs a redundant prompt
+ * next time while a hung close costs the user their window.
+ */
+export const RECOVERY_CLEANUP_TIMEOUT_MS = 2_000;
 
 export type RecoveryTimerHandle = ReturnType<typeof setTimeout>;
 
@@ -82,6 +90,15 @@ export class RecoveryAutosaveCoordinator {
   > &
     RecoveryAutosaveOptions;
   #active: ActiveRecovery | null = null;
+  /**
+   * A record from a previous run that this one is standing in for.
+   *
+   * Set when a crash candidate is recovered. It stays on disk until this run
+   * has its own durable copy of the rescued artwork, because between activating
+   * it and writing it there is a window in which that record is the only copy
+   * of the drawing that exists anywhere.
+   */
+  #predecessorRecoveryId: string | null = null;
   /** Scheduling is paused while nothing is mounted; the record on disk is untouched. */
   #suspended = true;
 
@@ -121,17 +138,43 @@ export class RecoveryAutosaveCoordinator {
   }
 
   /**
+   * Takes responsibility for the record a rescued project came from.
+   *
+   * Recovering activates artwork that no file holds. Deleting its source the
+   * moment it appears on screen would leave it in memory alone, so the source
+   * is kept until this run has protected the same artwork itself -- by writing
+   * its own snapshot, by the user saving it, or by the user deliberately
+   * putting it away.
+   */
+  adoptPredecessorRecovery(recoveryId: string): void {
+    if (this.#predecessorRecoveryId === recoveryId) return;
+    const previous = this.#predecessorRecoveryId;
+    this.#predecessorRecoveryId = recoveryId;
+    if (previous !== null) void this.#clearRecord(previous);
+  }
+
+  /**
    * Drops the active snapshot because the project is being put away deliberately.
    *
    * Only an approved close or a committed replacement may call this; a crash
-   * must leave the record exactly where it is.
+   * must leave the record exactly where it is. It answers even when the delete
+   * does not, because a window must not hang on housekeeping.
    */
   async discardActiveRecovery(): Promise<void> {
+    this.#releasePredecessor();
     const active = this.#active;
     if (active === null || active.storedStateId === null) return;
     this.#cancelTimer(active);
     active.storedStateId = null;
-    await this.#clear(active);
+    await this.#clearRecord(active.recoveryId);
+  }
+
+  /** The rescued artwork is protected by something durable now, so its source may go. */
+  #releasePredecessor(): void {
+    const recoveryId = this.#predecessorRecoveryId;
+    if (recoveryId === null) return;
+    this.#predecessorRecoveryId = null;
+    void this.#clearRecord(recoveryId);
   }
 
   /**
@@ -181,18 +224,32 @@ export class RecoveryAutosaveCoordinator {
     // A write still in flight lands after this point, so the delete waits for it
     // rather than racing it and leaving a file no session owns.
     void Promise.resolve(pending).then(
-      () => this.#clear(active),
-      () => this.#clear(active),
+      () => this.#clearRecord(active.recoveryId),
+      () => this.#clearRecord(active.recoveryId),
     );
   }
 
-  async #clear(active: ActiveRecovery): Promise<void> {
+  async #clearRecord(recoveryId: string): Promise<void> {
     try {
-      await this.#options.store.clear(active.recoveryId);
+      await this.#bounded(this.#options.store.clear(recoveryId));
     } catch {
       // A snapshot that outlives its project is stale, not dangerous: the
       // startup flow validates candidates before offering any of them.
     }
+  }
+
+  /** Gives up waiting on cleanup rather than letting it hold a project open. */
+  #bounded(operation: Promise<unknown>): Promise<unknown> {
+    const clock = this.#options.clock;
+    let timer: RecoveryTimerHandle | null = null;
+    const expiry = new Promise<void>((resolve) => {
+      timer = clock.setTimeout(() => resolve(), RECOVERY_CLEANUP_TIMEOUT_MS);
+    });
+    // The delete may still land later; nothing depends on knowing whether it did.
+    operation.catch(() => undefined);
+    return Promise.race([operation, expiry]).finally(() => {
+      if (timer !== null) clock.clearTimeout(timer);
+    });
   }
 
   /** Decides whether the current state still needs a snapshot, and when. */
@@ -206,8 +263,11 @@ export class RecoveryAutosaveCoordinator {
       active.pendingSince = null;
       if (active.storedStateId !== null) {
         active.storedStateId = null;
-        void this.#clear(active);
+        void this.#clearRecord(active.recoveryId);
       }
+      // A confirmed durable copy protects rescued artwork as well as a snapshot
+      // would, so whatever it was rescued from is finally free to go.
+      this.#releasePredecessor();
       this.#publish({ phase: "idle" });
       return;
     }
@@ -311,9 +371,14 @@ export class RecoveryAutosaveCoordinator {
     active.storedStateId = stateId;
     active.pendingSince = null;
     this.#publish({ phase: "stored", capturedAt });
-    const again = active.writeAgain;
+    // This run now holds its own durable copy of the artwork.
+    this.#releasePredecessor();
     active.writeAgain = false;
-    if (again || active.project.contentStateId !== stateId) this.#evaluate(active);
+    // The state that started this write is not necessarily the state now: the
+    // project may have moved on, or become clean while the disk was busy. Ask
+    // again rather than assuming, which is the only way a snapshot that stopped
+    // being necessary gets cleared.
+    this.#evaluate(active);
   }
 
   #failed(active: ActiveRecovery, code: string): void {

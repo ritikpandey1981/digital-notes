@@ -173,6 +173,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
             read: (recoveryId) => window.folio.recovery.read(recoveryId),
             clear: (recoveryId) => window.folio.recovery.clear(recoveryId),
           },
+          autosave,
           // The drawing on screen is protected by a record of its own; it is
           // never one of the crashes this offers to rescue.
           () => autosave.activeRecoveryId,

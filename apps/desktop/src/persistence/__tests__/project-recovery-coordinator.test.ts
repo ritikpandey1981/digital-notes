@@ -127,8 +127,13 @@ function setup(
       ? { status: "failed", error: { code: "NOT_FOUND", message: "gone" } }
       : { status: "read", content: record.content };
   });
-  const clear = vi.fn<(id: string) => Promise<RecoveryClearResult>>(async (id) => {
+  const retired: string[] = [];
+  const retire = (id: string): void => {
+    retired.push(id);
     records.delete(id);
+  };
+  const clear = vi.fn<(id: string) => Promise<RecoveryClearResult>>(async (id) => {
+    retire(id);
     return { status: "cleared" };
   });
 
@@ -173,7 +178,7 @@ function setup(
   const clock = createClock();
   const stored: { recoveryId: string; title: string }[] = [];
   const autosaveClear = vi.fn(async (id: string) => {
-    records.delete(id);
+    retire(id);
     return { status: "cleared" } as const;
   });
   const autosave = new RecoveryAutosaveCoordinator({
@@ -202,6 +207,7 @@ function setup(
     persistence,
     lifecycle,
     { list, read, clear },
+    autosave,
     () => autosave.activeRecoveryId,
   );
 
@@ -243,6 +249,7 @@ function setup(
     clock,
     stored,
     autosaveClear,
+    retired,
     records,
     list,
     read,
@@ -331,25 +338,19 @@ describe("recovering a drawing a previous run left behind", () => {
     }
   });
 
-  it("consumes the candidate only once the drawing is really on screen", async () => {
+  it("consumes the candidate only once something durable holds the drawing", async () => {
     const s = setup();
     try {
-      const order: string[] = [];
-      s.clear.mockImplementation(async (id) => {
-        order.push(`clear:${id}`);
-        s.records.delete(id);
-        return { status: "cleared" };
-      });
-      const activated = s.host.subscribe(() => {
-        if (s.host.active.project.metadata.documentId === "R") order.push("active:R");
-      });
-
       await s.recovery.recover(R1);
-      activated();
 
-      expect(order.indexOf("active:R")).toBeGreaterThanOrEqual(0);
-      expect(order.indexOf("active:R")).toBeLessThan(order.indexOf(`clear:${R1}`));
-      expect(s.clear).toHaveBeenCalledTimes(1);
+      // The drawing is on screen, and the record it came from is still the
+      // only copy of it anywhere, so nothing has been deleted.
+      expect(s.active().metadata.documentId).toBe("R");
+      expect(s.retired).toEqual([]);
+
+      await s.clock.advance(DEBOUNCE);
+      expect(s.stored).toHaveLength(1);
+      expect(s.retired).toEqual([R1]);
     } finally {
       s.cleanup();
     }
@@ -696,11 +697,13 @@ describe("several candidates at once", () => {
 
       expect(await s.recovery.recover(R1)).toEqual({ status: "recovered" });
       expect(s.active().metadata.documentId).toBe("R");
+      // R1 is released once this run has protected the artwork it carried.
+      await s.clock.advance(DEBOUNCE);
       expect((await s.recovery.listCandidates()).map((one) => one.recoveryId)).toEqual([R2]);
 
       expect(await s.recovery.discard(R2)).toEqual({ status: "discarded" });
       expect(await s.recovery.listCandidates()).toEqual([]);
-      expect(s.clear.mock.calls.map(([id]) => id)).toEqual([R1, R2]);
+      expect(s.retired).toEqual([R1, R2]);
     } finally {
       s.cleanup();
     }
@@ -763,17 +766,57 @@ describe("background recovery after a rescue", () => {
     const s = setup();
     try {
       await s.recovery.recover(R1);
-      expect(s.records.has(R1)).toBe(false);
+      // Still there: nothing durable holds the rescued drawing yet.
+      expect(s.records.has(R1)).toBe(true);
 
       // The rescued drawing is unsaved work like any other, so it is protected
-      // again -- under an identity of this run, not the consumed candidate's.
+      // again -- under an identity of this run, not the candidate's. Only then
+      // is the candidate it came from released.
       await s.clock.advance(DEBOUNCE);
       expect(s.stored).toHaveLength(1);
       expect(s.stored[0]?.title).toBe("Rescued study");
       expect(s.stored[0]?.recoveryId).not.toBe(R1);
+      expect(s.records.has(R1)).toBe(false);
 
       // A crash now is exactly the case this protects: nothing retires it.
       expect(s.autosaveClear).not.toHaveBeenCalledWith(s.stored[0]?.recoveryId);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("keeps the crash candidate until the rescued drawing is protected again", async () => {
+    const s = setup();
+    try {
+      expect(await s.recovery.recover(R1)).toEqual({ status: "recovered" });
+
+      // The drawing is on screen and nothing durable holds it. A crash in this
+      // window must still find it, so the candidate it came from stays.
+      expect(s.stored).toHaveLength(0);
+      expect(s.records.has(R1), "the only durable copy was deleted too early").toBe(true);
+
+      await s.clock.advance(DEBOUNCE);
+      expect(s.stored).toHaveLength(1);
+      expect(s.stored[0]?.recoveryId).not.toBe(R1);
+      // A successor snapshot exists now, so the candidate may finally go.
+      expect(s.records.has(R1)).toBe(false);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("releases the crash candidate when the rescued drawing is saved instead", async () => {
+    const s = setup();
+    try {
+      await s.recovery.recover(R1);
+      expect(s.records.has(R1)).toBe(true);
+
+      // A confirmed durable copy protects the artwork just as well.
+      expect((await s.persistence.save()).status).toBe("saved");
+      await s.clock.advance(DEBOUNCE);
+
+      expect(s.records.has(R1)).toBe(false);
+      expect(s.stored, "a saved project needs no recovery snapshot").toHaveLength(0);
     } finally {
       s.cleanup();
     }
