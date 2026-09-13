@@ -308,6 +308,11 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     this.replaceDocument(this.documentValue.replacePage(this.activePage.withContent(content)));
   }
 
+  /** Project-wide unique identity for a newly created Layer. */
+  createLayerId(): string {
+    return this.createLayerIdValue();
+  }
+
   /** Creates an empty blank page inheriting only the active page's physical geometry. */
   createInheritedPage(): Page {
     return createPageLike(this.activePage, {

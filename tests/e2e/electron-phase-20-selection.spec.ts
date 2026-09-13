@@ -155,13 +155,16 @@ test("Phase 20 delivers multi-selection, marquee, group transform, and selection
     await toggleLayerList(window);
     await window.getByTestId("layers-add").click();
     await expect(surface).toHaveAttribute("data-layer-count", "2");
+    // The editor decides the new Layer's identity; the test asks for it rather
+    // than assuming it mirrors the position it was added at.
+    const secondLayerId = (await surface.getAttribute("data-active-layer-id")) ?? "";
     await toggleLayerList(window);
     await window.mouse.click(700, 265);
     expect(await selected(surface)).toHaveLength(1);
     const membershipBeforeMove = await membership(surface);
     const historyBeforeMove = await depth(surface);
     await window.getByTestId("selection-more-options").click();
-    await window.getByTestId("move-to-layer-layer-2").click();
+    await window.getByTestId(`move-to-layer-${secondLayerId}`).click();
     await expect
       .poll(async () => (await membership(surface))[1])
       .toBe((membershipBeforeMove[1] ?? 0) + 1);

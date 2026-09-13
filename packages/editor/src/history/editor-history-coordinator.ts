@@ -345,10 +345,14 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
 
   executeAddLayer(name?: string): Readonly<{ layerId: string; state: IHistoryState }> {
     const page = this.#documentSession.page;
-    const layerId = `layer-${this.#nextLayerOrdinal()}`;
+    // Identity is the project's, not the page's. A name may repeat from page to
+    // page -- every sketchbook has more than one "Layer 2" -- but a Layer id
+    // names one Layer in the whole document, which is what the project file
+    // requires and what a page-local ordinal could not give it.
+    const layerId = this.#documentSession.createLayerId();
     const layerIndex =
       page.layerIndex(page.resolveActiveLayerId(this.#documentSession.activeLayerId)) + 1;
-    const layer = new Layer({ id: layerId, name: name ?? `Layer ${this.#nextLayerOrdinal()}` });
+    const layer = new Layer({ id: layerId, name: name ?? this.#nextLayerName() });
     const state = this.#executePageCommand(
       createAddLayerCommand({ layer, layerIndex, timestamp: this.#now() }),
     );
@@ -507,12 +511,12 @@ class EditorHistoryCoordinatorImplementation implements EditorHistoryCoordinator
     );
   }
 
-  #nextLayerOrdinal(): number {
-    const page = this.#documentSession.page;
-    let ordinal = page.layerCount + 1;
-    const taken = new Set(page.layers.map((layer) => layer.id));
-    while (taken.has(`layer-${ordinal}`)) ordinal += 1;
-    return ordinal;
+  /** The next unused "Layer N" on this page. Display only; never an identity. */
+  #nextLayerName(): string {
+    const taken = new Set(this.#documentSession.page.layers.map((layer) => layer.name));
+    let ordinal = this.#documentSession.page.layerCount + 1;
+    while (taken.has(`Layer ${ordinal}`)) ordinal += 1;
+    return `Layer ${ordinal}`;
   }
 
   undo(): IHistoryState {
