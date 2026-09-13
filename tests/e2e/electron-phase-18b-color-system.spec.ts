@@ -148,9 +148,19 @@ test("Phase 18B shares one responsive color workflow across creation tools and s
     await expect(toolDock.getByTestId("drawing-slot-contrast-backplate")).toHaveCount(0);
     await expect(toolDock.getByTestId("drawing-slot-contrast-keyline")).toHaveCount(0);
     await expect(toolDock.locator('[data-drawing-slot-glyph-frame="pen"]')).toHaveCount(0);
-    await expect(toolDock.locator('button[data-dock-slot="pen"] svg')).toHaveCount(1);
+    // White on a white dock is the light-appearance case a glyph cannot carry
+    // alone, so it is given a contour of its own shape -- and nothing else: the
+    // colour above is still exactly white, and none of the rolled-back
+    // backplate, keyline or frame has come back with it.
+    await expect(activePenGlyph).toHaveAttribute("data-drawing-slot-glyph-contoured", "true");
+    await expect(toolDock.locator('[data-drawing-slot-glyph-contour="pen"]')).toHaveCount(1);
+    await expect(toolDock.locator('button[data-dock-slot="pen"] svg')).toHaveCount(2);
     await hex.fill("#123456");
     await expect(activePenGlyph).toHaveAttribute("data-drawing-slot-glyph-color", "#123456");
+    // And it goes again the moment the colour can stand on its own.
+    await expect(activePenGlyph).toHaveAttribute("data-drawing-slot-glyph-contoured", "false");
+    await expect(toolDock.locator('[data-drawing-slot-glyph-contour="pen"]')).toHaveCount(0);
+    await expect(toolDock.locator('button[data-dock-slot="pen"] svg')).toHaveCount(1);
     await expect(picker.getByRole("spinbutton", { name: "red channel" })).toHaveValue("18");
     await expect(picker.getByRole("spinbutton", { name: "green channel" })).toHaveValue("52");
     await expect(picker.getByRole("spinbutton", { name: "blue channel" })).toHaveValue("86");

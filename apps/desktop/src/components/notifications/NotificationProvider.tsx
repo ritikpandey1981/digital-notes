@@ -1,5 +1,5 @@
 import * as React from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "framer-motion";
 import { AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
 import { cn } from "@folio/ui";
 import {
@@ -93,84 +93,115 @@ export function NotificationProvider({ children }: React.PropsWithChildren) {
         aria-label="Notifications"
       >
         <AnimatePresence initial={false}>
-          {notifications.map((notification) => {
-            const ToneIcon = toneIcons[notification.tone];
-            return (
-              <motion.div
-                key={notification.id}
-                layout="position"
-                initial={{ opacity: 0, y: 8, scale: 0.99 }}
-                animate={{
-                  opacity: 1,
-                  y: 0,
-                  scale: 1,
-                  transition: {
-                    duration: motionSeconds(
-                      INTERACTION_MOTION.notificationOpenMilliseconds,
-                      reducedMotion,
-                    ),
-                    ease: PROFESSIONAL_EASE,
-                  },
-                }}
-                exit={{
-                  opacity: 0,
-                  y: 6,
-                  scale: 0.99,
-                  transition: {
-                    duration: motionSeconds(
-                      INTERACTION_MOTION.notificationCloseMilliseconds,
-                      reducedMotion,
-                    ),
-                    ease: PROFESSIONAL_EASE,
-                  },
-                }}
-                className="folio-floating-surface pointer-events-auto flex items-center gap-2.5 px-3 py-2 text-folio-ink"
-                data-testid="notification"
-                role="status"
-              >
-                <ToneIcon
-                  className={cn(
-                    "size-3.5 shrink-0",
-                    notification.tone === "success" && "text-emerald-600 dark:text-emerald-400",
-                    notification.tone === "info" && "text-folio-accent",
-                    notification.tone === "error" && "text-red-600 dark:text-red-400",
-                  )}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[11px] font-semibold">{notification.title}</p>
-                  {notification.description === undefined ? null : (
-                    <p className="truncate text-[10px] leading-4 text-folio-muted">
-                      {notification.description}
-                    </p>
-                  )}
-                </div>
-                {notification.action === undefined ? null : (
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-folio-accent transition-colors hover:bg-folio-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
-                    data-testid="notification-action"
-                    onClick={() => {
-                      notification.action?.onAction();
-                      dismiss(notification.id);
-                    }}
-                  >
-                    {notification.action.label}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md p-1 text-folio-muted transition-[background-color,color,transform] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
-                  aria-label={`Dismiss ${notification.title}`}
-                  onClick={() => dismiss(notification.id)}
-                >
-                  <X className="size-3.5" aria-hidden="true" />
-                </button>
-              </motion.div>
-            );
-          })}
+          {notifications.map((notification) => (
+            <NotificationCard
+              key={notification.id}
+              notification={notification}
+              reducedMotion={reducedMotion}
+              onDismiss={dismiss}
+            />
+          ))}
         </AnimatePresence>
       </div>
     </NotificationContext.Provider>
+  );
+}
+
+/**
+ * One notification, and the pointer surface it is allowed to own.
+ *
+ * `AnimatePresence` keeps a dismissed notification mounted while it plays its
+ * exit, which is what makes the fade read as a departure rather than a
+ * disappearance. It is no longer a live notification during that time: the user
+ * has already dealt with it, and their next press belongs to whatever is
+ * underneath -- normally the canvas. Leaving it hit-testable meant a press
+ * landing in the vacated bounds was swallowed by something on its way out.
+ *
+ * `useIsPresent` is false from the moment the exit starts, so the card stops
+ * taking pointer input exactly when it stops being current, and goes on
+ * animating. The same holds on the reduced-motion path, where the exit is brief
+ * rather than absent.
+ */
+function NotificationCard({
+  notification,
+  reducedMotion,
+  onDismiss,
+}: {
+  readonly notification: NotificationItem;
+  readonly reducedMotion: boolean;
+  readonly onDismiss: (id: number) => void;
+}) {
+  const present = useIsPresent();
+  const ToneIcon = toneIcons[notification.tone];
+  return (
+    <motion.div
+      layout="position"
+      initial={{ opacity: 0, y: 8, scale: 0.99 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        transition: {
+          duration: motionSeconds(INTERACTION_MOTION.notificationOpenMilliseconds, reducedMotion),
+          ease: PROFESSIONAL_EASE,
+        },
+      }}
+      exit={{
+        opacity: 0,
+        y: 6,
+        scale: 0.99,
+        transition: {
+          duration: motionSeconds(INTERACTION_MOTION.notificationCloseMilliseconds, reducedMotion),
+          ease: PROFESSIONAL_EASE,
+        },
+      }}
+      className={cn(
+        "folio-floating-surface flex items-center gap-2.5 px-3 py-2 text-folio-ink",
+        present ? "pointer-events-auto" : "pointer-events-none",
+      )}
+      data-testid="notification"
+      data-notification-presence={present ? "live" : "exiting"}
+      role="status"
+    >
+      <ToneIcon
+        className={cn(
+          "size-3.5 shrink-0",
+          notification.tone === "success" && "text-emerald-600 dark:text-emerald-400",
+          notification.tone === "info" && "text-folio-accent",
+          notification.tone === "error" && "text-red-600 dark:text-red-400",
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[11px] font-semibold">{notification.title}</p>
+        {notification.description === undefined ? null : (
+          <p className="truncate text-[10px] leading-4 text-folio-muted">
+            {notification.description}
+          </p>
+        )}
+      </div>
+      {notification.action === undefined ? null : (
+        <button
+          type="button"
+          className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-folio-accent transition-colors hover:bg-folio-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent"
+          data-testid="notification-action"
+          onClick={() => {
+            notification.action?.onAction();
+            onDismiss(notification.id);
+          }}
+        >
+          {notification.action.label}
+        </button>
+      )}
+      <button
+        type="button"
+        className="shrink-0 rounded-md p-1 text-folio-muted transition-[background-color,color,transform] duration-100 ease-out hover:bg-folio-hover hover:text-folio-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-folio-accent active:scale-95"
+        aria-label={`Dismiss ${notification.title}`}
+        data-testid="notification-dismiss"
+        onClick={() => onDismiss(notification.id)}
+      >
+        <X className="size-3.5" aria-hidden="true" />
+      </button>
+    </motion.div>
   );
 }
 

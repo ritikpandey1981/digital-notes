@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import type { DrawingToolKind } from "@folio/editor";
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
+import { useTheme } from "../theme/ThemeProvider";
+import { dockGlyphNeedsContour, type DockAppearance } from "./dock-glyph-legibility";
 import type { EditorTool } from "./editor-types";
 import {
   DRAWING_SLOTS,
@@ -107,6 +109,7 @@ export function ToolDock({
   onSelectDrawingSlot,
   onSelectTool,
 }: ToolDockProps) {
+  const { theme } = useTheme();
   const dockRef = useRef<HTMLDivElement | null>(null);
   const renderCountRef = useRef(0);
   useLayoutEffect(() => {
@@ -183,6 +186,7 @@ export function ToolDock({
             active={activeSlotId === slot.id}
             tabbable={tabbableSlotId === slot.id}
             drawingColor={slotDrawingColors[slot.id] ?? null}
+            appearance={theme}
             onActivate={activateSlotId}
           />
         ))}
@@ -215,6 +219,7 @@ function DockButton({
   active,
   tabbable,
   drawingColor,
+  appearance,
   onActivate,
 }: {
   readonly slot: DockSlotDefinition;
@@ -229,6 +234,8 @@ function DockButton({
   readonly active: boolean;
   readonly tabbable: boolean;
   readonly drawingColor?: string | null | undefined;
+  /** Which dock surface the glyph is being drawn on. */
+  readonly appearance?: DockAppearance | undefined;
   readonly onActivate: (slotId: string) => void;
 }) {
   const Icon =
@@ -242,6 +249,13 @@ function DockButton({
       : `Brush slot ${position}, ${brushName}`;
   const tooltipLabel = brushName ?? slot.label;
   const opticalOffset = SLOT_OPTICAL_OFFSETS[slot.id];
+  // Only a drawing slot shows an artwork colour, and only a colour that cannot
+  // be told apart from the dock is given anything to stand against.
+  const contoured =
+    family !== undefined &&
+    drawingColor != null &&
+    appearance !== undefined &&
+    dockGlyphNeedsContour(drawingColor, appearance);
   return (
     <div className="relative">
       <button
@@ -266,18 +280,39 @@ function DockButton({
         // the workspace from which slot is already active.
         onClick={() => onActivate(slot.id)}
       >
-        <Icon
-          className={cn("size-[17px]", opticalOffset)}
-          // Drawing glyphs retain their exact per-slot artwork colour. The
-          // selected button supplies only Folio's earlier control treatment.
-          style={family !== undefined && drawingColor != null ? { color: drawingColor } : undefined}
-          strokeWidth={2}
-          aria-hidden="true"
-          data-drawing-slot-glyph={family === undefined ? undefined : slot.id}
-          data-drawing-slot-glyph-active={family === undefined ? undefined : active}
-          data-drawing-slot-glyph-color={family === undefined ? undefined : (drawingColor ?? "")}
-          data-optical-alignment={opticalOffset === undefined ? "centered" : "down-right-1px"}
-        />
+        <span className={cn("relative inline-flex size-[17px] shrink-0", opticalOffset)}>
+          {contoured ? (
+            // The glyph's own shape, once more and heavier, in the appearance's
+            // ink. Not a plate and not a frame: it hugs the strokes, so what
+            // the artist sees is still the glyph, standing on an edge that the
+            // dock cannot swallow. `--folio-ink` is by definition the colour
+            // furthest from this dock surface, which is what the thin colour
+            // sitting on top of it needs.
+            <Icon
+              className="absolute inset-0 size-[17px]"
+              style={{ color: "var(--folio-ink)" }}
+              strokeWidth={3}
+              aria-hidden="true"
+              data-drawing-slot-glyph-contour={slot.id}
+            />
+          ) : null}
+          <Icon
+            className="absolute inset-0 size-[17px]"
+            // Drawing glyphs retain their exact per-slot artwork colour. The
+            // selected button supplies only Folio's earlier control treatment,
+            // and a contour underneath never tints what is drawn on top of it.
+            style={
+              family !== undefined && drawingColor != null ? { color: drawingColor } : undefined
+            }
+            strokeWidth={2}
+            aria-hidden="true"
+            data-drawing-slot-glyph={family === undefined ? undefined : slot.id}
+            data-drawing-slot-glyph-active={family === undefined ? undefined : active}
+            data-drawing-slot-glyph-color={family === undefined ? undefined : (drawingColor ?? "")}
+            data-drawing-slot-glyph-contoured={family === undefined ? undefined : contoured}
+            data-optical-alignment={opticalOffset === undefined ? "centered" : "down-right-1px"}
+          />
+        </span>
         <ToolTooltip label={tooltipLabel} />
       </button>
     </div>

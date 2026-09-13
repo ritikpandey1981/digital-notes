@@ -45,6 +45,13 @@ test("restores the earlier Folio selection while keeping every stored drawing co
     await expectEarlierFolioSelection(dock, "brush-pen");
     await expectSimpleGlyphPresentation(dock);
     await expectPresentationWeightParity(dock);
+    // On a white dock the pale colour is the one that disappears; black is the
+    // clearest thing here and is left exactly as it is.
+    const lightTokens = await readDockTokens(window);
+    expect(lightTokens.surface, "the light dock surface the contrast rule assumes").toBe(
+      "rgb(255, 255, 255)",
+    );
+    await expectContouredSlots(dock, ["pencil"], lightTokens.ink);
     await expectDrawingSelectionCases(window, dock, lightColors, [
       "highlighter",
       "brush-pen",
@@ -70,12 +77,14 @@ test("restores the earlier Folio selection while keeping every stored drawing co
     await window.getByRole("menuitem", { name: "Use dark appearance", exact: true }).click();
     await expect(window.locator("html")).toHaveAttribute("data-theme", "dark");
 
+    // The reported dark-appearance cases together: black, dark blue and dark
+    // red, beside a bright colour and white that must be left alone.
     const darkColors = {
       pencil: "#000000",
-      pen: "#22c55e",
-      "brush-pen": "#2563eb",
+      pen: "#00008b",
+      "brush-pen": "#8b0000",
       marker: "#eab308",
-      highlighter: "#dc2626",
+      highlighter: "#ffffff",
     } as const;
     for (const [slotId, color] of Object.entries(darkColors)) {
       await setSlotColor(window, slotId, color);
@@ -86,6 +95,14 @@ test("restores the earlier Folio selection while keeping every stored drawing co
     await expectEarlierFolioSelection(dock, "brush-pen");
     await expectSimpleGlyphPresentation(dock);
     await expectPresentationWeightParity(dock);
+    const darkTokens = await readDockTokens(window);
+    expect(darkTokens.surface, "the dark dock surface the contrast rule assumes").toBe(
+      "rgb(51, 47, 43)",
+    );
+    await expectContouredSlots(dock, ["pencil", "pen", "brush-pen"], darkTokens.ink);
+    // The treatment is help, not a substitution: every slot still reports the
+    // colour it was given, contour or no contour.
+    await expectStoredColors(dock, darkColors);
     await expectDrawingSelectionCases(window, dock, darkColors, ["pencil", "pen", "marker"]);
     await activateDockSlot(window, "brush-pen");
     await expectEarlierFolioSelection(dock, "brush-pen");
@@ -268,6 +285,15 @@ async function expectStoredColors(
   }
 }
 
+/**
+ * The restored Folio presentation, plus the one thing added back on top of it.
+ *
+ * Everything the Concepts experiment introduced stays gone: no selected region,
+ * no solid backplate behind a glyph, no keyline, no frame around it, and no
+ * contrast metadata on the artwork colour. A glyph whose colour cannot be told
+ * apart from the dock is given a contour of its own shape -- and nothing else
+ * is added, which is what the counts here hold to.
+ */
 async function expectSimpleGlyphPresentation(dock: Locator): Promise<void> {
   await expect(dock.locator("[data-drawing-slot-selection]")).toHaveCount(0);
   await expect(dock.getByTestId("drawing-slot-selected-surface")).toHaveCount(0);
@@ -277,12 +303,76 @@ async function expectSimpleGlyphPresentation(dock: Locator): Promise<void> {
   await expect(dock.locator("[data-drawing-slot-glyph-keyline]")).toHaveCount(0);
   for (const slotId of DRAWING_SLOT_IDS) {
     const button = dock.locator(`button[data-dock-slot="${slotId}"]`);
-    await expect(button.locator("svg")).toHaveCount(1);
+    await expect(button.locator("[data-drawing-slot-glyph]")).toHaveCount(1);
+    // At most one contour, and no third layer of anything.
+    const contours = await button.locator(`[data-drawing-slot-glyph-contour="${slotId}"]`).count();
+    expect(contours, `${slotId} draws more than one contour`).toBeLessThanOrEqual(1);
+    await expect(button.locator("svg")).toHaveCount(1 + contours);
     await expect(drawingGlyph(dock, slotId)).not.toHaveAttribute(
       "data-drawing-slot-glyph-contrast",
       /.+/,
     );
   }
+}
+
+/**
+ * The contour appears on exactly the slots that cannot be read without it.
+ *
+ * Named per slot rather than derived, so the expectation is a statement about
+ * these colours on this appearance rather than a restatement of the rule the
+ * dock already applies.
+ */
+async function expectContouredSlots(
+  dock: Locator,
+  expected: readonly string[],
+  ink: string,
+): Promise<void> {
+  for (const slotId of DRAWING_SLOT_IDS) {
+    const wanted = expected.includes(slotId);
+    await expect(
+      dock.locator(`[data-drawing-slot-glyph-contour="${slotId}"]`),
+      `${slotId} contour`,
+    ).toHaveCount(wanted ? 1 : 0);
+    await expect(drawingGlyph(dock, slotId)).toHaveAttribute(
+      "data-drawing-slot-glyph-contoured",
+      String(wanted),
+    );
+  }
+  const contours = dock.locator("[data-drawing-slot-glyph-contour]");
+  await expect(contours).toHaveCount(expected.length);
+  if (expected.length === 0) return;
+  // It is the appearance's own ink, drawn heavier than the glyph and behind it.
+  const drawn = await contours.evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      color: getComputedStyle(node).color,
+      strokeWidthAttribute: node.getAttribute("stroke-width"),
+      height: getComputedStyle(node).height,
+      width: getComputedStyle(node).width,
+    })),
+  );
+  expect(drawn).toEqual(
+    expected.map(() => ({
+      color: ink,
+      strokeWidthAttribute: "3",
+      height: "17px",
+      width: "17px",
+    })),
+  );
+}
+
+/** The dock surface and ink as the running window actually resolves them. */
+async function readDockTokens(window: Page): Promise<Readonly<{ surface: string; ink: string }>> {
+  return window.evaluate(() => {
+    const read = (token: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = getComputedStyle(document.documentElement).getPropertyValue(token);
+      document.body.append(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
+    return { surface: read("--folio-surface"), ink: read("--folio-ink") };
+  });
 }
 
 async function expectEarlierFolioSelection(dock: Locator, activeSlotId: string): Promise<void> {

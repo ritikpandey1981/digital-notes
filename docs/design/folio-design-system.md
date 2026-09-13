@@ -110,6 +110,17 @@ of introducing component-local color systems.
 Both light and dark themes are supported. The page is deliberately paper-like in both;
 do not reinterpret shell dark mode as dark artwork paper.
 
+A control that previews an artwork colour shows that colour exactly. Chrome tokens
+never stand in for it, and it is never lightened, darkened or tinted to suit the
+appearance it happens to be shown in: the preview is the artist's answer to "what
+will this draw with". Where a colour cannot be told apart from the surface behind
+it — black on the dark dock, white on the light one — give it something to stand
+against rather than changing it. The treatment is the smallest that works: the
+glyph's own shape repeated behind it in `folio-ink`, one step heavier, and only
+for a colour that falls below a contrast ratio of 2 against that surface. No
+plate, no frame, no ring around the control; and it does not come and go with
+selection, which is a control treatment rather than a different background.
+
 ### Shape, elevation, and density
 
 - Primary icon buttons use the established 32-pixel chrome-button footprint.
