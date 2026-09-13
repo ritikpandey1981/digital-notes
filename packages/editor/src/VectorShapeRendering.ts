@@ -184,16 +184,23 @@ function drawVectorGeometry(
   context.strokeStyle = shape.style.strokeColor.hex;
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.globalAlpha *= shape.style.strokeColor.opacity;
+  // A vector has two alphas, and they are separate durable values: the style
+  // carries no object-level opacity, only a stroke colour and a fill colour
+  // that each hold their own. Both are therefore applied to the inherited
+  // alpha -- the Layer's, which is the object-level one -- rather than to each
+  // other. Multiplying the fill by the outline's alpha made a solid fill
+  // inside a faint outline impossible to draw, though the model can say it.
+  const inheritedAlpha = context.globalAlpha;
   context.beginPath();
   appendVectorGeometryPath(context, shape.type, shape.geometry);
   if (shape.style.fillColor !== undefined) {
     context.save();
     context.fillStyle = shape.style.fillColor.hex;
-    context.globalAlpha *= shape.style.fillColor.opacity;
+    context.globalAlpha = inheritedAlpha * shape.style.fillColor.opacity;
     context.fill();
     context.restore();
   }
+  context.globalAlpha = inheritedAlpha * shape.style.strokeColor.opacity;
   context.stroke();
   context.restore();
 }
