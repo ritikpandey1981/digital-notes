@@ -69,6 +69,9 @@ export function StartupRecoveryDialog({
 }: StartupRecoveryDialogProps) {
   const { notify } = useNotifications();
   const [candidates, setCandidates] = React.useState<readonly RecoveryCandidateSummary[]>([]);
+  // Whether the last scan could look at all. "Nothing to recover" and "Folio
+  // could not check" are different answers and must not read the same.
+  const [scanFailed, setScanFailed] = React.useState(false);
   const [offered, setOffered] = React.useState(false);
   const [pending, setPending] = React.useState<string | null>(null);
 
@@ -77,8 +80,10 @@ export function StartupRecoveryDialog({
     let current = true;
     // Discovery is the only thing that happens automatically. Nothing is
     // decoded, opened, or removed until the user chooses.
-    void coordinator.listCandidates().then((found) => {
+    void coordinator.listCandidates().then((listing) => {
       if (!current) return;
+      setScanFailed(listing.status === "unavailable");
+      const found = listing.status === "listed" ? listing.candidates : [];
       setCandidates(found);
       setOffered(found.length > 0);
     });
@@ -92,8 +97,10 @@ export function StartupRecoveryDialog({
     let current = true;
     // Asked for directly, so the list is read again rather than shown as it
     // stood at startup.
-    void coordinator.listCandidates().then((found) => {
-      if (current) setCandidates(found);
+    void coordinator.listCandidates().then((listing) => {
+      if (!current) return;
+      setScanFailed(listing.status === "unavailable");
+      setCandidates(listing.status === "listed" ? listing.candidates : []);
     });
     return () => {
       current = false;
@@ -125,18 +132,35 @@ export function StartupRecoveryDialog({
             tone: "success",
           });
         } else if (result.status === "opened-original") {
-          notify({
-            title: `Opened ${candidate.title}`,
-            description: "This is the saved file, not the unsaved copy.",
-            tone: "success",
-          });
+          notify(
+            result.backingConfirmed
+              ? {
+                  title: `Opened ${candidate.title}`,
+                  description: "This is the saved file, not the unsaved copy.",
+                  tone: "success",
+                }
+              : {
+                  title: "Opened without a confirmed file",
+                  description:
+                    "The saved drawing is open, but Folio could not confirm its file. Use Save As to keep your changes.",
+                  tone: "error",
+                },
+          );
         }
         // Re-reading is also how a failure stays honest: a copy that would not
         // delete, or an open that could not confirm its file, is still listed.
-        setCandidates(await coordinator.listCandidates());
+        const listing = await coordinator.listCandidates();
+        setScanFailed(listing.status === "unavailable");
+        setCandidates(listing.status === "listed" ? listing.candidates : []);
         // A drawing that is now on screen has been dealt with; the rest of the
         // list is only worth staying open for after a discard.
-        if (result.status === "recovered" || result.status === "opened-original") close();
+        // An open that could not confirm its file leaves the copy worth keeping,
+        // so the list stays up rather than closing on a partial success.
+        if (
+          result.status === "recovered" ||
+          (result.status === "opened-original" && result.backingConfirmed)
+        )
+          close();
       } finally {
         setPending(null);
       }
@@ -166,16 +190,20 @@ export function StartupRecoveryDialog({
                 <History className="size-5" aria-hidden="true" />
               </div>
               <DialogTitle>
-                {candidates.length === 0
-                  ? "No recovered drawings"
-                  : candidates.length === 1
-                    ? "Folio kept an unsaved drawing"
-                    : `Folio kept ${candidates.length} unsaved drawings`}
+                {scanFailed
+                  ? "Folio could not check for recovered drawings"
+                  : candidates.length === 0
+                    ? "No recovered drawings"
+                    : candidates.length === 1
+                      ? "Folio kept an unsaved drawing"
+                      : `Folio kept ${candidates.length} unsaved drawings`}
               </DialogTitle>
               <DialogDescription>
-                {candidates.length === 0
-                  ? "There is nothing waiting to be recovered. Folio keeps a copy of unsaved work here only when it stops without being closed."
-                  : "Folio closed unexpectedly with work that had not been saved. You can bring it back, or open the file it came from instead."}
+                {scanFailed
+                  ? "Something went wrong reading where Folio keeps them. Anything saved there is still there; try again later."
+                  : candidates.length === 0
+                    ? "There is nothing waiting to be recovered. Folio keeps a copy of unsaved work here only when it stops without being closed."
+                    : "Folio closed unexpectedly with work that had not been saved. You can bring it back, or open the file it came from instead."}
               </DialogDescription>
             </DialogHeader>
 

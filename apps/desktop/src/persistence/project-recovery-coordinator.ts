@@ -30,9 +30,21 @@ export type ProjectRecoveryErrorCode =
   | "SAVE_UNCONFIRMED"
   | "UNKNOWN";
 
+/**
+ * What a scan found, or that it could not look.
+ *
+ * An empty directory and an unreadable one are different answers, and telling
+ * the user there is nothing to recover when Folio simply could not check would
+ * be the more damaging of the two to get wrong.
+ */
+export type RecoveryCandidateListing =
+  | Readonly<{ status: "listed"; candidates: readonly RecoveryCandidateSummary[] }>
+  | Readonly<{ status: "unavailable" }>;
+
 export type ProjectRecoveryResult =
   | Readonly<{ status: "recovered" }>
-  | Readonly<{ status: "opened-original" }>
+  /** `backingConfirmed` false means the file behind it could not be confirmed. */
+  | Readonly<{ status: "opened-original"; backingConfirmed: boolean }>
   | Readonly<{ status: "discarded" }>
   | Readonly<{ status: "cancelled" }>
   | Readonly<{
@@ -95,14 +107,17 @@ export class ProjectRecoveryCoordinator {
    * work as something rescued from a crash would be nonsense. A scan that fails
    * offers nothing and deletes nothing; the records stay for the next start.
    */
-  async listCandidates(): Promise<readonly RecoveryCandidateSummary[]> {
+  async listCandidates(): Promise<RecoveryCandidateListing> {
     try {
       const result = await this.port.list();
-      if (result.status !== "listed") return [];
+      if (result.status !== "listed") return { status: "unavailable" };
       const live = this.activeRecoveryId();
-      return result.candidates.filter((one) => one.recoveryId !== live);
+      return {
+        status: "listed",
+        candidates: result.candidates.filter((one) => one.recoveryId !== live),
+      };
     } catch {
-      return [];
+      return { status: "unavailable" };
     }
   }
 
@@ -149,9 +164,11 @@ export class ProjectRecoveryCoordinator {
         if (result.status === "failed")
           return failure(openErrorCode(result.error.code), result.error.message);
         // An activated-unbacked open replaced the project without confirming
-        // its file, so the candidate stays: nothing durable holds this content.
-        if (result.status === "opened") await this.retire(recoveryId);
-        return { status: "opened-original" };
+        // its file, so the candidate stays: nothing durable holds this content,
+        // and the outcome says which of the two happened.
+        const backingConfirmed = result.status === "opened";
+        if (backingConfirmed) await this.retire(recoveryId);
+        return { status: "opened-original", backingConfirmed };
       },
       (refusal) => refused(refusal),
     );

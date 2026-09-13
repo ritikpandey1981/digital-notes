@@ -59,6 +59,7 @@ import { WorkspaceUtilityRail } from "./WorkspaceUtilityRail";
 import { createContinuousColorTarget } from "./color-target-adapters";
 import { resolveCreationColorSession } from "./creation-color-session";
 import { registerCanvasEscape } from "./floating-dismissal-stack";
+import { createRuntimeScopedAction } from "./runtime-scoped-action";
 import { useColorPickerSession } from "./useColorPickerSession";
 import type { DrawingSlotDefinition } from "./tool-dock-model";
 import type { LayersView } from "./useEditorWorkspaceState";
@@ -131,6 +132,17 @@ interface EditorWorkspaceProps {
 }
 
 export function EditorWorkspace(props: EditorWorkspaceProps) {
+  const { notify } = useNotifications();
+  const reportedUnprotected = useRef(false);
+  const recoveryUnprotected = useCallback(() => {
+    if (reportedUnprotected.current) return;
+    reportedUnprotected.current = true;
+    notify({
+      title: "Folio has stopped keeping a backup copy",
+      description: "Your drawing is safe on screen. Save it to keep it.",
+      tone: "error",
+    });
+  }, [notify]);
   const [{ host, persistence, lifecycle, recovery, startupRecovery, unsavedPrompt }] = useState(
     () => {
       const runtimeHost = new ProjectRuntimeHost(
@@ -160,6 +172,12 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
         },
         persistenceState: () => coordinator.persistenceState,
         backingTargetId: () => coordinator.backing?.id ?? null,
+        // Losing one snapshot is a transient thing and says nothing worth
+        // interrupting for. Having stopped trying is different: from then on
+        // nothing is protecting the drawing, and only the user can act on that.
+        onStatusChange: (status) => {
+          if (status.phase === "failed" && status.exhausted) recoveryUnprotected();
+        },
       });
       return {
         host: runtimeHost,
@@ -183,7 +201,6 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
       };
     },
   );
-  const { notify } = useNotifications();
   const { onConfirmUnsavedChanges } = props;
   useEffect(() => {
     unsavedPrompt.setHandler(onConfirmUnsavedChanges ?? null);
@@ -356,22 +373,22 @@ function ProjectWorkspace({
     notify({ title: "Couldn’t complete that edit.", tone: "error" });
   }, [notify]);
   // Destructive page and Layer removals are undoable, so the notification offers
-  // the recovery directly instead of only announcing the loss.
+  // the recovery directly instead of only announcing the loss. The offer belongs
+  // to this project: a notification can outlive the drawing it was about, and
+  // undoing into a project the user has already replaced is not a recovery.
+  const undoThisProject = useCallback(
+    () => createRuntimeScopedAction(host, entry, () => historyActionsRef.current?.undo())(),
+    [host, entry],
+  );
   const notifyPageDeleted = useCallback(
     (message: string) =>
-      notify({
-        title: message,
-        action: { label: "Undo", onAction: () => historyActionsRef.current?.undo() },
-      }),
-    [notify],
+      notify({ title: message, action: { label: "Undo", onAction: undoThisProject } }),
+    [notify, undoThisProject],
   );
   const notifyLayerDeleted = useCallback(
     (message: string) =>
-      notify({
-        title: message,
-        action: { label: "Undo", onAction: () => historyActionsRef.current?.undo() },
-      }),
-    [notify],
+      notify({ title: message, action: { label: "Undo", onAction: undoThisProject } }),
+    [notify, undoThisProject],
   );
   // Refusal feedback is transient and identical for every creation route, so one
   // short notification replaces silent, invisible artwork.

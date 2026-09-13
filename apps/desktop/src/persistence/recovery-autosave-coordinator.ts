@@ -44,7 +44,8 @@ export type RecoveryStatus =
   | Readonly<{ phase: "scheduled" }>
   | Readonly<{ phase: "writing" }>
   | Readonly<{ phase: "stored"; capturedAt: string }>
-  | Readonly<{ phase: "failed"; code: string; attempts: number }>;
+  /** `exhausted` means retrying has stopped; the artwork has no background copy. */
+  | Readonly<{ phase: "failed"; code: string; attempts: number; exhausted: boolean }>;
 
 interface ActiveRecovery {
   readonly project: ProjectSession;
@@ -383,10 +384,12 @@ export class RecoveryAutosaveCoordinator {
 
   #failed(active: ActiveRecovery, code: string): void {
     active.attempts += 1;
-    this.#publish({ phase: "failed", code, attempts: active.attempts });
+    const exhausted = active.attempts > this.#options.maximumRetries;
+    this.#publish({ phase: "failed", code, attempts: active.attempts, exhausted });
     // Drawing continues regardless; a snapshot that cannot be written is a
-    // reduced safety net, never an editing error.
-    if (active.attempts > this.#options.maximumRetries) return;
+    // reduced safety net, never an editing error. Giving up is worth saying
+    // once, though, because from then on nothing is protecting the drawing.
+    if (exhausted) return;
     this.#schedule(active, this.#options.retryDelayMs * active.attempts);
   }
 

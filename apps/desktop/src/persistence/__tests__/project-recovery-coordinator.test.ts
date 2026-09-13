@@ -35,6 +35,11 @@ const DEBOUNCE = 3_000;
 
 afterEach(() => vi.restoreAllMocks());
 
+/** The ids a listing offers, or an empty list when the scan could not look. */
+function listed(listing: Awaited<ReturnType<ProjectRecoveryCoordinator["listCandidates"]>>) {
+  return listing.status === "listed" ? listing.candidates.map((one) => one.recoveryId) : null;
+}
+
 type ActivationFailure = "none" | "prepare" | "activate";
 
 interface StoredRecord {
@@ -423,7 +428,10 @@ describe("opening the file a candidate came from", () => {
   it("opens the original as a normal, confirmed project", async () => {
     const s = setup();
     try {
-      expect(await s.recovery.openOriginal(R1)).toEqual({ status: "opened-original" });
+      expect(await s.recovery.openOriginal(R1)).toEqual({
+        status: "opened-original",
+        backingConfirmed: true,
+      });
 
       expect(s.openOriginal).toHaveBeenCalledWith(R1);
       expect(s.active().metadata.documentId).toBe("O");
@@ -489,7 +497,10 @@ describe("opening the file a candidate came from", () => {
 
       // The project did change, but nothing durable holds it, so the rescued
       // copy stays exactly where it is.
-      expect(await s.recovery.openOriginal(R1)).toEqual({ status: "opened-original" });
+      expect(await s.recovery.openOriginal(R1)).toEqual({
+        status: "opened-original",
+        backingConfirmed: false,
+      });
       expect(s.active().metadata.documentId).toBe("O");
       expect(s.persistence.persistenceState.hasUnsavedRisk).toBe(true);
       expect(s.records.has(R1)).toBe(true);
@@ -546,7 +557,7 @@ describe("discarding a candidate", () => {
         error: { code: "DELETE_FAILED" },
       });
       // Still listed, because it is still there.
-      expect(await s.recovery.listCandidates()).toHaveLength(1);
+      expect(listed(await s.recovery.listCandidates())).toHaveLength(1);
     } finally {
       s.cleanup();
     }
@@ -693,16 +704,16 @@ describe("several candidates at once", () => {
           createEmptyFolioProject({ documentId: "S", title: "Second study", pageId: "page-S" }),
         ),
       });
-      expect((await s.recovery.listCandidates()).map((one) => one.recoveryId)).toEqual([R1, R2]);
+      expect(listed(await s.recovery.listCandidates())).toEqual([R1, R2]);
 
       expect(await s.recovery.recover(R1)).toEqual({ status: "recovered" });
       expect(s.active().metadata.documentId).toBe("R");
       // R1 is released once this run has protected the artwork it carried.
       await s.clock.advance(DEBOUNCE);
-      expect((await s.recovery.listCandidates()).map((one) => one.recoveryId)).toEqual([R2]);
+      expect(listed(await s.recovery.listCandidates())).toEqual([R2]);
 
       expect(await s.recovery.discard(R2)).toEqual({ status: "discarded" });
-      expect(await s.recovery.listCandidates()).toEqual([]);
+      expect(listed(await s.recovery.listCandidates())).toEqual([]);
       expect(s.retired).toEqual([R1, R2]);
     } finally {
       s.cleanup();
@@ -743,17 +754,19 @@ describe("several candidates at once", () => {
       // Main's directory really does hold it; the flow simply knows it is not a
       // crash to rescue.
       expect(s.records.has(live!)).toBe(true);
-      expect(await s.recovery.listCandidates()).toEqual([]);
+      expect(listed(await s.recovery.listCandidates())).toEqual([]);
     } finally {
       s.cleanup();
     }
   });
 
-  it("offers nothing rather than guessing when discovery fails", async () => {
+  it("says it could not look rather than saying there is nothing", async () => {
     const s = setup();
     try {
       s.list.mockRejectedValue(new Error("unavailable"));
-      expect(await s.recovery.listCandidates()).toEqual([]);
+      // Reporting an unreadable directory as an empty one would tell the user
+      // their work is gone when Folio simply could not check.
+      expect(await s.recovery.listCandidates()).toEqual({ status: "unavailable" });
       expect(s.clear).not.toHaveBeenCalled();
     } finally {
       s.cleanup();
