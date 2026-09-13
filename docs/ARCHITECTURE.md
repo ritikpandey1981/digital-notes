@@ -405,6 +405,13 @@ and is consumed only after the replacement it produced has committed. Recovered
 artwork is deliberately detached -- no file, no checkpoint -- so the next save asks
 where to put it and the original it was rescued from is never silently overwritten.
 
+What recovery can protect is bounded and says so. The envelope ceiling is derived
+from the project ceiling, so a snapshot that is accepted can always be read back; a
+project past it is refused as `TOO_LARGE` and the artist is told their work is no
+longer being kept a copy of, rather than the copy quietly failing. Discovery keeps
+summaries only and decodes nothing, a record whose filename disagrees with what it
+contains is not that record, and anything that is not a regular file is ignored.
+
 ## Electron boundary
 
 The Electron main and preload code provide the desktop host. The React renderer owns
@@ -415,6 +422,11 @@ recovery record, and the preload surface exposes only the operations those ids n
 it cannot list a directory, read an arbitrary file, or learn where anything is. Writes
 are atomic -- a temporary file in the destination directory, then a rename -- so a
 failed or interrupted write never destroys the previous good file.
+
+Every file and recovery channel answers one sender: the trusted application document,
+in the main frame of the window that registered it. A child frame, another window, or
+the same window showing anything else is refused, and the channels stop answering once
+that document navigates away, its renderer is gone, or the window is destroyed.
 
 End-to-end tests launch the real Electron application. Screenshot output defaults to
 Playwright's ignored test output; documentation screenshots are written only when an

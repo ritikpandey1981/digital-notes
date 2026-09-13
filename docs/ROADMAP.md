@@ -147,12 +147,17 @@ and documented without weakening live/final stroke parity.
 
 These are repository hygiene recommendations, not product features:
 
-- Confirm and remove unused shell components and placeholder data after live file flows
-  replace them.
 - Decide whether the empty `search`, `shared`, and `testing` package shells still earn
   workspace membership.
-- Verify whether `zustand` is used before keeping it as a desktop dependency.
 - Split oversized orchestration components only along existing authority boundaries.
+- Consolidate the remaining wall-clock assertions in the unit suite behind the
+  `FOLIO_PERFORMANCE_BASELINE` flag, so elapsed time is measured where the hardware
+  and the load are controlled: `object-collection`, `advanced-selection`,
+  `folio-spectrum`, `page-history` and `brush-performance-device-validation`.
+
+Done: the unused shell component (`WorkspaceChrome`), the placeholder data, and the
+unused `zustand` dependency were removed once the live file flows replaced them and
+reference searches proved nothing reached them.
 
 Maintenance work must be separately scoped; this roadmap does not authorize automatic
 dependency or source deletion.

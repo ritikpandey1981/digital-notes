@@ -77,9 +77,11 @@ same 36-pixel height, so they read as one horizontal axis. Neither side moves fo
 anything: a surface that opens into an occupied corner takes the row below instead,
 which is why the Layers mode switch hangs one gap under the right group.
 
-Folio has no sketch-name authority yet. The identity surface shows a display-only
-fallback that is not persistence, not History, not a filename, and never the active
-page's name; it is replaced when real document identity exists.
+The identity surface shows the active project's own title, taken from its project
+metadata. That title is the document's logical name: it is not a filename, not a
+path, and never the active page's name, and it survives Save As to a different
+file. The dot beside it means unsaved changes and nothing else. A project whose
+title is somehow empty falls back to a display-only placeholder.
 
 ## Visual foundations
 

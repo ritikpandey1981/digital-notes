@@ -1,31 +1,40 @@
 # @folio/persistence
 
-Versioned folder persistence for the older `@folio/domain` Notebook model.
+Two formats, deliberately separate.
 
-## Implemented capabilities
+## `@folio/persistence/project` — the live format
 
-- deterministic Notebook serialization and validated deserialization;
-- normalized folder paths and file layout;
-- atomic writes through a file-system adapter;
-- load/save pipelines with typed errors;
-- dirty tracking and autosave scheduling;
-- recovery metadata, detection, and recovery;
-- compatibility/version checks.
+The versioned `folio-project` v1 codec for the live `SketchbookDocument`. This is
+what the desktop app saves and opens as `.folio`, and what its crash-recovery
+snapshots carry.
 
-The package is testable through an injected `FileSystemAdapter`; production exports
-include the Node adapter.
+- deterministic encoding and validated, bounded decoding;
+- Pages, Layers, vector objects and Ink source samples, round-tripped exactly;
+- project metadata, including the logical title a document is known by;
+- typed `FolioProjectCodecError` for every refusal.
 
-## Important boundary
+The codec is pure: it takes and returns a document and a string. Choosing a file,
+writing it and holding a handle to it all belong to the desktop app, which keeps
+paths in the Electron main process and hands the renderer opaque capability ids.
 
-The live desktop editor uses `@folio/document` `SketchbookDocument`. This package
-serializes the older `@folio/domain` Notebook and is not connected to the mounted
-editor session. It does not yet provide durable round trips for live Pages, Layers,
-vectors, or Ink source samples.
+## `@folio/persistence` — the legacy format, compatibility only
 
-Do not describe placeholder desktop file dialogs as working persistence. Do not extend
-both models in parallel. A versioned live format and migration/replacement decision are
-required first.
+Versioned folder persistence for the older `@folio/domain` Notebook model:
+serialization and deserialization, normalized folder paths, atomic writes through
+an injected `FileSystemAdapter`, load/save pipelines with typed errors, dirty
+tracking, autosave scheduling, recovery metadata, and version checks. Production
+exports include the Node adapter.
 
-See [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md#persistence-boundary),
-[`../../docs/DECISIONS.md`](../../docs/DECISIONS.md#d-014--legacy-persistence-remains-isolated-pending-migration),
-and [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md#now--make-the-live-sketchbook-durable).
+It is not connected to the mounted editor session and will not be. It is kept so
+existing Notebook data stays readable.
+
+## Boundary
+
+`@folio/document` `SketchbookDocument` is the live artwork authority, and
+`.folio` is its canonical format. Do not connect the live editor to the folder
+format, do not extend both models in parallel, and do not introduce a third
+canonical model.
+
+See [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md#persistence),
+[`D-023`](../../docs/DECISIONS.md#d-023--folio-is-the-canonical-platform-neutral-project-format)
+and [`D-014`](../../docs/DECISIONS.md#d-014--legacy-folder-persistence-remains-isolated).
