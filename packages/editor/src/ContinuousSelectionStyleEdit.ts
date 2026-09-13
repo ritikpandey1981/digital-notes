@@ -10,6 +10,7 @@ import {
 import type { DocumentContentStateId, IHistoryState } from "@folio/history";
 import type { InkDocumentSession } from "./InkDocumentSession";
 import { createVectorStyleReplacement } from "./history/update-vector-style-command";
+import { patchVectorStyle } from "./vector-style-patch";
 import { applyInkStyle, inkStyleValues, type InkStylePatch } from "./InkStyleEdit";
 
 /** Appearance patch applicable to Ink and vector objects alike. */
@@ -169,14 +170,13 @@ export class ContinuousSelectionStyleEdit {
       );
     }
     if (!isVectorObject(original)) return null;
-    const style = createEditableStyle({
-      strokeColor: Object.freeze({
-        hex: patch.color ?? original.style.strokeColor.hex,
-        opacity: patch.opacity ?? original.style.strokeColor.opacity,
+    const style = createEditableStyle(
+      patchVectorStyle(original.style, {
+        ...(patch.color === undefined ? {} : { color: patch.color }),
+        ...(patch.width === undefined ? {} : { strokeWidth: patch.width }),
+        ...(patch.opacity === undefined ? {} : { opacity: patch.opacity }),
       }),
-      strokeWidth: patch.width ?? original.style.strokeWidth,
-      ...(original.style.fillColor === undefined ? {} : { fillColor: original.style.fillColor }),
-    });
+    );
     return createVectorStyleReplacement(original, style, original.modifiedAt);
   }
 

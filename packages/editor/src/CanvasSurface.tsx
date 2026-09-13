@@ -124,6 +124,7 @@ import {
   type EditorEditingShortcutActions,
 } from "./history/editor-editing-shortcuts";
 import { installEditorHistoryShortcuts } from "./history/editor-history-shortcuts";
+import { patchVectorStyle } from "./vector-style-patch";
 import type { InkDocumentSession } from "./InkDocumentSession";
 import {
   createLineEndpointManipulationResults,
@@ -1666,14 +1667,12 @@ export function CanvasSurface({
         const object = selected.length === 1 ? selected[0] : undefined;
         return isVectorObject(object) ? object : null;
       };
-      const patchedVectorStyle = (object: VectorPageObject, patch: ShapeStylePatch) => ({
-        strokeColor: Object.freeze({
-          hex: patch.strokeColor ?? object.style.strokeColor.hex,
-          opacity: patch.opacity ?? object.style.strokeColor.opacity,
-        }),
-        strokeWidth: patch.strokeWidth ?? object.style.strokeWidth,
-        ...(object.style.fillColor === undefined ? {} : { fillColor: object.style.fillColor }),
-      });
+      const patchedVectorStyle = (object: VectorPageObject, patch: ShapeStylePatch) =>
+        patchVectorStyle(object.style, {
+          ...(patch.strokeColor === undefined ? {} : { color: patch.strokeColor }),
+          ...(patch.strokeWidth === undefined ? {} : { strokeWidth: patch.strokeWidth }),
+          ...(patch.opacity === undefined ? {} : { opacity: patch.opacity }),
+        });
       continuousVectorStyleEdit = new ContinuousVectorStyleEdit({
         documentSession,
         commit: (object, style) => {

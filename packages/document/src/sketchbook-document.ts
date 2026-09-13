@@ -53,7 +53,10 @@ export class Page {
     this.id = input.id;
     this.name = name;
     this.geometry = createPageGeometry(input.geometry ?? DEFAULT_PAGE_GEOMETRY);
-    this.paper = input.paper ?? DEFAULT_PAGE_PAPER;
+    // Normalised, not adopted. A page that kept the caller's object would keep
+    // changing after construction, which every immutable document assumption
+    // here depends on not happening.
+    this.paper = input.paper === undefined ? DEFAULT_PAGE_PAPER : createPagePaper(input.paper);
     this.content = input.content ?? PageDocument.empty();
     Object.freeze(this);
   }

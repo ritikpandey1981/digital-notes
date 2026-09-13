@@ -53,6 +53,15 @@ export function assertInputWithinLimits(input: unknown): asserts input is string
   assertJsonTextDepth(input);
 }
 
+/**
+ * The whole-document budget an encoder must meet.
+ *
+ * It is deliberately the same structural check {@link assertInputWithinLimits}
+ * applies on the way back in. Per-field validation is not enough on its own:
+ * metadata nested legally within its own object still sits several levels down
+ * inside the document that carries it, and a project Folio writes but cannot
+ * read is worse than one it declines to write.
+ */
 export function assertEncodedOutputWithinLimits(output: string): void {
   const byteLength = new TextEncoder().encode(output).byteLength;
   if (byteLength > PROJECT_LIMITS.inputBytes) {
@@ -61,6 +70,7 @@ export function assertEncodedOutputWithinLimits(output: string): void {
       maximumBytes: PROJECT_LIMITS.inputBytes,
     });
   }
+  assertJsonTextDepth(output);
 }
 
 export function expectRecord(
