@@ -245,8 +245,9 @@ export class RecoveryAutosaveCoordinator {
 
   #capture(active: ActiveRecovery): void {
     if (this.#suspended || this.#active !== active) return;
-    // A live preview is not a state anything should be able to recover into.
-    if (active.project.documentSession.hasTransientEdit) {
+    // A live preview or an open gesture transaction is not a state anything
+    // should be able to recover into.
+    if (!active.project.isPersistenceSettled) {
       this.#schedule(active, this.#options.debounceMs);
       return;
     }

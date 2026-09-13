@@ -122,6 +122,62 @@ function setup(options: { origin?: "created" | "loaded" } = {}) {
   };
 }
 
+describe("recovery waits for the document to settle", () => {
+  it("captures nothing while a gesture transaction is open, and nothing after it rolls back", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Committed");
+      await s.timers.advance(DEBOUNCE);
+      expect(s.stored).toHaveLength(1);
+
+      // The shape of an eraser gesture: real successors, none of them decided.
+      s.history.controller.beginTransaction({
+        id: "erase-strokes-probe",
+        timestamp: "2026-09-13T09:00:00.000Z",
+        description: "Erase strokes",
+      });
+      s.edit("Mid gesture");
+      await s.timers.advance(MAXIMUM_AGE * 2);
+      expect(s.stored, "an undecided state must never be recoverable").toHaveLength(1);
+
+      s.history.controller.rollbackTransaction();
+      await s.timers.advance(MAXIMUM_AGE);
+      // Back to the state already on disk, so there is nothing new to write.
+      expect(s.stored).toHaveLength(1);
+      expect(s.project.documentSession.sketchbook.firstPage.name).toBe("Committed");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("captures the gesture once the user keeps it", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Committed");
+      await s.timers.advance(DEBOUNCE);
+      expect(s.stored).toHaveLength(1);
+
+      s.history.controller.beginTransaction({
+        id: "erase-strokes-probe",
+        timestamp: "2026-09-13T09:00:00.000Z",
+        description: "Erase strokes",
+      });
+      s.edit("Kept");
+      await s.timers.advance(MAXIMUM_AGE * 2);
+      expect(s.stored).toHaveLength(1);
+
+      s.history.controller.commitTransaction();
+      await s.timers.advance(DEBOUNCE);
+      expect(s.stored).toHaveLength(2);
+      expect(decodeFolioProject(s.stored[1]!.content).sketchbook.firstPage.name).toBe("Kept");
+    } finally {
+      s.cleanup();
+    }
+  });
+});
+
 describe("recovery autosave scheduling", () => {
   it("keeps no snapshot for an untouched blank project", async () => {
     const s = setup();

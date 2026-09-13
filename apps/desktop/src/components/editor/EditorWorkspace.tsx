@@ -182,12 +182,13 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
       };
     },
   );
+  const { notify } = useNotifications();
   const { onConfirmUnsavedChanges } = props;
   useEffect(() => {
     unsavedPrompt.setHandler(onConfirmUnsavedChanges ?? null);
     return () => unsavedPrompt.setHandler(null);
   }, [unsavedPrompt, onConfirmUnsavedChanges]);
-  useProjectCloseProtection(lifecycle, recovery);
+  useProjectCloseProtection(lifecycle, recovery, notify);
   const runtimes = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
   const escapeActionsRef = useRef<EditorEscapeActions | null>(null);
   const publishEscape = useCallback((actions: EditorEscapeActions | null) => {

@@ -98,6 +98,8 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
   private transientEditDepth = 0;
   private readonly createPageIdValue: () => string;
   private readonly createLayerIdValue: () => string;
+  private pendingCommitDepth = 0;
+  private readonly settledWaiters: (() => void)[] = [];
   private readonly createObjectIdValue: () => string;
   private documentValue: SketchbookDocument;
   private activePageIdValue: string;
@@ -226,6 +228,7 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     if (this.transientEditDepth === 0) return;
     this.transientEditDepth -= 1;
     this.publishContentState();
+    this.releaseSettledWaiters();
   }
 
   /** True while a live-preview gesture is holding uncommitted content. */
@@ -233,8 +236,48 @@ export class InkDocumentSession implements HistoryDocumentSession<SketchbookDocu
     return this.transientEditDepth > 0;
   }
 
+  /**
+   * Announces a History transaction whose successors are not yet decided.
+   *
+   * Called by History itself, never by editor code. It is the other half of the
+   * same question a preview gesture answers: the document currently shows
+   * something the user has not agreed to keep.
+   */
+  beginPendingCommit(): void {
+    this.pendingCommitDepth += 1;
+  }
+
+  endPendingCommit(): void {
+    if (this.pendingCommitDepth === 0) return;
+    this.pendingCommitDepth -= 1;
+    this.publishContentState();
+    this.releaseSettledWaiters();
+  }
+
+  /**
+   * True when the document holds a state the user has actually committed to.
+   *
+   * This is the single question persistence asks. An unsettled document is one
+   * mid-gesture or mid-transaction, and the state it is showing may be taken
+   * back the moment the user lets go.
+   */
+  get isSettled(): boolean {
+    return this.transientEditDepth === 0 && this.pendingCommitDepth === 0;
+  }
+
+  /** Resolves as soon as the document is settled, immediately if it already is. */
+  whenSettled(): Promise<void> {
+    if (this.isSettled) return Promise.resolve();
+    return new Promise<void>((resolve) => this.settledWaiters.push(resolve));
+  }
+
+  private releaseSettledWaiters(): void {
+    if (!this.isSettled || this.settledWaiters.length === 0) return;
+    for (const resolve of this.settledWaiters.splice(0)) resolve();
+  }
+
   private publishContentState(): void {
-    if (this.transientEditDepth > 0) return;
+    if (!this.isSettled) return;
     if (this.contentStateIdValue === this.publishedStateIdValue) return;
     this.publishedStateIdValue = this.contentStateIdValue;
     this.onContentStateChangeValue?.();

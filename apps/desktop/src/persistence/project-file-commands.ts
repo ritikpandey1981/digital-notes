@@ -1,5 +1,8 @@
 import type { NotificationInput } from "../components/notifications/NotificationProvider";
-import type { ProjectLifecycleCoordinator } from "./project-lifecycle-coordinator";
+import type {
+  ProjectLifecycleCoordinator,
+  ProjectLifecycleResult,
+} from "./project-lifecycle-coordinator";
 import type { ProjectPersistenceCoordinator } from "./project-persistence-coordinator";
 import type { ProjectSaveResult } from "../../electron/project-save-contract";
 
@@ -40,6 +43,71 @@ const SAVE_UNCONFIRMED: NotificationInput = {
  * persistence coordinator that already owns them, and nothing here re-decides
  * anything those layers decide.
  */
+/**
+ * Says what became of one lifecycle request, once.
+ *
+ * Every route into the lifecycle reports through here -- the menu, a keystroke,
+ * and the window's own close button -- because a request that quietly did
+ * nothing is the one outcome a user cannot act on. A refusal that keeps their
+ * drawing on screen has to say so, or the window simply appears not to close.
+ */
+export function notifyLifecycleOutcome(
+  notify: (notification: NotificationInput) => void,
+  intent: "new" | "open" | "close",
+  result: ProjectLifecycleResult,
+): void {
+  if (result.status === "cancelled") return;
+  if (result.status === "proceeded") {
+    if (result.warning === "backing-unconfirmed")
+      notify({
+        title: "Opened without a confirmed file",
+        description: "The drawing is open. Use Save As to keep your changes.",
+        tone: "error",
+      });
+    return;
+  }
+  // Already running is not a failure the user needs told about.
+  if (result.error.code === "BUSY") return;
+  if (result.error.code === "SAVE_UNCONFIRMED") {
+    notify(SAVE_UNCONFIRMED);
+    return;
+  }
+  // The save worked. What it wrote is simply no longer everything there is, and
+  // the work that came after it is still only here.
+  if (result.error.code === "SAVE_SUPERSEDED") {
+    notify({
+      title: "Saved, but the drawing changed again",
+      description:
+        intent === "close"
+          ? "Your newest changes are not in the file yet, so Folio stayed open."
+          : "Nothing was replaced. Save once more, then try again.",
+      tone: "error",
+    });
+    return;
+  }
+  if (result.error.code === "SAVE_FAILED") {
+    notify({
+      title: "Couldn't save the project",
+      description:
+        intent === "close"
+          ? "Folio stayed open so your drawing is not lost."
+          : "Nothing was replaced, so your drawing is still open.",
+      tone: "error",
+    });
+    return;
+  }
+  notify({
+    title:
+      intent === "new"
+        ? "Couldn't start a new project"
+        : intent === "open"
+          ? "Couldn't open the project"
+          : "Couldn't close the project",
+    description: "Your current drawing is still open.",
+    tone: "error",
+  });
+}
+
 export function createProjectFileCommands(options: ProjectFileCommandOptions): ProjectFileCommands {
   const { notify } = options;
 
@@ -72,46 +140,10 @@ export function createProjectFileCommands(options: ProjectFileCommandOptions): P
   const replace = async (intent: "new" | "open"): Promise<void> => {
     const lifecycle = options.lifecycle;
     if (lifecycle === null) return;
-    const result = await (intent === "new"
-      ? lifecycle.requestNewProject()
-      : lifecycle.requestOpenProject());
-    if (result.status === "cancelled") return;
-    if (result.status === "proceeded") {
-      if (result.warning === "backing-unconfirmed")
-        notify({
-          title: "Opened without a confirmed file",
-          description: "The drawing is open. Use Save As to keep your changes.",
-          tone: "error",
-        });
-      return;
-    }
-    if (result.error.code === "BUSY") return;
-    // A save the user asked for on the way here already reported itself; this
-    // says only what became of the request they actually made.
-    if (result.error.code === "SAVE_UNCONFIRMED") {
-      notify(SAVE_UNCONFIRMED);
-      return;
-    }
-    if (result.error.code === "SAVE_FAILED") {
-      notify({
-        title: "Couldn't save the project",
-        description: "Nothing was replaced, so your drawing is still open.",
-        tone: "error",
-      });
-      return;
-    }
-    notify(
-      intent === "new"
-        ? {
-            title: "Couldn't start a new project",
-            description: "Your current drawing is still open.",
-            tone: "error",
-          }
-        : {
-            title: "Couldn't open the project",
-            description: "Your current drawing is still open.",
-            tone: "error",
-          },
+    notifyLifecycleOutcome(
+      notify,
+      intent,
+      await (intent === "new" ? lifecycle.requestNewProject() : lifecycle.requestOpenProject()),
     );
   };
 

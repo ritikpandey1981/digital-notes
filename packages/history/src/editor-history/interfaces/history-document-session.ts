@@ -42,4 +42,15 @@ export interface HistoryDocumentSession<TDocument> {
    * make undoing back to a saved state permanently dirty.
    */
   readonly restoreContentStateId?: (stateId: DocumentContentStateId) => void;
+  /**
+   * Announces a transaction scope whose document states are not yet decided.
+   *
+   * A transaction held open across pointer events -- an eraser gesture -- puts
+   * real successors into the document that a rollback will take back. Nothing
+   * may persist those, so History says when one opens and when it ends,
+   * whichever way it ended. This is a notification, never History state: it is
+   * not serialized, and it exposes no History internals.
+   */
+  readonly beginPendingCommit?: () => void;
+  readonly endPendingCommit?: () => void;
 }

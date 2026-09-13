@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import type { NotificationInput } from "../components/notifications/NotificationProvider";
+import { notifyLifecycleOutcome } from "./project-file-commands";
 import type { ProjectLifecycleCoordinator } from "./project-lifecycle-coordinator";
 import type { RecoveryAutosaveCoordinator } from "./recovery-autosave-coordinator";
 
@@ -13,6 +15,7 @@ import type { RecoveryAutosaveCoordinator } from "./recovery-autosave-coordinato
 export function useProjectCloseProtection(
   lifecycle: ProjectLifecycleCoordinator,
   recovery: RecoveryAutosaveCoordinator,
+  notify: (notification: NotificationInput) => void,
 ): void {
   useEffect(() => {
     const bridge = typeof window === "undefined" ? undefined : window.folio?.window;
@@ -21,6 +24,8 @@ export function useProjectCloseProtection(
     const unsubscribe = bridge.onCloseRequest((requestId) => {
       void lifecycle.requestCloseProject().then(async (result) => {
         if (released) return;
+        // A window that declines to close has to say why, or it looks broken.
+        notifyLifecycleOutcome(notify, "close", result);
         // An approved close is the one moment the project is deliberately put
         // away, so its crash snapshot stops being a recovery candidate. A
         // snapshot that refuses to go is stale, not lost work, and must never
@@ -38,5 +43,5 @@ export function useProjectCloseProtection(
       released = true;
       unsubscribe();
     };
-  }, [lifecycle, recovery]);
+  }, [lifecycle, recovery, notify]);
 }

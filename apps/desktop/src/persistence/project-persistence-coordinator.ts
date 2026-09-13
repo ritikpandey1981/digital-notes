@@ -119,6 +119,15 @@ export interface ProjectOpeningServices {
 
 type ProjectOperation = "save" | "open" | "new" | "recover";
 
+/**
+ * How long a save will wait for a gesture to finish before giving up on it.
+ *
+ * A pointer gesture ends in milliseconds, so in practice this never elapses.
+ * It exists because waiting forever on one would be worse than telling the
+ * user plainly that nothing was written.
+ */
+export const PERSISTENCE_SETTLE_TIMEOUT_MS = 5_000;
+
 /** The project lifecycle commands the shell drives, and the state it reports back. */
 export class ProjectPersistenceCoordinator {
   private backingValue: DesktopProjectBacking | null = null;
@@ -137,6 +146,7 @@ export class ProjectPersistenceCoordinator {
     private readonly canSave: () => boolean = () => true,
     private readonly opening?: ProjectOpeningServices,
     private readonly createProject: () => FolioProjectSnapshot = createEmptyFolioProject,
+    private readonly settleTimeoutMs: number = PERSISTENCE_SETTLE_TIMEOUT_MS,
   ) {}
 
   get backing(): DesktopProjectBacking | null {
@@ -150,6 +160,17 @@ export class ProjectPersistenceCoordinator {
   /** True while any project operation holds the coordinator. */
   get isBusy(): boolean {
     return this.operation !== null;
+  }
+
+  /**
+   * The project every current operation applies to.
+   *
+   * Held for comparison by the lifecycle guard, which needs to know whether the
+   * project it asked the user about is still the one in front of them. Nothing
+   * outside this class edits it through this reference.
+   */
+  get activeProject(): ProjectSession {
+    return this.currentProject();
   }
 
   /** The active project's logical title. Never a filename, never a path. */
@@ -510,6 +531,26 @@ export class ProjectPersistenceCoordinator {
     return typeof this.project === "function" ? this.project() : this.project;
   }
 
+  /**
+   * Waits for a gesture or transaction to resolve, one way or the other.
+   *
+   * It neither commits nor cancels what the user is doing -- only they decide
+   * that. Timing out reports a save that did not happen rather than writing a
+   * state nobody agreed to.
+   */
+  private async settle(project: ProjectSession): Promise<boolean> {
+    if (project.isPersistenceSettled) return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expiry = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), this.settleTimeoutMs);
+    });
+    try {
+      return await Promise.race([project.whenPersistenceSettled().then(() => true), expiry]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
   save(): Promise<ProjectSaveResult> {
     return this.performSave(false);
   }
@@ -523,6 +564,18 @@ export class ProjectPersistenceCoordinator {
     this.beginOperation("save");
     const project = this.currentProject();
     try {
+      // A file must never hold a colour, an opacity, or a deletion the user is
+      // still holding the pointer over. Waiting is the least surprising answer:
+      // the gesture ends, and the save the user asked for happens.
+      //
+      // A settled document is captured in this turn, without awaiting anything,
+      // so Save takes the state the user asked to save rather than whatever
+      // they draw in the moment after asking.
+      if (!project.isPersistenceSettled && !(await this.settle(project)))
+        return saveFailure(
+          "BUSY",
+          "Folio waited for the current change to finish and it did not. Nothing was written.",
+        );
       let content: string;
       let title: string;
       let capture: ProjectPersistenceCapture;

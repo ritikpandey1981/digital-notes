@@ -1,3 +1,4 @@
+import type { ProjectSession } from "@folio/editor";
 import type {
   ProjectNewResult,
   ProjectPersistenceCoordinator,
@@ -47,7 +48,13 @@ export class DeferredUnsavedChangesPrompt implements UnsavedChangesPrompt {
 }
 
 export type ProjectLifecycleErrorCode =
-  "BUSY" | "SAVE_FAILED" | "SAVE_UNCONFIRMED" | "NEW_FAILED" | "OPEN_FAILED" | "UNAVAILABLE";
+  | "BUSY"
+  | "SAVE_FAILED"
+  | "SAVE_UNCONFIRMED"
+  | "SAVE_SUPERSEDED"
+  | "NEW_FAILED"
+  | "OPEN_FAILED"
+  | "UNAVAILABLE";
 
 export type ProjectLifecycleFailure = Readonly<{
   status: "failed";
@@ -177,11 +184,36 @@ export class ProjectLifecycleCoordinator {
     if (decision === "cancel") return { status: "cancelled" };
     // Discard is permission to replace, not an instruction to clear anything now.
     if (decision === "discard") return { status: "granted" };
-    return this.#saveBeforeReplacement(await this.persistence.save());
+    // Saving is asynchronous and editing is not blocked during it, so the
+    // project that comes back may not be the one the question was about.
+    const asked = this.persistence.activeProject;
+    return this.#saveBeforeReplacement(await this.persistence.save(), asked);
   }
 
-  #saveBeforeReplacement(result: ProjectSaveResult): ReplacementPermission {
-    if (result.status === "saved") return { status: "granted" };
+  /**
+   * Turns the outcome of a save into permission, or refuses to.
+   *
+   * A save is evidence about one moment, not a standing permit. By the time it
+   * lands the user may have drawn something the file does not contain, and
+   * discarding that because an earlier state reached disk would lose exactly
+   * the work this guard exists to protect. So the question is asked again of
+   * the project as it stands now: is anything still at risk?
+   */
+  #saveBeforeReplacement(result: ProjectSaveResult, asked: ProjectSession): ReplacementPermission {
+    if (result.status === "saved") {
+      if (this.persistence.activeProject !== asked)
+        return lifecycleFailure(
+          "SAVE_SUPERSEDED",
+          "The project changed while it was being saved, so nothing was replaced.",
+        );
+      // Returning to exactly the saved content is not newer work, and the
+      // revalidation says so: nothing is at risk, so this proceeds.
+      if (!this.persistence.persistenceState.hasUnsavedRisk) return { status: "granted" };
+      return lifecycleFailure(
+        "SAVE_SUPERSEDED",
+        "The project was saved, and then changed again before that finished. Nothing was replaced.",
+      );
+    }
     // Backing out of the destination picker cancels the whole request; it is a
     // change of mind about saving, never consent to throw the work away.
     if (result.status === "cancelled") return { status: "cancelled" };

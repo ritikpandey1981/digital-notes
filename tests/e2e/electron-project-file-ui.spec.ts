@@ -206,6 +206,64 @@ test("protects unsaved work before New and Open, and opens what was chosen", asy
   }
 });
 
+test("refuses to close on a save that no longer covers the drawing", async () => {
+  test.setTimeout(180_000);
+  const documents = await mkdtemp(path.join(tmpdir(), "folio-file-ui-stale-"));
+  const app = await launchFolio();
+  try {
+    const window = await ready(app);
+    const surface = surfaceOf(window);
+    const destination = path.join(documents, "Harbour study.folio");
+
+    // The destination picker answers only when this test says so, which is the
+    // window in which the user keeps drawing.
+    await app.evaluate(({ dialog }, filePath) => {
+      const held = globalThis as unknown as { folioReleaseSave?: () => void };
+      dialog.showSaveDialog = (async () => {
+        await new Promise<void>((resolve) => {
+          held.folioReleaseSave = resolve;
+        });
+        return { canceled: false, filePath };
+      }) as typeof dialog.showSaveDialog;
+    }, destination);
+
+    await draw(window, 380);
+    await expect(surface).toHaveAttribute("data-document-object-count", "1");
+
+    // Close the window the way the title bar does.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+    const unsaved = window.getByTestId("unsaved-changes-dialog");
+    await expect(unsaved).toBeVisible();
+    await window.getByTestId("unsaved-changes-save").click();
+    await expect(unsaved).toHaveCount(0);
+
+    // The write is still in flight, and the drawing moves on.
+    await draw(window, 520);
+    await expect(surface).toHaveAttribute("data-document-object-count", "2");
+    await app.evaluate(() => {
+      (globalThis as unknown as { folioReleaseSave?: () => void }).folioReleaseSave?.();
+    });
+
+    // The save succeeded, and it holds one stroke. The second one exists only
+    // here, so the window must still be open.
+    await expect(window.getByTestId("notification").last()).toContainText(
+      "Saved, but the drawing changed again",
+    );
+    await expect(surface).toHaveAttribute("data-document-object-count", "2");
+    expect(
+      decodeFolioProject(await readFile(destination, "utf8")).sketchbook.firstPage.content.size,
+    ).toBe(1);
+    expect(
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length),
+      "the window closed on a save that did not cover the drawing",
+    ).toBe(1);
+    await expect(window.getByTestId("sketch-dirty-indicator")).toHaveCount(1);
+  } finally {
+    await app.close().catch(() => undefined);
+    await rm(documents, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
 test("brings the recovery list back after it has been dismissed", async () => {
   test.setTimeout(180_000);
   const userData = await mkdtemp(path.join(tmpdir(), "folio-file-ui-recovery-"));

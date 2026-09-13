@@ -273,6 +273,8 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       );
     }
     this.#activeTransaction = createActiveHistoryTransaction(options, this.#contentStateId());
+    // Everything the transaction writes from here is provisional until it ends.
+    this.#documentSession.beginPendingCommit?.();
     return createTransactionState(this.#activeTransaction);
   }
 
@@ -294,6 +296,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       throw transactionFailure("commit", transaction.metadata, error);
     } finally {
       this.#transactionOperation = null;
+      this.#documentSession.endPendingCommit?.();
       this.#publishRetainedCommands();
     }
   }
@@ -316,6 +319,7 @@ class EditorHistoryManagerImplementation<TDocument> implements IHistoryManager<T
       throw transactionFailure("roll back", transaction.metadata, error);
     } finally {
       this.#transactionOperation = null;
+      this.#documentSession.endPendingCommit?.();
       this.#publishRetainedCommands();
     }
   }

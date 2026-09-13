@@ -163,6 +163,23 @@ export class ProjectSession {
     });
   }
 
+  /**
+   * Whether the document currently holds a state the user has committed to.
+   *
+   * Persistence asks this and nothing else. A live preview gesture and an open
+   * History transaction are the same problem wearing different clothes: the
+   * document is showing something that a release of the pointer may take back,
+   * and writing it to a file would make a temporary thing permanent.
+   */
+  get isPersistenceSettled(): boolean {
+    return this.documentSession.isSettled;
+  }
+
+  /** Resolves once the document is settled, immediately when it already is. */
+  whenPersistenceSettled(): Promise<void> {
+    return this.documentSession.whenSettled();
+  }
+
   /** Captures the current root without copying artwork or retaining a second store. */
   captureSnapshot(): FolioProjectSnapshot {
     return Object.freeze({
