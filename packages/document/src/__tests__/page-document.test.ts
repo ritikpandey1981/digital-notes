@@ -288,23 +288,57 @@ describe("PageDocument layer operations", () => {
   });
 });
 
+/** The 1,000-object layer set both of the tests below are built on. */
+function thousandObjectDocument(): PageDocument {
+  const objectIds = Array.from({ length: 1_000 }, (_, index) => `object-${index}`);
+  const layers = [
+    new Layer({ id: "layer-1", name: "Layer 1", objectIds: objectIds.slice(0, 500) }),
+    new Layer({ id: "layer-2", name: "Layer 2", objectIds: objectIds.slice(500) }),
+  ];
+  const objects = new ObjectCollection(objectIds.map((id, index) => rectangle(id, index)));
+  return new PageDocument({ layers, objects });
+}
+
 describe("PageDocument scale", () => {
+  it("reorders a 1,000-object layer set correctly", () => {
+    const document = thousandObjectDocument();
+    const reordered = document.reorderLayers("layer-2", 0);
+
+    expect(reordered.size).toBe(1_000);
+    expect(ids(reordered)[0]).toBe("object-500");
+    expect(reordered.layers.flatMap((layer) => layer.objectIds)).toEqual(ids(reordered));
+    // Every object kept, in the order the new layer stack implies, and the
+    // original left alone.
+    expect(new Set(ids(reordered))).toEqual(new Set(ids(document)));
+    expect(ids(reordered).slice(0, 500)).toEqual(ids(document).slice(500));
+    expect(ids(document)[0]).toBe("object-0");
+  });
+});
+
+/**
+ * What the reorder costs, which is a property of the machine as much as of the
+ * code.
+ *
+ * This is the only wall-clock assertion in the document suite and it measures
+ * elapsed time, so on a busy machine it counts the time the scheduler spent
+ * elsewhere. Measured on an idle 16-core desktop the reorder takes about 24ms
+ * against this 120ms budget; under twenty competing processes the same work
+ * reports a median of 93ms and a maximum of 120ms, which makes the assertion a
+ * coin toss rather than a signal. The work it guards is unchanged and still
+ * worth a number -- so it keeps one, under a flag, where the hardware and the
+ * load are the measurement rather than noise in it.
+ *
+ * Run with FOLIO_PERFORMANCE_BASELINE=1 on an otherwise idle machine.
+ */
+describe.skipIf(process.env.FOLIO_PERFORMANCE_BASELINE !== "1")("PageDocument reorder cost", () => {
   it("reorders a 1,000-object layer set within one frame budget", () => {
-    const objectIds = Array.from({ length: 1_000 }, (_, index) => `object-${index}`);
-    const layers = [
-      new Layer({ id: "layer-1", name: "Layer 1", objectIds: objectIds.slice(0, 500) }),
-      new Layer({ id: "layer-2", name: "Layer 2", objectIds: objectIds.slice(500) }),
-    ];
-    const objects = new ObjectCollection(objectIds.map((id, index) => rectangle(id, index)));
-    const document = new PageDocument({ layers, objects });
+    const document = thousandObjectDocument();
 
     const startedAt = performance.now();
     const reordered = document.reorderLayers("layer-2", 0);
     const durationMilliseconds = performance.now() - startedAt;
 
     expect(reordered.size).toBe(1_000);
-    expect(ids(reordered)[0]).toBe("object-500");
-    expect(reordered.layers.flatMap((layer) => layer.objectIds)).toEqual(ids(reordered));
     expect(durationMilliseconds).toBeLessThan(120);
     console.info("Phase 19 layer reorder (1,000 objects, ms)", { durationMilliseconds });
   });

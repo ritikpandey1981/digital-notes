@@ -452,11 +452,38 @@ async function reverseMidFlight(
 }
 
 /**
+ * The two readings are serialized to three decimals, so each is up to half a
+ * unit away from the value the window actually held. Comparing two of them
+ * therefore carries a whole unit of slack before anything is wrong.
+ */
+const REPORTED_DECIMAL = 0.001001;
+
+/**
+ * How far apart two expansions may legitimately be while reporting one progress.
+ *
+ * Samples that print the same progress are not the same moment: their true
+ * progress can differ by nearly a whole unit of the last reported decimal, and
+ * the expansion is an eased function of progress that does not move at the same
+ * rate. Near the start of a ring's own share of the staggered timeline it moves
+ * about four and a half times faster, because the ease opens at a gradient of
+ * 3.75 and the stagger compresses each ring's span. Measured across the curve
+ * the dock actually builds, one reported progress step spans up to 0.00496 of
+ * expansion; the two roundings add a unit on top of that.
+ *
+ * `radial-progress-resolution.test.ts` measures that span against this number,
+ * so a steeper ease or a longer stagger fails there -- with an explanation --
+ * rather than turning this spec flaky again.
+ */
+const SAME_PROGRESS_EXPANSION_SPREAD = 0.0075;
+
+/**
  * Asserts a ring's expansion is a function of progress alone.
  *
- * Any two samples at the same progress must agree, and a higher progress must
- * never be smaller. A second, oppositely-staggered closing choreography would
- * fail this immediately.
+ * A higher progress must never be smaller, and samples that report the same
+ * progress must agree to within what one reported progress step can cover. A
+ * second, oppositely-staggered closing choreography parts company by tenths and
+ * fails this immediately; so does any ring whose size depends on which way the
+ * presentation happens to be going.
  */
 function expectExpansionFollowsProgressOnly(frames: readonly MotionFrame[]): void {
   const ringCount = frames[0]?.expansions.length ?? 0;
@@ -466,13 +493,17 @@ function expectExpansionFollowsProgressOnly(frames: readonly MotionFrame[]): voi
       .map((frame) => ({ progress: frame.progress, expansion: frame.expansions[ring]! }))
       .sort((first, second) => first.progress - second.progress);
     for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1]!;
+      const current = points[index]!;
+      // Sorting cannot order two samples that print the same progress, so the
+      // pair says nothing about direction -- only that they must describe the
+      // same point on one curve.
+      const allowed =
+        current.progress === previous.progress ? SAME_PROGRESS_EXPANSION_SPREAD : REPORTED_DECIMAL;
       expect(
-        points[index]!.expansion,
-        `ring ${ring} at progress ${points[index]!.progress} vs ${points[index - 1]!.progress}`,
-        // Both diagnostics are serialized to three decimals. Two distinct RAF
-        // samples can therefore share a displayed progress while their rounded
-        // expansions differ by one unit in the last reported decimal.
-      ).toBeGreaterThanOrEqual(points[index - 1]!.expansion - 0.001001);
+        current.expansion,
+        `ring ${ring} at progress ${current.progress} vs ${previous.progress}`,
+      ).toBeGreaterThanOrEqual(previous.expansion - allowed);
     }
   }
 }
