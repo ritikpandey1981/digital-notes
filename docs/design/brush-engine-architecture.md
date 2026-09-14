@@ -1,0 +1,1034 @@
+# Brush engine architecture
+
+This is the durable contract for Folio's brush engine. It describes the pipeline that
+exists today, the target the engine is being built toward, and the boundaries that work
+must not cross. It authorizes no implementation on its own; scope comes from
+[`../ROADMAP.md`](../ROADMAP.md).
+
+Companion documents: [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for the implemented
+system, [`../DECISIONS.md`](../DECISIONS.md) for durable choices,
+[`drawing-tool-system.md`](drawing-tool-system.md) for the product tool contract, and
+[`../performance/desktop-baseline.md`](../performance/desktop-baseline.md) for the
+measured constraints this design is bounded by.
+
+## 1. The stroke pipeline as it exists
+
+One real stroke, from device to disk and back. Every stage names its owning package and
+its exact entry point.
+
+| # | Stage | Owner | In | Out | Durable | Deterministic | Platform |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `PointerEvent` capture, coalesced expansion | `@folio/ink` `PointerInputController` | DOM events | events | no | no | DOM |
+| 2 | Normalization | `PointerInputController.normalizeEvent` | `PointerEvent` | `StrokePointInput` | no | yes | DOM boundary only |
+| 3 | Stationary-sample policy | `@folio/ink` `StrokeBuilder.addPoint` / `shouldRetainStationarySample` | `StrokePointInput` | retained sample or drop | no | yes | neutral |
+| 4 | Input smoothing | `StrokeSmoother.smoothNext` | raw positions | smoothed position | no | yes | neutral |
+| 5 | Derived per-point data | `StrokeBuilder.addPoint` | position + timestamp | `StrokePoint` (`delta`, `velocity`, `acceleration`) | **yes** | yes | neutral |
+| 6 | Live geometry | `@folio/ink` `internal/brush-render-strategy.createBrushRenderGeometry` or `internal/draw-stroke.drawStrokePoints` | `StrokePoint[]`, snapshot | `BrushRenderGeometry` or direct draw calls | no | yes | Canvas 2D |
+| 7 | Live paint | `StrokeRenderer.renderIncrementalFrame` | geometry | pixels | no | yes | Canvas 2D |
+| 8 | Finalize | `StrokeBuilder.finalize` | builder state | immutable `Stroke` | **yes** | yes | neutral |
+| 9 | Brush resolution | `@folio/ink` `resolveBrushPreset` then `resolveBrushForPointerType` | `BrushPreset` + slot overrides + pointer type | `ResolvedBrushSnapshot` | **yes** | yes | neutral |
+| 10 | Document object | `@folio/editor` `InkDocumentSession.createStrokeObject` then `@folio/document` `ObjectFactory.createInkObject` | `Stroke` | `InkObject` | **yes** | yes | neutral |
+| 11 | Command | `@folio/editor` `createAddStrokeCommand` | `InkObject` | `PageDocument` successor | **yes** | yes | neutral |
+| 12 | Committed geometry | `resolveStrokeRenderGeometry` | `Stroke`, `renderedScale` | cached `BrushRenderGeometry` | no | yes | Canvas 2D |
+| 13 | Committed paint | `@folio/editor` `VectorShapeRendering.drawInkObject` via `createStrokeVisual`; `StrokeRenderer.drawFinalizedStroke` | geometry | pixels | no | yes | Canvas 2D |
+| 14 | Encode | `@folio/persistence` `project/ink-codec.encodeStroke` | `Stroke` | `SerializedStroke` | **yes** | yes | neutral |
+| 15 | Decode | `project/ink-codec.decodeStroke` | JSON | `Stroke` | **yes** | yes | neutral |
+| 16 | Bounds | `@folio/ink` `getStrokeRenderedBounds` / `getStrokeLocalRenderBounds` / `getStrokeVisualLocalBounds` | `Stroke`, transform | `Rect` | no | yes | neutral |
+| 17 | Hit test | `@folio/editor` `EditorSelectionHitTestEngine` | page point | `HitTestResult[]` | no | yes | neutral |
+| 18 | Transform | `@folio/document` `ObjectFactory.replaceObjectTransform` | `InkObject`, `Transform` | same-identity `InkObject` | **yes** | yes | neutral |
+| 19 | Eraser | `@folio/editor` `CanvasSurface` + `EraserEligibility` | page point, radius | delete commands in one transaction | **yes** | yes | neutral |
+
+Two facts in that table carry most of the weight of this document.
+
+**Stage 5 is durable derived data.** `velocity`, `acceleration` and `delta` are computed
+from smoothed positions and written into `points[]`, which the codec round-trips. They
+are the only place where a *derived* quantity became durable. Nothing reads them at
+render time today.
+
+**Stage 6 has two different implementations.** `StrokeRenderer.requiresFullGeometry`
+sends a stroke down the incremental `drawStrokePoints` path when its strategy is
+centerline *and* its smoothing amount is zero, and down a full-geometry rebuild
+otherwise. The full-geometry path re-runs `createProfessionalInkPath` over every point
+on every frame, which is the whole of the measured long-outline cost. The incremental
+path is a different algorithm from the committed one, which is the whole of the measured
+live/committed divergence.
+
+## 2. The brush model as it exists
+
+### Catalogue
+
+There are three layers of "brush" today, and they live in two packages.
+
+| Layer | Where | Count | Durable |
+| --- | --- | --- | --- |
+| Library identity | `apps/desktop` `brush-library-catalogue.ts` | 45 | no |
+| Engine preset | `@folio/editor` `foundation/pen-presets.ts` `DEFAULT_BRUSH_PRESETS` | 10 | no |
+| Resolved snapshot | `@folio/ink` `ResolvedBrushSnapshot` | one per stroke | **yes** |
+
+The 45 identities map onto 9 of the 10 presets through `fallbackPresetId`; the tenth,
+`highlighter-default`, has no library identity. The presets in turn resolve onto exactly
+two render behaviours, `centerline` and `outline`. So the honest count of materially
+distinct brush behaviours the engine has today is **two**, and everything above that is
+configuration.
+
+The library identity a slot holds (`DrawingSlotState.brushId`) is **session state and is
+not captured in the snapshot**. A stroke drawn with "Micro Liner" records
+`presetId: "pen-technical"`. That is the correct choice and should not change: when an
+identity later becomes its own preset, old strokes keep rendering as the preset they were
+actually drawn with, which is precisely the no-silent-visual-change rule.
+
+### Field classification
+
+Every field currently in or adjacent to the brush model, classified by what it actually
+is rather than by where it currently lives.
+
+**A — durable stroke reproduction state** (`ResolvedBrushSnapshot`, all of it serialized)
+
+`schemaVersion`, `presetId`, `presetVersion`, `family`, `color`, `size`, `opacity`,
+`smoothing.{mode,amount}`,
+`dynamics.pressureSize.{enabled,minimumFactor,maximumFactor,curve}`,
+`dynamics.pressureOpacity.{...}`, `renderer.{version,kind}`.
+
+Correctly placed. `renderer` is the strategy selector and is the one field this document
+proposes to extend.
+
+**B — editor/tool preference** (session only, no History, no document)
+
+`DrawingSlotState.{slotId,brushId,presetId,family,color,size,opacity,smoothing}`,
+`ActiveToolState.*`, the eraser's own radius, the active slot, the rail and tool-options
+values.
+
+Correctly placed.
+
+**C — catalogue/preset metadata** (static configuration)
+
+`BrushPreset.{id,version,name,family,defaults,dynamics,renderer}`,
+`BrushLibraryEntry.{id,name,family,fallbackPresetId}`, `DEFAULT_SLOT_BRUSH_IDS`.
+
+Correctly placed, except that the 45-entry catalogue lives in `apps/desktop`. That is
+right while it is a UI list and wrong once identities carry behaviour.
+
+**D — rendering-derived state** (recomputable, cached, never durable)
+
+`ProfessionalInkPath`, `ProfessionalInkSegment`, `OutlineStrokeGeometry`,
+`OutlineCenterSample`, `CenterlineRenderGeometry`, `BrushRenderGeometry`, `StrokeVisual`,
+the `WeakMap` geometry caches, all three bounds helpers.
+
+Correctly placed, and correctly keyed by immutable `Stroke` identity plus scale.
+
+**E — runtime-only state**
+
+`StrokeBuilder` accumulators, `LiveStrokeState`, `pendingDirtyRect`,
+`renderedLivePointCount`, pointer capture, canvas diagnostics datasets.
+
+Correctly placed.
+
+**Misplaced, and named honestly:**
+
+- `StrokePoint.{velocity, acceleration, delta}` — category D data stored durably.
+- `Stroke.style` (`StrokeStyle`) — a second appearance authority. `color`, `width`,
+  `opacity` and `pressureEnabled` duplicate the snapshot, and
+  `InkStyleEdit.applyInkStyle` has to write both to keep them agreeing. It is durable in
+  `.folio` v1 and therefore frozen, not removable.
+- `StrokeStyle.brushTextureId` — an optional durable string with no writer, no reader and
+  no validation beyond "is a string". It is exactly the external-resource-reference shape
+  that durability hardening forbids. It must not become the texture mechanism.
+- `BrushDynamics.pressureOpacity` — fully modelled, fully validated, fully serialized,
+  and **never evaluated**. Every preset sets `enabled: false`. It is a durable promise
+  with no renderer behind it.
+- `StrokeSmoothingMode` `"catmull-rom"` and `"bezier"` — decodable enum values that
+  require an injected `SmoothingHook` nothing supplies. A hand-written file can select
+  them; `StrokeSmoother` will throw.
+
+## 3. Strengths to preserve
+
+These are load-bearing, and the brush engine must be built on them rather than around
+them.
+
+- **The normalized sample boundary.** `StrokePointInput` already carries position,
+  timestamp, pressure, `tiltX`/`tiltY`, `twist`, optional `altitudeAngle`/`azimuthAngle`,
+  `pointerType`, `button` and `buttons`. That is the complete portable stylus vocabulary.
+- **Exact source retention.** `Stroke.sourceSamples` keeps what the device said, and no
+  derived view replaces it. Every future strategy can be a pure function of it.
+- **The snapshot is data.** No callbacks, no closures, no handles, no paths. The whole
+  model is JSON, and the codec proves it on every save.
+- **Preset edits do not reach old artwork.** Resolution happens once, at stroke start.
+- **Geometry is cached by immutable identity.** `WeakMap<Stroke, …>` keyed by scale with a
+  bounded variant count.
+- **Rendering is request-driven.** No continuous loop; invalidation coalesces to a frame.
+- **Preview primitives are pure.** `renderPageThumbnail`, `renderPagePaperPreview` and
+  `renderPageLayerPreview` take a context and a page and nothing else.
+- **History knows nothing about brushes.** Commands carry whole immutable `InkObject`s.
+
+## 4. Limitations to solve
+
+1. **Live and committed centerline are different algorithms.** `drawStrokePoints` draws
+   per-segment cubics with per-segment width; `drawSmoothStrokeSegments` draws the fitted
+   path at one stroke-wide *average* width. A pressure-enabled centerline stroke varies in
+   width while being drawn and flattens to a constant width when it commits.
+2. **Centerline discards pressure.** `averageStrokeWidth` is the only width the committed
+   centerline path knows. `createLegacyBrushSnapshot` mints centerline snapshots with
+   pressure-size *enabled*, so the model claims a dynamic the renderer ignores.
+3. **Live full-geometry rebuild is O(n) per frame.** Every outline stroke, and every
+   smoothed centerline stroke, rebuilds its entire path each frame. Over a stroke this is
+   quadratic work, and it is the measured 254 ms p95 at 20 000 samples.
+4. **The fit is not prefix-stable.** `fittingTolerance` and `filterAdaptiveStrokePoints`
+   both read whole-stroke properties (`strokeDiagonal`, mean spacing), so appending a
+   sample can change segments already drawn. Incremental live drawing cannot converge on a
+   whole-stroke adaptive fit without this being fixed.
+5. **Strategy dispatch is a conditional, not a registry.** `createGeometry` branches on
+   `brush.renderer.kind`. There is nowhere to add a strategy without editing the branch,
+   and nothing pins a shipped strategy's appearance.
+6. **`renderer.version` is decoration.** It is validated as `=== 1` and never read.
+7. **Ink hit testing is bounds-only.** `EditorSelectionHitTestEngine` measures distance to
+   the object's axis-aligned bounds for Ink. `@folio/selection`'s `distanceToInkGeometry`
+   exists and is unreachable from the editor.
+8. **Bounds conflate two questions.** `getStrokeLocalRenderBounds` pads and squares around
+   the pivot for repaint safety; `getStrokeVisualLocalBounds` does not. Neither is a
+   "logical ink extent", and the centerline variant derives its radius from the *average*
+   width, which understates a high-pressure end.
+9. **A catalogue hides in a component.** `CanvasSurface.tsx`'s `resolveBrush` fallback
+   mints `editor-default-pen` / `editor-default-highlighter` snapshots inline.
+10. **`.folio` v1 is closed.** `assertExactKeys` rejects unknown fields and `formatVersion`
+    must equal `1` exactly. There is no forward-compatible slack anywhere in the stroke or
+    brush records.
+
+## 5. Target pipeline
+
+```text
+PointerEvent
+  -> normalized StrokePointInput            (unchanged, already correct)
+  -> retained source samples                (unchanged, already correct)
+  -> path resampling / fitting              (prefix-stable; settled + tail)
+  -> brush evaluation                       (pure: snapshot + samples -> dynamics)
+       pressure response -> size, opacity
+       velocity response
+       tilt / azimuth response  (later)
+       taper
+       spacing -> stamp stream  (stamp strategies only)
+       deterministic variation
+  -> BrushGeometry primitives               (stroked-path | filled-path | stamps)
+  -> BrushPainter                           (Canvas 2D today; backend-neutral)
+```
+
+**This is compatible with the current architecture.** The document model, `Stroke`,
+`ResolvedBrushSnapshot`, History, the codec's structure, the compositor and the preview
+primitives all survive unchanged. Three things are genuinely missing, and they are the
+whole of the required change:
+
+1. a strategy **vocabulary** with a version, so a new strategy can exist without
+   redefining an old one;
+2. a strategy **registry** instead of a conditional;
+3. a split between **producing geometry** and **painting geometry**, so live drawing can
+   be incremental and so a future backend is possible.
+
+## 6. Preset, snapshot, strategy
+
+Three concepts, one direction of flow, no shortcuts between them.
+
+**A — `BrushPreset` is configuration.** Named, versioned, immutable, JSON. It declares
+defaults and dynamics and *names* a strategy. It is never executed and never contains
+code. A preset edit changes what the next stroke will look like, and nothing else.
+
+**B — `ResolvedBrushSnapshot` is the durable record.** Created once, at stroke start, from
+a preset plus the slot's overrides plus the pointer type. It is the *sole* authority for
+reproducing a finished stroke. Everything a strategy needs to redraw that stroke in five
+years is in it, or is derivable from `sourceSamples`, or the stroke is not reproducible.
+
+**C — the strategy is code.** It interprets a snapshot and a sample sequence and emits
+geometry. It is selected by `(strategyId, strategyVersion)` and is otherwise anonymous:
+nothing in the document names a function, a module or a file.
+
+The rule that keeps these apart: **a preset may not become a rendering algorithm, and a
+strategy may not read a preset.** A strategy sees only the snapshot it was handed. This is
+what makes old artwork stable when the catalogue changes, and it is already true today —
+the change is to make it structural rather than incidental.
+
+## 7. Strategy versioning
+
+### The smallest mechanism that works
+
+`ResolvedBrushSnapshot.renderer` already is the strategy slot. It is durable, serialized,
+validated, and already the field the dispatcher reads. Use it.
+
+```ts
+type BrushStrategyId =
+  | "centerline"      // frozen legacy
+  | "outline"         // frozen legacy
+  | "technical-pen"
+  | "pressure-pen"    // later
+  | "pencil"          // later
+  | "marker";         // later
+
+interface BrushRendererDefinition {
+  readonly version: number;        // widened from the literal 1
+  readonly kind: BrushStrategyId;  // widened from "centerline" | "outline"
+}
+```
+
+Do **not** add `strategyId` and `strategyVersion` beside `renderer.kind`. Two fields
+answering one question is two things that can disagree, and the codec would have to decide
+which wins.
+
+### The rule
+
+> A shipped `(kind, version)` pair draws the same pixels for ever. To change how a strategy
+> looks, ship the next version and point new strokes at it. Changing what a shipped pair
+> draws is a defect, not a refinement.
+
+`centerline@1` and `outline@1` are frozen as of today's behaviour, average-width flattening
+and all. Their code paths stay exactly as they are.
+
+### Existing strokes
+
+Nothing migrates. Every stroke ever written carries `{version: 1, kind: "centerline"}` or
+`{version: 1, kind: "outline"}` and continues to render through those frozen strategies.
+There is no rewrite, no upgrade-on-open, and no visual change to any existing artwork.
+
+### Format impact
+
+`.folio` `formatVersion` stays at **1**. The document *shape* does not change: no field is
+added, removed or renamed, so every byte sequence that decodes today still decodes and
+still means the same thing. What grows is the set of legal *values* inside two existing
+fields.
+
+Two consequences must be stated rather than hidden:
+
+- **Decode must widen.** `parseBrush` currently rejects any `kind` outside two literals and
+  any `version` other than `1`. E2 must widen both and refuse an unrecognised
+  `(kind, version)` with a typed error naming it, consistent with the codec's existing
+  strictness. Substituting a nearby strategy would be a silent visual change and is
+  forbidden.
+- **New files will not open in older builds.** A v1 file written by a Folio that knows
+  `technical-pen@1` is refused by a Folio that does not. That is ordinary
+  forward-incompatibility within a version, and it is the correct trade against bumping the
+  format for every strategy. Record it in `DECISIONS.md` when E2 lands.
+
+### Future migrations
+
+A migration is only ever "these old strokes should now use a newer strategy version", and
+it is only ever performed **explicitly by the artist**, per project, never on open. The
+mechanism is an ordinary command producing an ordinary History entry: read the snapshot,
+write a successor with a different `renderer`, keep everything else. No migration code
+belongs in the codec.
+
+## 8. Pressure representation
+
+Keep the current shape — a named curve family plus parameters, remapped into a factor
+range:
+
+```text
+factor(p) = minimumFactor + (maximumFactor - minimumFactor) * curve(clamp(p, 0, 1))
+```
+
+| Criterion | Enum + params (current) | Piecewise points | Cubic control points | Raw coefficients |
+| --- | --- | --- | --- | --- |
+| Determinism | good (`Math.pow` differs sub-ULP across engines) | exact (only `+ - * /`) | good | good |
+| Serialization | 3 numbers and a tag | bounded array | 8 numbers | opaque |
+| Validation | trivial and total | ordering, monotonicity, count | convexity is hard | not checkable |
+| Interpolation | closed form, O(1) | O(log n), or O(1) with a cursor | O(1) | O(1) |
+| Performance | fine per sample | fine | fine | fine |
+| Future fit | needs a new tag per shape | expresses anything | expresses most things | unreadable |
+
+**Recommendation: keep enum + params, with a closed vocabulary versioned alongside the
+strategy that reads it.** Bit-exactness across engines is not achievable end to end anyway
+— Canvas 2D rasterization differs by platform and version — so the requirement is *visual*
+determinism, which `Math.pow` satisfies comfortably.
+
+Add `{ kind: "piecewise", points: readonly [number, number][] }` **only when an
+artist-facing curve editor exists**, with at most 16 points, strictly increasing `x`,
+endpoints pinned at 0 and 1, and every value in `[0, 1]`. Until then it is a speculative
+field.
+
+One distinction the current model gets wrong by omission: **taper is not a pressure
+response.** Taper is a function of normalized position along the stroke, and it needs its
+own durable field. Do not express it by bending a pressure curve.
+
+## 9. Velocity
+
+Today `StrokePoint.velocity` is computed in `StrokeBuilder` from smoothed positions and raw
+timestamps, with `dt` floored at one microsecond, and it is persisted. Two duplicate
+timestamps therefore produce a velocity up to a million page units per second, and any
+future velocity-driven dynamic would spike on it.
+
+**Derive velocity; do not persist it.** `sourceSamples` carry position and timestamp, which
+is everything needed, and a derived value that is also durable is a second authority
+waiting to disagree with the first.
+
+The contract for one shared `deriveVelocity` in `@folio/ink`:
+
+- **Source:** `sourceSamples`, not resampled points. Resampling changes spacing, and
+  velocity must describe the hand, not the fit.
+- **Units:** page units per second. Page space is already zoom-invariant because
+  `screenToPage` divides out the camera, so no further compensation is needed.
+- **Window:** measured over a fixed *time* window (about 12 ms) rather than over one sample
+  pair. A 240 Hz device and a 60 Hz device then report the same speed for the same motion;
+  a per-pair estimate reports the same mean with far more noise at high rates.
+- **Degenerate timestamps:** if the window's span is below one timer tick (1 ms), carry the
+  previous velocity forward. Never divide by a synthetic floor.
+- **Smoothing:** one-pole low-pass with a time constant in milliseconds, not in samples, so
+  the filter is also sample-rate independent.
+- **Determinism:** a pure function of the persisted samples, so Save/Open reproduces it
+  exactly.
+
+The existing persisted `velocity`, `acceleration` and `delta` fields stay in `.folio` v1
+because removing them is a format change. They are frozen legacy. **No new strategy may
+read them.**
+
+## 10. Tilt, azimuth and twist
+
+Already captured, already normalized, already durable:
+
+| Field | Range | Source | Notes |
+| --- | --- | --- | --- |
+| `pressure` | 0–1 | all | mouse fixed at `0.5` |
+| `tiltX`, `tiltY` | ±90 degrees | Windows Ink, most stylus stacks | clamped |
+| `twist` | 0–360 degrees | barrel-rotation pens | normalized modulo 360 |
+| `altitudeAngle` | 0 to π/2 radians | Apple Pencil / Safari | optional |
+| `azimuthAngle` | 0 to 2π radians | Apple Pencil / Safari | optional |
+| `pointerType` | mouse / pen / touch | all | |
+| `button`, `buttons` | integers | all | carries barrel-button and eraser-end state |
+
+**Nothing portable is missing.** Both the Windows tilt pair and the Apple altitude/azimuth
+pair flow through the same boundary, and `buttons` already records the eraser-end bit, so a
+future eraser-end gesture is recoverable from existing data.
+
+One derivation is missing and should be added when a strategy first needs orientation: a
+pure `resolvePenOrientation(sample): { altitude, azimuth } | null` in `@folio/ink` that
+returns one normalized pair whichever form the device supplied. It is derived, never
+stored, and it keeps every strategy from carrying its own trigonometry.
+
+No device-specific adapter is required or permitted. The brush engine sees
+`StrokePointInput` and never a `PointerEvent`.
+
+## 11. Spacing
+
+Stamp-based strategies advance by distance, not by pointer sample.
+
+**Ownership: brush evaluation.** Not input sampling — that must stay device-truthful, and
+resampling there would destroy source fidelity. Not the strategy — four strategies would
+carry four copies. One shared evaluator emits an ordered stamp stream; stamp strategies
+consume it and path strategies ignore it.
+
+Contract:
+
+- **Unit:** a fraction of the current stamp diameter (`0.05` to `2.0`). Expressing spacing
+  relative to diameter is what makes it behave correctly under variable width: the advance
+  recomputes from the diameter at the current position.
+- **Parameterization:** arc length along the *fitted path*, in page/world coordinates. This
+  makes spacing independent of device sample rate and of zoom by construction, and it makes
+  gaps at high velocity impossible — the stamps follow the path, not the events.
+- **Terminal stamp:** always emit one stamp exactly at the final centerline position, even
+  when it falls short of a full advance. Without it, strokes end early and the commit
+  boundary stops matching the live image.
+- **Index:** stamps are numbered monotonically from zero, and the index is the input to
+  deterministic variation. It must never be renumbered.
+- **Incrementality:** the evaluator keeps an arc-length cursor and emits only new stamps.
+  Re-deriving the whole stream per frame reproduces exactly the quadratic cost that makes
+  today's outline path slow.
+
+## 12. Randomness
+
+Deterministic, reproducible after Save/Open, identical across engines, and never stored.
+
+- **Seed: derive it from `stroke.id`.** `seed = fnv1a32(stroke.id)`. No new durable field,
+  no codec change, and already unique and already round-tripping. It also gives the right
+  behaviour for duplication: `ObjectFactory.cloneObject` gives a copy a fresh *object* id
+  while reusing the same `Stroke`, so a duplicated stroke keeps its grain instead of
+  shimmering into a different one.
+- **PRNG:** `splitmix32` over `Math.imul` and `>>>`. Both are exactly specified in
+  ECMAScript, so output is bit-identical on every engine; `(x >>> 0) / 2**32` converts
+  exactly into `[0, 1)`.
+- **Derive per stamp, never stream.** `rand(seed, stampIndex, channel)` — a hash of the
+  three, not the *n*-th draw from a sequence. This is the decision that makes incremental
+  live evaluation identical to a full rebuild: a sequential generator would produce
+  different values the moment the stamp stream is rebuilt from a different starting point,
+  and live and committed would diverge visibly.
+- **Channels are named constants** (`size-jitter`, `angle-jitter`, `scatter-x`,
+  `scatter-y`, `flow-jitter`). Adding a channel must not perturb existing ones — another
+  reason the generator cannot be a stream.
+- **Grain phase is spatial, not random.** Paper grain is sampled from a function of the
+  stamp's position in the *stroke's own local space*, offset once per stroke by the seed.
+  Local space rather than page space, so that moving or rotating a stroke moves its texture
+  with it; a mark is a physical thing that was made once, and grain that slid under a
+  stroke as it moved would read as a bug.
+- **Nothing generated is ever persisted.**
+
+## 13. Live and committed convergence
+
+### The contract
+
+> Given one `ResolvedBrushSnapshot` and one ordered sample sequence, live rendering and
+> committed rendering produce the same image. The only permitted difference during drawing
+> is that the live renderer has seen a *prefix* of the samples. When the last sample
+> arrives, the live image already is the committed image, and committing replaces nothing.
+
+Incremental preview differences are acceptable only in the sense that a prefix is not the
+whole; they are not a licence for a cheaper algorithm that is corrected at commit.
+
+### Why today's code cannot satisfy it
+
+Two independent obstacles, and both must be named:
+
+1. **Two algorithms.** `drawStrokePoints` and `drawSmoothStrokeSegments` are different code
+   producing different pictures, and only one of them varies width with pressure.
+2. **The fit is not prefix-stable.** `fittingTolerance` reads the whole stroke's mean
+   spacing and diagonal; `filterAdaptiveStrokePoints` reads the whole stroke's diagonal.
+   Appending a sample can therefore alter segments already committed to the screen, so no
+   amount of care in the renderer makes an incremental path converge on this fit.
+
+### The settled-prefix design
+
+Split the live stroke at a watermark:
+
+- **Settled prefix** — samples behind the watermark. Evaluated once, by exactly the
+  function the committed render will use, and never revisited. Painted once.
+- **Live tail** — a bounded window of recent samples, measured by arc length rather than by
+  count. Re-evaluated each frame and repainted into its own dirty rect.
+
+The watermark advances when a sample can no longer influence the geometry behind it, which
+requires the new strategy's fitting tolerance to depend on `brush.size` rather than on
+stroke extent. With that fixed, per-frame work is O(tail) rather than O(n), and the settled
+part is *bit-identical* to the committed result because it was produced by the same call.
+
+This is the single most important architectural output of this document. It replaces the
+current choice between "cheap but divergent" and "convergent but quadratic" with a design
+that is both.
+
+`centerline@1` and `outline@1` keep their current behaviour, divergence and all. The
+contract binds new strategies.
+
+## 14. Geometry model
+
+Do not force every strategy through outline geometry, and do not build four unrelated
+renderers. The shared boundary is **strategies emit geometry primitives; a painter paints
+primitives.** Three primitives cover every planned strategy:
+
+| Primitive | Shape | Canvas 2D | Used by |
+| --- | --- | --- | --- |
+| `stroked-path` | fitted path plus one width | `stroke()` | Technical Pen |
+| `filled-path` | closed boundary plus round joins | `fill()` | Pressure Pen, and `outline@1` |
+| `stamps` | ordered `{x, y, width, height, rotation, alpha, grainPhase}` | batched tip draws | Pencil, Marker |
+
+Three consequences are worth stating:
+
+- Technical Pen is a `stroked-path`, which is *cheaper* than today's outline and no more
+  expensive than today's centerline. Making it a filled outline "for uniformity" would hand
+  it the measured 1.8x per-sample outline constant for nothing.
+- The `stamps` primitive already carries per-stamp width, height and rotation, so an
+  oriented chisel tip needs no new primitive and a future anisotropic transform does not
+  invalidate the model.
+- The painter is the only place that knows about Canvas 2D.
+
+## 15. Bounds and hit geometry
+
+Every strategy supplies three pure, Canvas-free outputs:
+
+| Output | Meaning | Consumers | Invariant |
+| --- | --- | --- | --- |
+| `logicalBounds` | the nominal ink extent: centerline inflated by half the nominal width | selection frames; "what did the artist draw" | tightest of the three |
+| `visualBounds` | everything a repaint can touch: grain spill, scatter, cap and join overshoot | dirty rects, culling, thumbnails | contains `logicalBounds` |
+| `hitGeometry` | a polyline with a radius per vertex | hit testing, eraser, future partial erase | independent of any renderer |
+
+`OutlineCenterSample` is already exactly the `hitGeometry` shape and should become the
+shared type rather than an outline-private one.
+
+Per strategy: Technical Pen's three outputs are near-identical, differing only by cap and
+join overshoot. Pressure Pen's `hitGeometry` is its variable-radius centerline. Pencil's
+`visualBounds` must exceed its logical bounds by the grain and edge-roughness allowance.
+Marker's oriented tip expands `visualBounds` by the tip's half-diagonal rather than its
+half-width.
+
+Two existing gaps this contract gives a home to, neither of which blocks Technical Pen: Ink
+hit testing is currently bounds-only in the editor, and the centerline bounds helper
+derives its radius from the stroke's *average* width, which understates a high-pressure
+end.
+
+## 16. Transforms
+
+Established behaviour, verified in code:
+
+- `Transform` is translation, rotation and **uniform** scale. Anisotropy does not exist.
+- **Width does not scale with the object.** Geometry is rebuilt at `renderedScale` with
+  radii divided by that scale, then the canvas scales back, so the painted width is
+  constant in page units. Scaling a stroke lengthens it without thickening it.
+- Geometry **is** regenerated per scale, cached per `(Stroke, scale)` with at most eight
+  scale variants per stroke.
+- Rotation is a canvas transform; geometry is not regenerated for it.
+
+Brush-engine requirements:
+
+- **Keep scale-compensated width as the default.** It is shipped behaviour, and changing it
+  would silently alter existing artwork. If a strategy ever needs width to scale, that
+  becomes an explicit durable per-strategy field — not a global change.
+- **Strategies must be rotation-equivariant.** A rotated stroke is painted by rotating the
+  canvas, so an oriented tip rotates with the object. That is the correct physical reading:
+  rotating the paper rotates the mark.
+- **Grain is anchored in the stroke's local space** (see §12), so texture travels with the
+  mark under both translation and rotation.
+- **Do not assume isotropy in the model.** The `stamps` primitive carries independent
+  width, height and rotation so that a future non-uniform transform has somewhere to land.
+
+## 17. Eraser
+
+Today: whole-object deletion, driven by `queryNearby` against the editor's bounds-based
+engine, batching a continuous gesture into one History transaction.
+
+The requirement that keeps the eraser strategy-independent is a single sentence: **the
+eraser consumes `hitGeometry` and nothing else.** With that, whole-object erasing works for
+every present and future strategy with zero per-strategy code.
+
+Partial erasing, when it is eventually scoped, is the model-level operation "split one Ink
+object into N by removing a range of `sourceSamples`". It is also strategy-independent —
+**provided every strategy remains a pure function of samples plus snapshot.** That is the
+strongest practical argument for the rule below, which is therefore stated as a hard
+boundary rather than a preference:
+
+> No strategy may store derived geometry in the document. The moment geometry is durable,
+> partial erase, transform and every future edit become per-strategy problems.
+
+## 18. Export and offscreen rendering
+
+The preview primitives already prove this is achievable: `renderPageThumbnail`,
+`renderPagePaperPreview` and `renderPageLayerPreview` are pure functions of a context and a
+page, and they already reuse the compositor's own per-object helpers.
+
+Requirements on the brush engine:
+
+- **No dependence on the mounted canvas.** Not the viewport, not the DPR, not the render
+  scheduler, not the DOM.
+- **`renderedScale` stays an explicit parameter.** It is never read from a global.
+- **No strategy reads `devicePixelRatio`.**
+- **Texture resources are resolvable without a filesystem.** Procedurally generated, or
+  decoded from data embedded in the project. Never an absolute path, and never
+  `StrokeStyle.brushTextureId` as it stands.
+
+The interface to define is `BrushPainter`, with one method per geometry primitive. One
+renderer interface then serves the live editor, the committed compositor, thumbnails, layer
+previews, export and any future client.
+
+## 19. Canvas 2D and the backend boundary
+
+No WebGL or WebGPU in this phase, and Canvas 2D remains the first backend.
+
+The architecture is backend-neutral if and only if a strategy's output is **data** rather
+than draw calls. Today `drawBrushRenderGeometry` and `StrokeVisual.draw(context)` are draw
+calls, which is the only thing standing between the current design and a future GPU
+backend. Splitting "produce geometry" from "paint geometry" costs one refactor of two
+functions.
+
+With that split, a GPU backend requires **no change** to the document model, `Stroke`,
+`ResolvedBrushSnapshot`, the preset catalogue, brush evaluation, the codec, History,
+selection or the eraser. Only a second `BrushPainter`.
+
+## 20. Proposed core types
+
+Minimal, non-speculative, and deliberately incomplete where a decision has not been earned
+yet.
+
+```ts
+// --- identity and versioning -------------------------------------------------
+type BrushStrategyId = "centerline" | "outline" | "technical-pen"; // grows per phase
+interface BrushRendererDefinition {      // the existing durable field, widened
+  readonly version: number;
+  readonly kind: BrushStrategyId;
+}
+
+// --- dynamics ----------------------------------------------------------------
+interface BrushPressureResponse {        // unchanged
+  readonly enabled: boolean;
+  readonly minimumFactor: number;
+  readonly maximumFactor: number;
+  readonly curve: BrushPressureCurve;
+}
+interface BrushTaper {                   // new, and not a pressure curve
+  readonly startLength: number;          // page units
+  readonly endLength: number;
+  readonly minimumFactor: number;
+}
+
+// --- evaluation --------------------------------------------------------------
+interface BrushEvaluationContext {
+  readonly snapshot: ResolvedBrushSnapshot;
+  readonly renderedScale: number;        // explicit; never read from a viewport
+  readonly seed: number;                 // derived from stroke id, not stored
+}
+interface BrushSample {                  // one evaluated point along the path
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly alpha: number;
+  readonly progress: number;             // 0..1 along the stroke
+}
+
+// --- geometry ----------------------------------------------------------------
+type BrushGeometry =
+  | { readonly kind: "stroked-path"; readonly path: InkPath; readonly width: number }
+  | { readonly kind: "filled-path"; readonly boundary: readonly Point[];
+      readonly roundJoins: readonly Disc[]; readonly dot: Disc | null }
+  | { readonly kind: "stamps"; readonly stamps: readonly BrushStamp[] };
+
+interface BrushStamp {
+  readonly x: number; readonly y: number;
+  readonly width: number; readonly height: number;
+  readonly rotation: number; readonly alpha: number;
+  readonly grainPhase: number; readonly index: number;
+}
+
+// --- strategy ----------------------------------------------------------------
+interface BrushRenderStrategy {
+  readonly id: BrushStrategyId;
+  readonly version: number;
+  evaluate(points: readonly StrokePoint[], context: BrushEvaluationContext): BrushGeometry;
+  logicalBounds(geometry: BrushGeometry): Rect;
+  visualBounds(geometry: BrushGeometry): Rect;
+  hitGeometry(geometry: BrushGeometry): readonly BrushSample[];
+}
+
+// --- backend -----------------------------------------------------------------
+interface BrushPainter {
+  paint(geometry: BrushGeometry, snapshot: ResolvedBrushSnapshot): void;
+}
+```
+
+Deliberately absent until a strategy needs them: `BrushTip`, `BrushSpacing`, grain
+parameters, jitter channels, and any piecewise curve kind. Adding a field before a strategy
+reads it makes it durable before it is understood.
+
+## 21. Package ownership
+
+| Concept | Package | Why |
+| --- | --- | --- |
+| `BrushPreset`, `ResolvedBrushSnapshot`, dynamics, curves | `@folio/ink` | durable model; must stay platform-neutral |
+| brush evaluation, spacing, PRNG, velocity and orientation derivation | `@folio/ink` | pure functions of samples and snapshot |
+| strategy registry, strategies, geometry primitives | `@folio/ink` | the engine itself |
+| `BrushPainter` interface and its Canvas 2D implementation | `@folio/ink` | first backend, behind the interface |
+| preset catalogue, slot state, identity mapping | `@folio/editor` | product configuration and tool preferences |
+| codec vocabulary widening | `@folio/persistence` | it already owns validation |
+| tool dock, radial library, rails, cursors | `apps/desktop` | UI only |
+
+Direction stays `rendering <- ink <- document <- persistence/selection <- editor <- desktop`.
+Nothing inverts, and no package widens.
+
+**React and Electron must never enter `@folio/ink`.** One existing wart to contain rather
+than fix: `@folio/ink` depends on `@folio/rendering` and hosts `StrokeRenderer`, a Canvas 2D
+and `requestAnimationFrame` renderer. That is shipped and works; moving it buys the brush
+engine nothing. The rule is narrower and sufficient: **add no new Canvas 2D coupling to
+`@folio/ink` outside the painter.**
+
+The 45-identity catalogue should move from `apps/desktop` to `@folio/editor` **when
+identities gain real behaviour** and stop being a UI list. Not before.
+
+## 22. Existing code
+
+**KEEP** — correct as designed, no change expected.
+
+`PointerInputController` and its normalization; `StrokeBuilder`'s sample retention and
+stationary-sample policy; `Stroke` immutability and `sourceSamples`; `createBrushPreset`,
+`resolveBrushPreset`, `createResolvedBrushSnapshot`, `resolveBrushForPointerType`;
+`evaluatePressureResponse`; `InkObject`, `Transform`, `ObjectFactory`, `PageDocument`;
+History and every command; the preview primitives; the codec's structure and strictness;
+the `(Stroke, scale)` geometry caches.
+
+**EXTEND** — evolves, keeps its shape.
+
+`BrushRendererDefinition` (strategy vocabulary); `internal/brush-render-strategy.ts`
+(conditional to registry); `StrokeRenderer` (settled-prefix live path);
+`project/ink-codec.parseBrush` (widened vocabulary, strict refusal);
+`internal/outline-geometry.ts` (becomes `pressure-outline@1`; its `OutlineCenterSample`
+becomes the shared hit geometry); `StrokeVisual` (geometry and painter split);
+`internal/professional-ink-path.ts` (a prefix-stable tolerance for new strategies, with the
+whole-stroke behaviour preserved for `centerline@1` and `outline@1`).
+
+**REPLACE LATER** — frozen, kept for fidelity, not built on.
+
+`internal/draw-stroke.drawStrokePoints` — the live incremental path and the source of the
+divergence; its only shipped user is the one zero-smoothing centerline preset.
+`StrokeStyle` — a parallel appearance authority, durable in v1 and therefore unremovable.
+`StrokePoint.{velocity, acceleration, delta}` — durable derived data.
+`createLegacyBrushSnapshot` — keep for decoding, stop minting.
+
+**REMOVE EVENTUALLY** — no value, and one active hazard.
+
+The inline `resolveBrush` fallback in `CanvasSurface.tsx` that mints `editor-default-pen`
+and `editor-default-highlighter` — a catalogue hiding in a component.
+`StrokeStyle.brushTextureId` — unwritten, unread, unvalidated, and exactly the external
+reference shape durability forbids; **texture must not be built on it**. `SmoothingHook`
+and the `catmull-rom` / `bezier` smoothing modes — decodable values with no implementation.
+
+## 23. Prerequisite refactors
+
+**MUST DO BEFORE TECHNICAL PEN** — one item, and it is small.
+
+1. Widen `BrushRendererDefinition` in `@folio/ink` and `parseBrush` in the codec into a
+   strategy vocabulary, and register `centerline@1` and `outline@1` as frozen entries in a
+   registry. Without it there is nowhere to put a new strategy that does not redefine an
+   existing one. This is two validators and a lookup table, and it belongs in E2's first
+   commit rather than in a phase of its own.
+
+**SHOULD DO AS PART OF TECHNICAL PEN**
+
+2. Split geometry production from painting (`BrushGeometry` plus `BrushPainter`).
+3. Implement the settled-prefix live contract and its parity test.
+4. Give the new strategy a prefix-stable fitting tolerance derived from `brush.size`.
+5. Move the inline `CanvasSurface` fallback snapshot into `@folio/editor` as a named preset.
+
+**CAN WAIT FOR PRESSURE PEN**
+
+6. Make `pressureOpacity` actually render.
+7. Add taper as a durable dynamic in its own right.
+8. Add the shared velocity derivation.
+9. Unify zero-length, single-tap and terminal-sample handling across strategies.
+
+**CAN WAIT FOR PENCIL AND MARKER**
+
+10. Spacing and stamp evaluation.
+11. The deterministic PRNG and grain phase.
+12. The `logicalBounds` / `visualBounds` split.
+13. `hitGeometry` as a first-class strategy output, with the eraser consuming it.
+14. Move the 45-identity catalogue into `@folio/editor`.
+
+**DEFER AFTER V1**
+
+15. Anisotropic transforms. 16. Partial-stroke erasing. 17. A GPU backend. 18. A custom
+pressure-curve editor and the `piecewise` curve kind. 19. Retiring `StrokeStyle` and the
+persisted derived point fields — all of which need a format change and should be bundled
+with any future v2 rather than motivating one.
+
+## 24. Persistence compatibility
+
+What already survives Save and Open, exactly: the whole `ResolvedBrushSnapshot` including
+`renderer`, `smoothing` and both pressure responses; `sourceSamples` with position, timing,
+pressure, tilt, twist, buttons, pointer type and the optional altitude/azimuth pair;
+processed `points` with their derived fields; `StrokeStyle`; metrics; statistics; the
+object's `transform`, `metadata` and `renderingHints`.
+
+What Technical Pen requires that is not already durable: **nothing**. A deterministic,
+constant-width, pressure-free solid stroke is expressible today as
+`pressureSize.enabled: false` with a fixed `size` — every value it needs already round
+trips.
+
+What Technical Pen requires that is not already *legal*: one widened field value,
+`renderer.kind === "technical-pen"`. That is a decode-vocabulary change inside
+`formatVersion 1`, not a schema change (§7).
+
+Two open extension channels exist in the format — `metadata` and `renderingHints` are
+free-form JSON that round-trips. **Neither may be used for brush state.** Durable brush
+authority lives on the snapshot; routing it through an object-level bag would create the
+second authority this whole design exists to prevent.
+
+**`.folio` formatVersion stays at 1, and E1 changes nothing about the format.**
+
+## 25. Migration of existing strokes
+
+There is no migration, and that is the design rather than an omission.
+
+Existing strokes carry `{version: 1, kind: "centerline"}` or `{version: 1, kind:
+"outline"}`. Those two strategies are frozen at today's behaviour and keep their existing
+code paths. An old stroke opened in a Folio that has Technical Pen renders exactly as it
+rendered before, down to the average-width flattening.
+
+Rejected alternatives, and why:
+
+- *Remap old centerline strokes onto Technical Pen.* Technical Pen will not flatten pressure
+  to an average, so every pressure-enabled centerline stroke would change appearance on
+  open. That is a silent visual change to saved artwork.
+- *Fix `centerline@1` in place and call it a bug fix.* Same outcome, with the added problem
+  that a file would look different depending on which build opened it.
+- *Migrate on open.* Destructive, unasked-for, and unattributable to any user action.
+
+If an artist ever wants old work re-rendered with a newer strategy, that is an explicit
+per-object command producing an ordinary History entry, and it is undoable.
+
+## 26. Catalogue mapping
+
+Forty-five identities, nine backing presets, and a target of **four** strategies plus two
+frozen legacy entries. No strategy is created to serve a name.
+
+| Group (identities) | Current preset | Proposed strategy | Differentiating parameters | Unknowns |
+| --- | --- | --- | --- | --- |
+| Fineliner, Gel Pen, Ballpoint, Rollerball, Bold Liner, Ink Pen, Contour Pen | `pen-fineliner` | `technical-pen` | size, smoothing, opacity | Ballpoint arguably wants slight pressure-opacity, which is Pressure Pen territory |
+| Technical Pen, Micro Liner, Drafting Pen, Fine Ink, Ruling Pen | `pen-technical` | `technical-pen` | size, smoothing | **Ruling Pen** implies constrained straight-line drawing, which is a *tool*, not a brush |
+| Mechanical Pencil, Draughting Pencil, Fine Lead | `pencil-mechanical` | `technical-pen` | size | could instead be `pencil` at very low grain; needs a visual decision |
+| Brush Pen Soft, Brush Pen Firm, Fountain Pen, Calligraphy Pen, Sign Pen, Dynamic Pen | `pen-brush` | `pressure-pen` | pressure range, curve exponent, taper | **Calligraphy Pen** and **Fountain Pen** want an oriented chisel tip, which is marker geometry with pen opacity. **Dynamic Pen** names no defined behaviour |
+| HB Pencil, Hard Pencil, Layout Pencil, Blueline Pencil | `pencil-hb` | `pencil` | hardness, grain strength, coverage, default colour | Blueline's non-black default is a preset default, not a strategy |
+| Soft Pencil, 2B Pencil, Sketch Pencil, Contour Pencil | `pencil-2b` | `pencil` | hardness, grain, pressure range | |
+| 4B Pencil, 6B Pencil, Shading Pencil, Broad Lead | `pencil-4b` | `pencil` | hardness, grain, size, edge roughness | tilt shading is deferred; these are the presets that will want it first |
+| Fine Marker, Felt Marker, Bullet Marker, Sketch Marker, Layout Marker, Slim Marker | `marker-felt` | `marker` | round tip, size, flow | |
+| Broad Marker, Chisel Marker, Wide Marker, Studio Marker, Block Marker, Flat Marker | `marker-broad` | `marker` | **chisel** tip: width, height, angle; flow | tip angle fixed to the preset, or driven by azimuth? needs a product decision |
+| *(no library identity)* | `highlighter-default` | `marker` | very low alpha, high flow | highlighter wants multiplicative overlap, which Folio's single-alpha compositing does not express today |
+| *(existing artwork only)* | — | `centerline@1`, `outline@1` | frozen | none |
+
+Marker terminology, since the four words are used loosely everywhere:
+
+- **opacity** — the alpha of the finished stroke as a whole. One value, applied once.
+- **flow** — the alpha of an individual stamp. Low flow with tight spacing builds up.
+- **coverage** — how much of the nominal footprint a stamp actually inks, that is, the
+  tip's own density profile. Independent of both of the above.
+- **compositing** — how overlapping marks combine. Folio composites source-over with one
+  alpha today, and within a single stroke `outline@1` deliberately fills once so joins do
+  not accumulate. Whether two *separate* marker strokes should darken where they cross is
+  an unanswered product question, not an engine detail.
+
+## 27. Phase scope
+
+### E2 — Technical Pen
+
+The reference strategy. Every later strategy is described relative to it.
+
+In: `technical-pen@1` as a `stroked-path`; deterministic output; stable width from
+`brush.size` with pressure ignored; stable opacity; predictable smoothing; high-quality
+joins and caps; the strategy registry; the geometry and painter split; the settled-prefix
+live contract; a prefix-stable fitting tolerance; the widened codec vocabulary.
+
+Out: texture, scatter, tilt, randomness, wet-media build-up, any change to `centerline@1`
+or `outline@1`, any change to the format, any Phase D optimization.
+
+### E3 — Pressure Pen
+
+Technical Pen plus dynamics. The split that matters:
+
+| Belongs to shared brush evaluation | Belongs to the strategy |
+| --- | --- |
+| pressure to size factor | variable-width outline construction |
+| pressure to opacity factor | join and cap geometry at varying radius |
+| taper as a function of progress | the terminal dot case |
+| velocity derivation and smoothing | how width maps to boundary offset |
+
+Shared evaluation is reusable by Pencil and Marker; outline construction is not. Keeping
+that line sharp is what stops E3 from becoming a second engine.
+
+### Later — Pencil
+
+Durable: hardness, grain strength, coverage, pressure response, edge roughness, spacing.
+Derived at render time: the grain field itself, per-stamp jitter, the stamp stream. Texture
+stays deterministic because it is a pure function of `(seed, position, index)` — **one
+bitmap per stroke is not proposed and would not be justified**: it would allocate per
+stroke, bloat the already-dominant encode cost, and make partial erase per-strategy.
+
+### Later — Marker
+
+Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,
+spacing. Derived: the stamp stream and its alpha accumulation. The within-stroke rule is
+already settled by `outline@1`'s precedent — apply stroke opacity once, so a stroke does not
+darken at its own joins. Between separate strokes is the open question in §26.
+
+## 28. E2 performance acceptance
+
+Same harness, same machine, `FOLIO_PERFORMANCE_BASELINE=1`, foreground-guarded, metric
+names as they already exist in `tests/performance`. Technical Pen is a `stroked-path`, so
+its comparison is **centerline**, not outline.
+
+| Metric | Phase D reference | E2 acceptance | Fail |
+| --- | --- | --- | --- |
+| `live/technical-pen/100/1/callback-work` p95 | centerline 1.6 ms | <= 2.4 ms | > 4 ms |
+| `live/technical-pen/100/1/input-to-callback-end` p95 | centerline 9.0 ms | <= 10.5 ms | > 12 ms |
+| frames over 16.67 ms, 100/1 | 0 of ~200 | 0 | any |
+| `live/technical-pen/5000/16/input-to-callback-end` p95 | centerline 14.0 ms | <= 16.67 ms | > 33 ms |
+| frames over budget, 5000/16 | 0 of 4 952 | <= 1% | > 5% |
+| `live/technical-pen/20000/64/input-to-callback-end` p95 | centerline 51.9 ms | <= 51.9 ms expected, <= 60 ms accepted | > 60 ms, investigate |
+| `stroke/5000/technical-pen/geometry` p50 | centerline 22.7 ms | <= 25 ms | > 30 ms |
+| `stroke/20000/technical-pen/geometry` p50 | centerline 103.8 ms | <= 115 ms | > 130 ms |
+| scaling exponent, 1k to 20k | 0.96–1.05 | <= 1.15 | > 1.25 |
+| `stroke/{n}/technical-pen/finalize` | centerline 0.4–0.5 ms | <= centerline + 25% | > +50% |
+| geometry cache | 8 scale variants max | `getStrokeRenderCacheSnapshot().outlineScaleCount <= 8`; no per-frame allocation proportional to stroke length | any growth per frame |
+| `.folio` size, 500-stroke fixture | 38 190 277 bytes | byte-identical | any growth without a named durable field |
+
+Plus one regression guard: **every existing `live/centerline/*`, `live/outline/*` and
+`stroke/*` metric must stay within ±10% of its Phase D value**, because E2 touches neither
+path. That guard is what actually answers "did the brush engine regress drawing?", and it
+is answered by re-running `FOLIO_BASELINE_GROUPS=live,stroke` and diffing.
+
+The 20 000-sample expectation deserves saying plainly: the settled-prefix design should
+make long strokes *faster*, not merely no slower, because it removes the per-frame full
+rebuild. A Technical Pen that merely matches centerline at 20 000 samples has not
+implemented the contract in §13.
+
+### Architecture decisions that would make the baseline worse
+
+Each proposed layer, and the unit its cost scales with. The rule to enforce is that **no
+live per-frame step may be O(total stroke length)** — the rule today's outline path breaks.
+
+| Layer | Cost unit | Live cost per frame |
+| --- | --- | --- |
+| Pointer normalization | per pointer event | O(1) |
+| Stationary-sample filter | per event | O(1) |
+| Velocity derivation | per sample, windowed cursor | O(1) amortized |
+| Fitting and resampling | per new sample inside the tail | O(tail) |
+| Brush evaluation | per resampled point or stamp | O(1) each, closed form |
+| Spacing | per stamp, arc-length cursor | O(1) each |
+| Randomness | per stamp per channel, index-derived | O(1) each |
+| Geometry build | per new segment or stamp | O(new) |
+| Paint | per visible new primitive | O(new), dirty-rect clipped |
+| Commit | per stroke | one full evaluation |
+
+Specific choices to refuse: routing every strategy through outline geometry for uniformity
+(multiplies the measured 1.8x constant across all brushes); rebuilding the full stamp stream
+per frame (reintroduces the quadratic cost); a sequential PRNG (forces full rebuilds, same
+trap); a per-stroke offscreen canvas (allocates per stroke and worsens the already-worst
+dense-page repaint); per-stamp `save()`/`restore()` or per-stamp `drawImage` at thousands of
+stamps (thousands of canvas state changes per repaint — stamps must be batched); and storing
+derived geometry in the document (grows `.folio` and worsens the encode that is already 87%
+of Save).
+
+## 29. Test strategy
+
+**Technical Pen (E2)** must prove, before it is called done:
+
+- *Determinism* — the same snapshot and samples produce identical geometry across runs and
+  across two independently constructed `Stroke` instances.
+- *Live and committed convergence* — after the terminal sample, live geometry equals
+  committed geometry exactly; and the settled prefix at frame *k* is a prefix of the
+  committed result. The second assertion is the one that actually tests §13.
+- *Save and Open* — encode, decode, re-evaluate, and compare geometry exactly.
+- *Undo and Redo* — the restored object is the same `Stroke` reference and re-renders
+  identically.
+- *Terminal sample* — the last sample always reaches the geometry, including when it is
+  stationary.
+- *Pointer cancel* — nothing commits; the dirty rect covers what was drawn.
+- *Zero-length and tap* — a single sample produces a dot with the nominal radius.
+- *Pressure* — pressure varies across the samples and the width does not.
+- *Zoom independence* — geometry at `renderedScale` 1, 2 and 0.5 paints the same page-unit
+  width.
+- *Bounds* — logical is contained in visual; both finite; both stable under rotation and
+  translation.
+- *Hit testing* — a point on the stroke hits; a point one nominal width away does not.
+- *Selection transform* — translate, rotate and scale preserve painted width.
+- *Eraser* — a whole-object erase works through `hitGeometry` with no strategy-specific
+  code.
+- *Export and offscreen* — the same stroke through `renderPageThumbnail` and through an
+  `OffscreenCanvas` context produces the same result.
+- *Legacy freeze* — a `centerline@1` and an `outline@1` stroke render identically to their
+  pre-E2 output. This is the regression test that protects every existing project.
+- *Codec refusal* — an unknown `(kind, version)` is refused with a typed error naming it,
+  and never silently substituted.
+- *Performance* — §28, behind `FOLIO_PERFORMANCE_BASELINE`.
+
+**Pressure Pen (E3)** adds: pressure-curve determinism across the full `[0,1]` domain and
+at both endpoints; width continuity across segment boundaries; taper at both ends and on
+strokes shorter than the taper length; behaviour at pressure 0 and 1; non-monotonic, equal
+and duplicated timestamps producing finite, non-spiking velocity.
+
+**Pencil and Marker** add: identical grain after Save and Open; identical grain after
+duplicate and paste; a stamp stream identical whether evaluated incrementally or at once;
+spacing independent of sample rate; `visualBounds` actually containing the grain spill;
+chisel tip orientation correct under object rotation.
+
+Unit tests for everything that is a pure function — which, by design, is nearly all of it.
+Electron end-to-end tests only for pointer capture, cancellation and foreground-dependent
+timing, and rerun a suspected focus failure alone before treating it as a regression.
+
+## 30. Boundaries this design must not cross
+
+- Durable artwork holds **data only**: no callbacks, no closures, no GPU handles, no Canvas
+  objects, no generators, no filesystem paths, no transient device state.
+- `ResolvedBrushSnapshot` stays the **sole** durable authority for reproducing a stroke.
+- Randomness is persisted as a **seed or a derivation rule**, never as generated values.
+- Texture identity is a **stable versioned resource id or embedded project data**, never an
+  absolute path and never `StrokeStyle.brushTextureId`.
+- A shipped `(strategyId, strategyVersion)` **never changes what it draws**.
+- No strategy stores derived geometry in the document.
+- No live per-frame step is **O(total stroke length)**.
+- `@folio/ink` stays free of React and Electron, and gains no new Canvas 2D coupling
+  outside the painter.
+- Presets never become algorithms; strategies never read presets.

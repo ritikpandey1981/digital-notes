@@ -69,6 +69,8 @@ Start with [`AGENTS.md`](AGENTS.md) for repository rules, then route by task:
   spatial, motion, and interaction rules
 - [`docs/design/drawing-tool-system.md`](docs/design/drawing-tool-system.md) — drawing
   slots, brushes, properties, shapes, and color behavior
+- [`docs/design/brush-engine-architecture.md`](docs/design/brush-engine-architecture.md) —
+  brush pipeline, strategy model, and durability contract
 - [`docs/archive/README.md`](docs/archive/README.md) — non-authoritative historical
   material
 

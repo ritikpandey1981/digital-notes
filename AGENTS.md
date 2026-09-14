@@ -23,6 +23,7 @@ Current source code and tests outrank stale documentation. Route questions narro
 - Current/future implementation status, planning, or scope: `docs/ROADMAP.md`.
 - UI work: `docs/design/folio-design-system.md`.
 - Drawing-tool work: also read `docs/design/drawing-tool-system.md`.
+- Brush-engine work: also read `docs/design/brush-engine-architecture.md`.
 - Package internals: read that package's `README.md` and public exports.
 - Historical context only: `docs/archive/README.md`.
 
