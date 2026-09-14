@@ -254,7 +254,7 @@ function cachedEvaluatedGeometry(
     byScale = new Map<string, LiveRenderGeometry>();
     evaluatedCaches.set(stroke, byScale);
   }
-  const key = brushStrategyKey(id, renderedScale);
+  const key = `${id}:${renderedScale}`;
   const cached = byScale.get(key);
   if (cached !== undefined) return cached;
   const geometry = build();

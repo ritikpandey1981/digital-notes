@@ -398,16 +398,16 @@ export class PressurePenEvaluator implements LiveBrushEvaluator {
     // The outside of a real corner is the arc the pen tip actually sweeps; the
     // inside takes the bisector, which is where the two sides of the turn meet.
     const entering = leftNormal(incoming);
-    const inner = leftNormal(bisector(incoming, outgoing));
+    const straddling = leftNormal(bisector(incoming, outgoing));
     const sweep = turn * (cross >= 0 ? 1 : -1);
     const enteringAngle = Math.atan2(entering.y, entering.x);
     if (cross >= 0) {
-      band.left.push(offsetPoint(current, inner, 1));
+      band.left.push(offsetPoint(current, straddling, 1));
       pushArc(band.right, current, enteringAngle + Math.PI, sweep);
       return;
     }
     pushArc(band.left, current, enteringAngle, sweep);
-    band.right.push(offsetPoint(current, inner, -1));
+    band.right.push(offsetPoint(current, straddling, -1));
   }
 
   /**
