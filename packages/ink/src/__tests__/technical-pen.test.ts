@@ -12,7 +12,8 @@ import {
   resolveStrokeRenderGeometry,
   type BrushRenderGeometry,
 } from "../internal/brush-render-strategy";
-import { TechnicalPenEvaluator, type StrokedPathRenderGeometry } from "../internal/technical-pen";
+import type { StrokedPathRenderGeometry } from "../internal/brush-geometry";
+import { TechnicalPenEvaluator } from "../internal/technical-pen";
 import { getStrokeLocalRenderBounds, getStrokeRenderedBounds } from "../rendered-stroke-bounds";
 import { Stroke } from "../stroke";
 import { StrokeBuilder } from "../stroke-builder";
@@ -178,7 +179,7 @@ function drawLive(
   points: readonly StrokePoint[],
   samplesPerFrame: number,
 ): TechnicalPenEvaluator {
-  const evaluator = new TechnicalPenEvaluator(brush);
+  const evaluator = new TechnicalPenEvaluator(brush, 1);
   for (let count = 1; count <= points.length; count += 1) {
     if (count % samplesPerFrame === 0 || count === points.length) {
       evaluator.append(points.slice(0, count), false);
@@ -226,7 +227,7 @@ describe("technical-pen@1", () => {
 
       for (const samplesPerFrame of [1, 3, 16]) {
         const live = drawLive(brush, stroke.points, samplesPerFrame);
-        expect(pathDigest(live.geometry(1))).toBe(pathDigest(committed));
+        expect(pathDigest(live.geometry())).toBe(pathDigest(committed));
       }
     },
   );
@@ -239,15 +240,15 @@ describe("technical-pen@1", () => {
     const inputs = samplesFor("curved", 120);
 
     for (const prefixLength of [8, 20, 60]) {
-      const prefix = new TechnicalPenEvaluator(brush);
+      const prefix = new TechnicalPenEvaluator(brush, 1);
       prefix.append(pointsOf(brush, inputs.slice(0, prefixLength)), false);
       const settled = prefix.evaluationSnapshot().settledSegmentCount;
       expect(settled).toBeGreaterThan(0);
-      const prefixSegments = prefix.geometry(1).segments.slice(0, settled);
+      const prefixSegments = prefix.geometry().segments.slice(0, settled);
 
-      const extended = new TechnicalPenEvaluator(brush);
+      const extended = new TechnicalPenEvaluator(brush, 1);
       extended.append(pointsOf(brush, inputs), true);
-      expect(extended.geometry(1).segments.slice(0, settled)).toEqual(prefixSegments);
+      expect(extended.geometry().segments.slice(0, settled)).toEqual(prefixSegments);
     }
   });
 
@@ -257,7 +258,7 @@ describe("technical-pen@1", () => {
     const brush = technicalPen();
     const inputs = samplesFor("curved", 400);
     const points = pointsOf(brush, inputs);
-    const evaluator = new TechnicalPenEvaluator(brush);
+    const evaluator = new TechnicalPenEvaluator(brush, 1);
 
     for (let count = 1; count <= points.length; count += 1) {
       evaluator.append(points.slice(0, count), false);

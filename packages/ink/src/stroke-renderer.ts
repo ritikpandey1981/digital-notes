@@ -7,9 +7,9 @@ import {
   resolveStrokeRenderGeometry,
   type BrushRenderGeometry,
 } from "./internal/brush-render-strategy";
+import type { LiveBrushEvaluator, LiveEvaluationSnapshot } from "./internal/brush-geometry";
 import { drawStrokePoints } from "./internal/draw-stroke";
 import { freezeRect, unionRects } from "./internal/geometry";
-import type { LiveBrushEvaluator, LiveEvaluationSnapshot } from "./internal/technical-pen";
 import { getStrokeRenderedBounds } from "./rendered-stroke-bounds";
 import type { Stroke } from "./stroke";
 import type {
@@ -370,7 +370,7 @@ export class StrokeRenderer {
       // Only the samples this frame added are evaluated; everything settled is
       // already in the evaluator's geometry and is never rebuilt.
       evaluator.append(this.liveStroke.points, false);
-      const geometry = evaluator.geometry(1);
+      const geometry = evaluator.geometry();
       const affected = unionRects(this.liveStroke.dirtyRect, inflateRect(geometry.bounds, 2));
       this.liveStroke.dirtyRect = affected;
       this.recordInvalidation(affected);
@@ -468,7 +468,7 @@ export class StrokeRenderer {
     if (state.points.length === 0) return;
     if (state.evaluator !== null) {
       state.evaluator.append(state.points, false);
-      drawBrushRenderGeometry(this.context, state.evaluator.geometry(1), state.brush);
+      drawBrushRenderGeometry(this.context, state.evaluator.geometry(), state.brush);
       return;
     }
     if (!requiresFullGeometry(state.brush)) {
@@ -542,6 +542,14 @@ export class StrokeRenderer {
       this.finalizedSourcePointCountValue += geometry.sourcePointCount;
       this.finalizedFilteredPointCountValue += geometry.keptPointCount;
       this.finalizedSegmentCountValue += geometry.segments.length;
+      return;
+    }
+    if (geometry.kind === "filled-path") {
+      this.finalizedSourcePointCountValue += geometry.sourcePointCount;
+      this.finalizedFilteredPointCountValue += geometry.keptPointCount;
+      // A filled silhouette has spans between kept samples rather than fitted
+      // curves, and one span is the same unit of work a segment is elsewhere.
+      this.finalizedSegmentCountValue += Math.max(0, geometry.keptPointCount - 1);
       return;
     }
     const path = geometry.path;

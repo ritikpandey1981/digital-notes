@@ -86,10 +86,16 @@ function forgedSnapshot(kind: string, version: number): ResolvedBrushSnapshot {
 
 describe("brush strategy vocabulary", () => {
   it("accepts exactly the strategies this build renders", () => {
-    expect(supportedBrushStrategies()).toEqual(["centerline@1", "outline@1", "technical-pen@1"]);
+    expect(supportedBrushStrategies()).toEqual([
+      "centerline@1",
+      "outline@1",
+      "pressure-pen@1",
+      "technical-pen@1",
+    ]);
     expect(isSupportedBrushStrategy("centerline", 1)).toBe(true);
     expect(isSupportedBrushStrategy("outline", 1)).toBe(true);
     expect(isSupportedBrushStrategy("technical-pen", 1)).toBe(true);
+    expect(isSupportedBrushStrategy("pressure-pen", 1)).toBe(true);
   });
 
   it("keeps the durable vocabulary and the renderer registry in step", () => {
@@ -103,6 +109,7 @@ describe("brush strategy vocabulary", () => {
     ["a strategy a later phase will add", "pencil", 1],
     ["a future version of a known kind", "centerline", 2],
     ["a future version of Technical Pen", "technical-pen", 2],
+    ["a future version of Pressure Pen", "pressure-pen", 2],
     ["a zero version", "outline", 0],
     ["a negative version", "outline", -1],
     ["a fractional version", "outline", 1.5],

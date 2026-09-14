@@ -23,8 +23,8 @@ import type { StrokePoint } from "../types";
 
 /** Narrows to the fitted path both frozen legacy strategies carry. */
 function fitted(geometry: BrushRenderGeometry): ProfessionalInkPath {
-  if (geometry.kind === "stroked-path") {
-    throw new Error("A stroked path has no fitted-curve stage.");
+  if (geometry.kind === "stroked-path" || geometry.kind === "filled-path") {
+    throw new Error("An evaluated strategy has no fitted-curve stage.");
   }
   return geometry.path;
 }

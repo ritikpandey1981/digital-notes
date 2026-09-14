@@ -1,8 +1,9 @@
+import type { Point } from "@folio/rendering";
 import type { ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
+import type { FilledPathRenderGeometry, StrokedPathRenderGeometry } from "./brush-geometry";
 import type { ProfessionalInkSegment } from "./professional-ink-path";
-import type { StrokedPathRenderGeometry } from "./technical-pen";
 
 /**
  * Paints one Technical Pen path.
@@ -53,6 +54,77 @@ export function drawStrokedPath(
   }
   context.stroke();
   context.restore();
+}
+
+/**
+ * Paints one Pressure Pen silhouette.
+ *
+ * One band, one alpha, one fill. Inside a band the boundary may double back on
+ * itself at a tight corner and still composite once, because a single `fill()`
+ * covers the union of what it encloses. Between bands there is nothing to
+ * composite twice: they are cut on a shared cross-section, so they meet along an
+ * edge rather than overlapping across one.
+ *
+ * The inherited alpha is read rather than multiplied into, because a band's
+ * alpha already carries the brush's own opacity. Multiplying again would apply
+ * it twice -- the same mistake that once let a vector's outline alpha leak into
+ * its fill.
+ */
+export function drawFilledPath(
+  context: CanvasRenderingContext2D,
+  geometry: FilledPathRenderGeometry,
+  brush: ResolvedBrushSnapshot,
+): void {
+  const inherited = context.globalAlpha;
+  context.save();
+  context.fillStyle = brush.color;
+  const dot = geometry.dot;
+  if (dot !== null) {
+    context.globalAlpha = inherited * dot.alpha;
+    context.beginPath();
+    context.arc(dot.center.x, dot.center.y, dot.radius, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    return;
+  }
+  for (const band of geometry.bands) {
+    const start = band.left[0];
+    const finish = band.left.at(-1);
+    const back = band.right[0];
+    if (start === undefined || finish === undefined || back === undefined) continue;
+    context.globalAlpha = inherited * band.alpha;
+    context.beginPath();
+    context.moveTo(start.x, start.y);
+    for (let index = 1; index < band.left.length; index += 1) {
+      const point = band.left[index];
+      if (point !== undefined) context.lineTo(point.x, point.y);
+    }
+    if (band.roundEnd) appendCap(context, band.endCenter, band.endRadius, finish);
+    for (let index = band.right.length - 1; index >= 0; index -= 1) {
+      const point = band.right[index];
+      if (point !== undefined) context.lineTo(point.x, point.y);
+    }
+    if (band.roundStart) appendCap(context, band.startCenter, band.startRadius, back);
+    context.closePath();
+    context.fill();
+  }
+  context.restore();
+}
+
+/**
+ * The half-circle that closes one end of a silhouette.
+ *
+ * It sweeps backwards through decreasing angles because that is the half of the
+ * circle lying beyond the stroke rather than back along it.
+ */
+function appendCap(
+  context: CanvasRenderingContext2D,
+  center: Point,
+  radius: number,
+  from: Point,
+): void {
+  const angle = Math.atan2(from.y - center.y, from.x - center.x);
+  context.arc(center.x, center.y, radius, angle, angle - Math.PI, true);
 }
 
 /** Shared low-latency path used by live ink; only newly sampled segments are drawn. */

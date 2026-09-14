@@ -1,6 +1,12 @@
-import type { Point, Rect } from "@folio/rendering";
+import type { Rect } from "@folio/rendering";
 import type { ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
+import type {
+  LiveBrushEvaluator,
+  LiveEvaluationSnapshot,
+  StrokedPathRenderGeometry,
+  StrokedPathSegment,
+} from "./brush-geometry";
 
 /**
  * `technical-pen@1`: a deterministic solid stroke of constant width.
@@ -42,58 +48,6 @@ const MINIMUM_SPACING_CEILING = 2;
 
 const MAXIMUM_SMOOTHING_RADIUS = 4;
 
-/** One cubic on a Technical Pen path, in stroke-local page coordinates. */
-export interface StrokedPathSegment {
-  readonly startX: number;
-  readonly startY: number;
-  readonly control1X: number;
-  readonly control1Y: number;
-  readonly control2X: number;
-  readonly control2Y: number;
-  readonly endX: number;
-  readonly endY: number;
-}
-
-export interface StrokedPathRenderGeometry {
-  readonly kind: "stroked-path";
-  /** Where the path starts, and the whole mark when a stroke has no length. */
-  readonly origin: Point | null;
-  readonly segments: readonly StrokedPathSegment[];
-  /** Nominal page-space diameter. Pressure never changes it. */
-  readonly width: number;
-  readonly renderedScale: number;
-  readonly bounds: Rect;
-  readonly sourcePointCount: number;
-  readonly keptPointCount: number;
-}
-
-/**
- * Structural evidence that live evaluation reuses settled work rather than
- * redoing it.
- *
- * Deliberately counters rather than timings: a per-frame rebuild shows up as
- * settled samples being evaluated more than once, which a clock cannot
- * distinguish from a slow machine.
- */
-export interface LiveEvaluationSnapshot {
-  /** Samples evaluated into permanent geometry. Should equal the settled sample count. */
-  readonly settledPointEvaluations: number;
-  readonly tailPointEvaluations: number;
-  readonly maximumTailPointEvaluations: number;
-  readonly settledSegmentCount: number;
-  readonly segmentCount: number;
-  readonly keptPointCount: number;
-  /** How many later samples a sample must wait for before it can settle. */
-  readonly lookaheadSamples: number;
-}
-
-/** An evaluator a live renderer can feed a growing sample array without rebuilding. */
-export interface LiveBrushEvaluator {
-  append(points: readonly StrokePoint[], final: boolean): void;
-  geometry(renderedScale: number): StrokedPathRenderGeometry;
-  evaluationSnapshot(): LiveEvaluationSnapshot;
-}
-
 interface EvaluatedPoint {
   readonly x: number;
   readonly y: number;
@@ -108,6 +62,7 @@ interface Extent {
 
 export class TechnicalPenEvaluator implements LiveBrushEvaluator {
   readonly #width: number;
+  readonly #renderedScale: number;
   readonly #smoothingRadius: number;
   readonly #smoothingAmount: number;
   readonly #lookaheadSamples: number;
@@ -125,7 +80,11 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
   #tailPointEvaluations = 0;
   #maximumTailPointEvaluations = 0;
 
-  constructor(brush: ResolvedBrushSnapshot) {
+  constructor(brush: ResolvedBrushSnapshot, renderedScale: number) {
+    if (!Number.isFinite(renderedScale) || renderedScale <= 0) {
+      throw new RangeError("Technical Pen render scale must be positive and finite.");
+    }
+    this.#renderedScale = renderedScale;
     // Read straight from the snapshot's nominal size rather than through the
     // pressure evaluator, so a constant width is a property of the strategy and
     // not merely of how its preset happens to be configured.
@@ -210,13 +169,13 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
    * proportional to the stroke; it is valid until the next `append`. Use
    * {@link frozenGeometry} for anything retained.
    */
-  geometry(renderedScale: number): StrokedPathRenderGeometry {
-    return this.#geometry(renderedScale, this.#segments);
+  geometry(): StrokedPathRenderGeometry {
+    return this.#geometry(this.#segments);
   }
 
   /** An immutable copy, for geometry that outlives the evaluator. */
-  frozenGeometry(renderedScale: number): StrokedPathRenderGeometry {
-    return this.#geometry(renderedScale, Object.freeze([...this.#segments]));
+  frozenGeometry(): StrokedPathRenderGeometry {
+    return this.#geometry(Object.freeze([...this.#segments]));
   }
 
   evaluationSnapshot(): LiveEvaluationSnapshot {
@@ -231,13 +190,8 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
     });
   }
 
-  #geometry(
-    renderedScale: number,
-    segments: readonly StrokedPathSegment[],
-  ): StrokedPathRenderGeometry {
-    if (!Number.isFinite(renderedScale) || renderedScale <= 0) {
-      throw new RangeError("Technical Pen render scale must be positive and finite.");
-    }
+  #geometry(segments: readonly StrokedPathSegment[]): StrokedPathRenderGeometry {
+    const renderedScale = this.#renderedScale;
     const origin = this.#kept[0] ?? null;
     const extent = copyExtent(this.#settledExtent);
     for (let index = this.#foldedSegmentCount; index < segments.length; index += 1) {
@@ -319,9 +273,9 @@ export function createTechnicalPenGeometry(
   brush: ResolvedBrushSnapshot,
   renderedScale: number,
 ): StrokedPathRenderGeometry {
-  const evaluator = new TechnicalPenEvaluator(brush);
+  const evaluator = new TechnicalPenEvaluator(brush, renderedScale);
   evaluator.append(points, true);
-  return evaluator.frozenGeometry(renderedScale);
+  return evaluator.frozenGeometry();
 }
 
 /**

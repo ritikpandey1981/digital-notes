@@ -4,15 +4,12 @@ import { InkError } from "../errors";
 import type { Stroke } from "../stroke";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
-import { drawSmoothStrokeSegments, drawStrokedPath } from "./draw-stroke";
+import type { LiveBrushEvaluator, LiveRenderGeometry } from "./brush-geometry";
+import { drawFilledPath, drawSmoothStrokeSegments, drawStrokedPath } from "./draw-stroke";
 import { createOutlineStrokeGeometry, type OutlineStrokeGeometry } from "./outline-geometry";
+import { PressurePenEvaluator, createPressurePenGeometry } from "./pressure-pen";
 import { createProfessionalInkPath, type ProfessionalInkPath } from "./professional-ink-path";
-import {
-  TechnicalPenEvaluator,
-  createTechnicalPenGeometry,
-  type LiveBrushEvaluator,
-  type StrokedPathRenderGeometry,
-} from "./technical-pen";
+import { TechnicalPenEvaluator, createTechnicalPenGeometry } from "./technical-pen";
 
 export interface CenterlineRenderGeometry {
   readonly kind: "centerline";
@@ -30,7 +27,7 @@ export interface OutlineRenderGeometry {
 }
 
 export type BrushRenderGeometry =
-  CenterlineRenderGeometry | OutlineRenderGeometry | StrokedPathRenderGeometry;
+  CenterlineRenderGeometry | OutlineRenderGeometry | LiveRenderGeometry;
 
 interface StrokeRenderCache {
   readonly path: ProfessionalInkPath;
@@ -46,7 +43,7 @@ export interface StrokeRenderCacheSnapshot {
 }
 
 const strokeCaches = new WeakMap<Stroke, StrokeRenderCache>();
-const strokedPathCaches = new WeakMap<Stroke, Map<number, StrokedPathRenderGeometry>>();
+const evaluatedCaches = new WeakMap<Stroke, Map<string, LiveRenderGeometry>>();
 const MAX_OUTLINE_SCALE_CACHE_ENTRIES = 8;
 
 /**
@@ -79,7 +76,10 @@ interface BrushRenderStrategy {
    * work. A strategy without one is simply rebuilt each frame, as both frozen
    * legacy strategies still are.
    */
-  readonly createLiveEvaluator?: (brush: ResolvedBrushSnapshot) => LiveBrushEvaluator;
+  readonly createLiveEvaluator?: (
+    brush: ResolvedBrushSnapshot,
+    renderedScale: number,
+  ) => LiveBrushEvaluator;
 }
 
 const LEGACY_CENTERLINE_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
@@ -139,35 +139,44 @@ const TECHNICAL_PEN_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStr
   version: 1,
   createGeometry: (points, brush, renderedScale) =>
     createTechnicalPenGeometry(points, brush, renderedScale),
-  resolveGeometry: (stroke, renderedScale) => {
-    let byScale = strokedPathCaches.get(stroke);
-    if (byScale === undefined) {
-      byScale = new Map<number, StrokedPathRenderGeometry>();
-      strokedPathCaches.set(stroke, byScale);
-    }
-    let geometry = byScale.get(renderedScale);
-    if (geometry === undefined) {
-      geometry = createTechnicalPenGeometry(stroke.points, stroke.brush, renderedScale);
-      if (byScale.size >= MAX_OUTLINE_SCALE_CACHE_ENTRIES) {
-        const oldestScale = byScale.keys().next().value as number | undefined;
-        if (oldestScale !== undefined) byScale.delete(oldestScale);
-      }
-      byScale.set(renderedScale, geometry);
-    }
-    return geometry;
-  },
+  resolveGeometry: (stroke, renderedScale) =>
+    cachedEvaluatedGeometry(stroke, "technical-pen", renderedScale, () =>
+      createTechnicalPenGeometry(stroke.points, stroke.brush, renderedScale),
+    ),
   draw: (context, geometry, brush) => {
     if (geometry.kind !== "stroked-path") return;
     drawStrokedPath(context, geometry, brush);
   },
-  createLiveEvaluator: (brush) => new TechnicalPenEvaluator(brush),
+  createLiveEvaluator: (brush, renderedScale) => new TechnicalPenEvaluator(brush, renderedScale),
+});
+
+/**
+ * The same settled-prefix contract as Technical Pen, with pressure driving
+ * width and opacity and a filled silhouette in place of a stroked path.
+ */
+const PRESSURE_PEN_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
+  id: "pressure-pen",
+  version: 1,
+  createGeometry: (points, brush, renderedScale) =>
+    createPressurePenGeometry(points, brush, renderedScale),
+  resolveGeometry: (stroke, renderedScale) =>
+    cachedEvaluatedGeometry(stroke, "pressure-pen", renderedScale, () =>
+      createPressurePenGeometry(stroke.points, stroke.brush, renderedScale),
+    ),
+  draw: (context, geometry, brush) => {
+    if (geometry.kind !== "filled-path") return;
+    drawFilledPath(context, geometry, brush);
+  },
+  createLiveEvaluator: (brush, renderedScale) => new PressurePenEvaluator(brush, renderedScale),
 });
 
 const BRUSH_RENDER_STRATEGIES: ReadonlyMap<string, BrushRenderStrategy> = new Map(
-  [LEGACY_CENTERLINE_STRATEGY, LEGACY_OUTLINE_STRATEGY, TECHNICAL_PEN_STRATEGY].map((strategy) => [
-    brushStrategyKey(strategy.id, strategy.version),
-    strategy,
-  ]),
+  [
+    LEGACY_CENTERLINE_STRATEGY,
+    LEGACY_OUTLINE_STRATEGY,
+    TECHNICAL_PEN_STRATEGY,
+    PRESSURE_PEN_STRATEGY,
+  ].map((strategy) => [brushStrategyKey(strategy.id, strategy.version), strategy]),
 );
 
 /** Every strategy identity the renderer can actually draw, for drift tests. */
@@ -218,8 +227,43 @@ export function resolveStrokeRenderGeometry(
  * The incremental evaluator for this snapshot's strategy, or null when it has
  * none and its live path rebuilds instead.
  */
-export function createLiveBrushEvaluator(brush: ResolvedBrushSnapshot): LiveBrushEvaluator | null {
-  return requireBrushRenderStrategy(brush).createLiveEvaluator?.(brush) ?? null;
+export function createLiveBrushEvaluator(
+  brush: ResolvedBrushSnapshot,
+  renderedScale = 1,
+): LiveBrushEvaluator | null {
+  assertScale(renderedScale);
+  return requireBrushRenderStrategy(brush).createLiveEvaluator?.(brush, renderedScale) ?? null;
+}
+
+/**
+ * Geometry for one finalized stroke under one strategy and scale.
+ *
+ * Keyed by both, because a stroke outlives a zoom. An eight-entry window per
+ * stroke is what stops a pinch-zoom from rebuilding every visible stroke on
+ * every frame, and what stops a long session from retaining every scale it
+ * ever passed through.
+ */
+function cachedEvaluatedGeometry(
+  stroke: Stroke,
+  id: BrushStrategyId,
+  renderedScale: number,
+  build: () => LiveRenderGeometry,
+): LiveRenderGeometry {
+  let byScale = evaluatedCaches.get(stroke);
+  if (byScale === undefined) {
+    byScale = new Map<string, LiveRenderGeometry>();
+    evaluatedCaches.set(stroke, byScale);
+  }
+  const key = brushStrategyKey(id, renderedScale);
+  const cached = byScale.get(key);
+  if (cached !== undefined) return cached;
+  const geometry = build();
+  if (byScale.size >= MAX_OUTLINE_SCALE_CACHE_ENTRIES) {
+    const oldest = byScale.keys().next().value as string | undefined;
+    if (oldest !== undefined) byScale.delete(oldest);
+  }
+  byScale.set(key, geometry);
+  return geometry;
 }
 
 export function drawBrushRenderGeometry(
