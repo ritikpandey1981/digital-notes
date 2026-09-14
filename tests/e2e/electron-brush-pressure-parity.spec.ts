@@ -55,7 +55,7 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
     finalPressureProfile.forEach((width, index) => {
       expect(Math.abs(width - (livePressureProfile[index] ?? 0))).toBeLessThanOrEqual(2);
     });
-    expect(await inkRendererKind(surface, 0)).toBe("outline");
+    expect(await inkRendererKind(surface, 0)).toBe("pressure-pen");
     expect(await inkPointerType(surface, 0)).toBe("pen");
 
     const committedPressureProfile = finalPressureProfile;
@@ -129,7 +129,9 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
         await window.mouse.move(sample.x, sample.y, { steps: 2 });
       }
       await nextPaint(window);
-      await expect(inkCanvas).toHaveAttribute("data-ink-brush-strategy", "centerline");
+      // A mouse reports a fixed synthetic pressure, so Pressure Pen draws a
+      // constant nominal width rather than being swapped for another strategy.
+      await expect(inkCanvas).toHaveAttribute("data-ink-brush-strategy", "pressure-pen");
       const liveProfile = await verticalInkSpans(inkCanvas, samplePoints, "alpha");
       await window.mouse.up();
       await expect(surface).toHaveAttribute("data-document-object-count", String(caseIndex + 2));
@@ -145,7 +147,7 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
           `${scenario.name} release parity`,
         ).toBeLessThanOrEqual(3);
       });
-      expect(await inkRendererKind(surface, caseIndex + 1)).toBe("centerline");
+      expect(await inkRendererKind(surface, caseIndex + 1)).toBe("pressure-pen");
       expect(await inkPointerType(surface, caseIndex + 1)).toBe("mouse");
       mouseFinalProfiles.push(finalProfile);
     }
@@ -161,7 +163,7 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
       "dark",
     );
     expect(restoredMouseProfile).toEqual(mouseFinalProfiles.at(-1));
-    expect(await inkRendererKind(surface, 4)).toBe("centerline");
+    expect(await inkRendererKind(surface, 4)).toBe("pressure-pen");
     expect(await inkPointerType(surface, 4)).toBe("mouse");
 
     await activateDockSlot(window, "highlighter");
@@ -200,7 +202,7 @@ test("preserves Pen pressure silhouettes and Highlighter compositing across comm
     await expect(surface).toHaveAttribute("data-document-object-count", "6");
     await window.keyboard.press("Control+Z");
     await expect(surface).toHaveAttribute("data-document-object-count", "7");
-    expect(await inkRendererKind(surface, 0)).toBe("outline");
+    expect(await inkRendererKind(surface, 0)).toBe("pressure-pen");
     expect(consoleErrors).toEqual([]);
   } finally {
     await electronApp.close();

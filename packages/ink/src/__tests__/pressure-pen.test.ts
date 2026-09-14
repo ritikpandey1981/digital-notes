@@ -669,18 +669,36 @@ describe("Pressure Pen bounds and hit geometry", () => {
 });
 
 describe("Pressure Pen input handling", () => {
-  it("is not downgraded for a mouse, and draws a predictable mark at synthetic pressure", () => {
-    const brush = pressurePen({ pressureOpacity: response(0.5, 1) });
+  it("keeps its strategy for a mouse but resolves the responses off", () => {
+    // A mouse reports 0.5 and nothing else, so letting it drive expression
+    // would paint whatever the middle of the curve happens to be. An outline
+    // preset answers this by swapping strategy; Pressure Pen has no need to,
+    // because a brush with no response is exactly the brush as configured.
+    const brush = pressurePen({ opacity: 0.8, pressureOpacity: response(0.5, 1) });
     const resolved = resolveBrushForPointerType(brush, "mouse");
+
     expect(resolved.renderer).toEqual({ version: 1, kind: "pressure-pen" });
+    expect(resolved.dynamics.pressureSize.enabled).toBe(false);
+    expect(resolved.dynamics.pressureOpacity.enabled).toBe(false);
+    // Recorded durably, so reopening the stroke reproduces the same mark.
+    expect(resolved.dynamics.pressureSize.maximumFactor).toBe(1);
 
     const geometry = evaluate(
       resolved,
       samplesFor("curved", 50, () => 0.5),
     );
-    const expected = (brush.size * evaluatePressureResponse(brush.dynamics.pressureSize, 0.5)) / 2;
-    for (const entry of geometry.hitGeometry) expect(entry.radius).toBeCloseTo(expected, 9);
+    for (const entry of geometry.hitGeometry) expect(entry.radius).toBeCloseTo(3, 9);
     expect(geometry.bands).toHaveLength(1);
+    expect(geometry.bands[0]?.alpha).toBeCloseTo(0.8, 9);
+  });
+
+  it("keeps a pen and a touch on the preset's full capability", () => {
+    const brush = pressurePen({ pressureOpacity: response(0.5, 1) });
+    for (const pointerType of ["pen", "touch"] as const) {
+      const resolved = resolveBrushForPointerType(brush, pointerType);
+      expect(resolved.dynamics).toEqual(brush.dynamics);
+      expect(resolved.renderer).toEqual({ version: 1, kind: "pressure-pen" });
+    }
   });
 
   it("survives device-edge pressure without producing invalid geometry", () => {

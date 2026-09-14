@@ -153,20 +153,53 @@ export function resolveBrushPreset(
   });
 }
 
-/** Resolves a preset-capable brush to the actual renderer frozen into a new stroke. */
+/**
+ * Resolves a preset-capable brush to what a new stroke from this device will
+ * actually be.
+ *
+ * One rule, applied two ways: **a mouse's pressure is synthetic and fixed at
+ * 0.5, so it must not drive expression.** An expressive `outline@1` preset
+ * takes the constant-width centerline strategy, which is the shipped answer and
+ * is also far cheaper than its silhouette. Every strategy since reads pressure
+ * per sample instead, so it keeps its own strategy and resolves its responses
+ * off: the mark is the brush exactly as configured, rather than wherever the
+ * middle of somebody's curve happens to land.
+ *
+ * Pen and touch retain the preset's full capability. Nothing here knows about a
+ * particular device -- the normalized pointer type is the whole input.
+ */
 export function resolveBrushForPointerType(
   brush: ResolvedBrushSnapshot,
   pointerType: InkPointerType,
 ): ResolvedBrushSnapshot {
   const snapshot = createResolvedBrushSnapshot(brush);
-  // Mouse pressure is intentionally synthetic and fixed at 0.5, so expressive outline brushes
-  // use the constant-width centerline strategy. Pen and touch retain the preset capability.
-  if (pointerType !== "mouse" || snapshot.renderer.kind !== "outline") {
-    return snapshot;
+  if (pointerType !== "mouse") return snapshot;
+  if (snapshot.renderer.kind === "outline") {
+    return createResolvedBrushSnapshot({
+      ...snapshot,
+      renderer: Object.freeze({ version: 1, kind: "centerline" }),
+    });
   }
+  // `centerline@1` is frozen, down to how a mouse stroke resolves onto it.
+  if (snapshot.renderer.kind === "centerline") return snapshot;
+  const dynamics = snapshot.dynamics;
+  if (!dynamics.pressureSize.enabled && !dynamics.pressureOpacity.enabled) return snapshot;
   return createResolvedBrushSnapshot({
     ...snapshot,
-    renderer: Object.freeze({ version: 1, kind: "centerline" }),
+    dynamics: Object.freeze({
+      pressureSize: inertResponse(),
+      pressureOpacity: inertResponse(),
+    }),
+  });
+}
+
+/** A response that resolves to exactly one, recorded durably so a reopen agrees. */
+function inertResponse(): BrushPressureResponse {
+  return Object.freeze({
+    enabled: false,
+    minimumFactor: 1,
+    maximumFactor: 1,
+    curve: Object.freeze({ kind: "linear", exponent: 1 }),
   });
 }
 
