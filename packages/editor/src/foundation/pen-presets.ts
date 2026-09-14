@@ -4,6 +4,7 @@ import {
   resolveBrushPreset,
   type BrushFamily,
   type BrushPreset,
+  type BrushPressureCurve,
   type BrushRendererKind,
   type BrushSmoothing,
   type ResolvedBrushSnapshot,
@@ -133,6 +134,12 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     smoothing: 0.3,
     renderer: "technical-pen",
   }),
+  // The expressive pen, and the one preset on the pressure strategy. Its width
+  // range is the one it already had, so the mark it makes is the mark it made;
+  // what is new is that the opacity response the model has always carried is
+  // finally evaluated. A light touch lays down less ink, which is the whole
+  // reason the field exists. Strokes already saved keep naming outline@1 and
+  // keep rendering as they were drawn.
   createCatalogPreset({
     id: "pen-brush",
     name: "Brush Pen",
@@ -142,7 +149,9 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     opacity: 1,
     smoothing: 0.18,
     pressureRange: [0.35, 1.65],
-    renderer: "outline",
+    opacityRange: [0.7, 1],
+    opacityCurve: Object.freeze({ kind: "power", exponent: 0.55 }),
+    renderer: "pressure-pen",
   }),
   createCatalogPreset({
     id: "marker-felt",
@@ -308,6 +317,8 @@ interface CatalogPresetInput {
   readonly opacity: number;
   readonly smoothing: number;
   readonly pressureRange?: readonly [number, number];
+  readonly opacityRange?: readonly [number, number];
+  readonly opacityCurve?: BrushPressureCurve;
   readonly renderer: BrushRendererKind;
 }
 
@@ -335,10 +346,10 @@ function createCatalogPreset(input: CatalogPresetInput): BrushPreset {
         curve: Object.freeze({ kind: "linear", exponent: 1 }),
       }),
       pressureOpacity: Object.freeze({
-        enabled: false,
-        minimumFactor: 1,
-        maximumFactor: 1,
-        curve: Object.freeze({ kind: "linear", exponent: 1 }),
+        enabled: input.opacityRange !== undefined,
+        minimumFactor: input.opacityRange?.[0] ?? 1,
+        maximumFactor: input.opacityRange?.[1] ?? 1,
+        curve: input.opacityCurve ?? Object.freeze({ kind: "linear", exponent: 1 }),
       }),
     }),
     renderer: Object.freeze({ version: 1, kind: input.renderer }),

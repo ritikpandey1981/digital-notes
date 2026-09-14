@@ -104,10 +104,65 @@ describe("durable brush strategy decoding", () => {
     expect(reencoded).toContain('"kind": "technical-pen"');
   });
 
+  it("round-trips a Pressure Pen stroke with both responses intact", () => {
+    const record = encodedRecord(createRepresentativeProject());
+    const brush = inkBrush(record);
+    brush.renderer = { version: 1, kind: "pressure-pen" };
+    brush.presetId = "pen-brush";
+    brush.size = 6;
+    brush.opacity = 1;
+    brush.smoothing = { mode: "average", amount: 0.18 };
+    brush.dynamics = {
+      pressureSize: {
+        enabled: true,
+        minimumFactor: 0.35,
+        maximumFactor: 1.65,
+        curve: { kind: "linear", exponent: 1 },
+      },
+      pressureOpacity: {
+        enabled: true,
+        minimumFactor: 0.7,
+        maximumFactor: 1,
+        curve: { kind: "power", exponent: 0.55 },
+      },
+    };
+
+    const decoded = decodeFolioProject(JSON.stringify(record));
+    const stroke = inkStrokes(decoded)[0]!;
+
+    expect(stroke.brush.renderer).toEqual({ version: 1, kind: "pressure-pen" });
+    expect(stroke.brush.presetId).toBe("pen-brush");
+    expect(stroke.brush.dynamics.pressureSize).toEqual({
+      enabled: true,
+      minimumFactor: 0.35,
+      maximumFactor: 1.65,
+      curve: { kind: "linear", exponent: 1 },
+    });
+    // The response the model has always carried and never evaluated, now
+    // read back exactly as written -- including a non-linear curve.
+    expect(stroke.brush.dynamics.pressureOpacity).toEqual({
+      enabled: true,
+      minimumFactor: 0.7,
+      maximumFactor: 1,
+      curve: { kind: "power", exponent: 0.55 },
+    });
+    // Every source pressure survives, which is what makes a reopened stroke
+    // reproduce its own width profile rather than a recomputed one.
+    expect(stroke.sourceSamples.length).toBeGreaterThan(0);
+    expect(stroke.sourceSamples.some((entry) => entry.pressure !== 0.5)).toBe(true);
+
+    const reencoded = encodeFolioProject(decoded);
+    expect(encodeFolioProject(decodeFolioProject(reencoded))).toBe(reencoded);
+    expect(reencoded).toContain('"kind": "pressure-pen"');
+    // No format bump: a Pressure Pen project is a formatVersion 1 project.
+    expect((JSON.parse(reencoded) as { formatVersion: number }).formatVersion).toBe(1);
+  });
+
   it.each([
     ["a strategy no build has", { version: 1, kind: "unknown-brush" }],
     ["a strategy a later phase will add", { version: 1, kind: "pencil" }],
     ["a future version of Technical Pen", { version: 2, kind: "technical-pen" }],
+    ["a future version of Pressure Pen", { version: 2, kind: "pressure-pen" }],
     ["a future version of a known strategy", { version: 999, kind: "centerline" }],
     ["a future version of the outline strategy", { version: 2, kind: "outline" }],
     ["a non-integer version", { version: 1.5, kind: "centerline" }],
@@ -135,6 +190,15 @@ describe("durable brush strategy decoding", () => {
     expect(() => decodeFolioProject(encoded)).toThrow(FolioProjectCodecError);
   });
 });
+
+/** The one Ink brush in the fixture, as a mutable encoded record. */
+function inkBrush(record: Record<string, unknown>): Record<string, unknown> {
+  const pages = (record.sketchbook as { pages: Record<string, unknown>[] }).pages;
+  const objects = (pages[0]!.content as { objects: Record<string, unknown>[] }).objects;
+  const ink = objects.find((object) => object.type === "ink");
+  if (ink === undefined) throw new Error("The fixture must contain an Ink object.");
+  return (ink.payload as { stroke: { brush: Record<string, unknown> } }).stroke.brush;
+}
 
 function inkStrokes(project: FolioProjectSnapshot): readonly InkObject["stroke"][] {
   const strokes: InkObject["stroke"][] = [];

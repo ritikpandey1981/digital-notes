@@ -99,7 +99,8 @@ test("draws with Technical Pen through the ordinary slot and input path", async 
     await window.mouse.up();
     await expect(surface).toHaveAttribute("data-document-object-count", "0");
 
-    // 8. Other slots are untouched: Brush Pen still resolves its outline preset.
+    // 8. Other slots are untouched: the Brush Pen slot still resolves its own
+    //    preset and its own strategy, which is now Pressure Pen.
     await dock.locator('button[data-dock-slot="brush-pen"]').click();
     await window.mouse.move(bounds.x + 420, bounds.y + 520);
     await window.mouse.down();
@@ -108,9 +109,7 @@ test("draws with Technical Pen through the ordinary slot and input path", async 
     await expect(surface).toHaveAttribute("data-document-object-count", "1");
     const other = await strokeBrushes(window);
     expect(other[0]!.presetId).toBe("pen-brush");
-    // Mouse pressure is synthetic, so an expressive preset still resolves to its
-    // centerline fallback. Technical Pen has no such fallback to take.
-    expect(other[0]!.rendererKind).toBe("centerline");
+    expect(other[0]!.rendererKind).toBe("pressure-pen");
 
     expect(consoleErrors, "no console errors").toEqual([]);
   } finally {

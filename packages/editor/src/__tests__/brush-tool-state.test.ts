@@ -119,7 +119,7 @@ describe("Phase 17C brush catalog and tool state", () => {
       "pencil-mechanical": ["centerline", false],
       "pen-fineliner": ["centerline", false],
       "pen-technical": ["technical-pen", false],
-      "pen-brush": ["outline", true],
+      "pen-brush": ["pressure-pen", true],
       "marker-felt": ["centerline", false],
       "marker-broad": ["centerline", false],
       "highlighter-default": ["centerline", false],
@@ -172,7 +172,7 @@ describe("Phase 17C brush catalog and tool state", () => {
       color: "#111111",
       size: 6,
       opacity: 1,
-      renderer: { kind: "outline" },
+      renderer: { kind: "pressure-pen" },
     });
     expect(JSON.parse(JSON.stringify(stroke.brush))).toEqual(stroke.brush);
     expect(Object.isFrozen(stroke.brush.dynamics.pressureSize.curve)).toBe(true);
