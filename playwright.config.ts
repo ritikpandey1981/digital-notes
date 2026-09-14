@@ -5,6 +5,8 @@ import "./tests/e2e/electron-test-app";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // Keep normal-suite cleanup away from retained performance measurements.
+  outputDir: "./test-results/e2e",
   fullyParallel: false,
   // Electron pointer input targets the foreground desktop window and is not cross-process safe.
   workers: 1,

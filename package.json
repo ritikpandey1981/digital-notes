@@ -14,13 +14,15 @@
     "generate:icons": "node scripts/generate-icon.mjs",
     "package": "pnpm --filter @folio/desktop package",
     "typecheck": "pnpm -r --if-present typecheck && pnpm typecheck:e2e",
-    "typecheck:e2e": "tsc -p tests/e2e/tsconfig.json",
+    "typecheck:e2e": "tsc -p tests/e2e/tsconfig.json && pnpm typecheck:performance",
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:performance": "node tests/performance/run-baseline.mjs",
+    "typecheck:performance": "tsc -p tests/performance/tsconfig.json"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

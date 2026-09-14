@@ -31,6 +31,21 @@ let automaticActivation = false;
 const noop = () => undefined;
 
 const runtimeHarness = {
+  // The dedicated baseline drives the same mounted runtime as lifecycle tests.
+  get project() {
+    return host.active.project;
+  },
+  get viewportActions() {
+    return viewportActions;
+  },
+  async replaceForBaseline(project: ProjectSession) {
+    automaticActivation = true;
+    try {
+      return await host.replace(project);
+    } finally {
+      automaticActivation = false;
+    }
+  },
   async open() {
     automaticActivation = true;
     try {
