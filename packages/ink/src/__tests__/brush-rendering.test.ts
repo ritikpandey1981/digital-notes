@@ -9,8 +9,10 @@ import {
   drawBrushRenderGeometry,
   getStrokeRenderCacheSnapshot,
   resolveStrokeRenderGeometry,
+  type BrushRenderGeometry,
   type OutlineRenderGeometry,
 } from "../internal/brush-render-strategy";
+import type { ProfessionalInkPath } from "../internal/professional-ink-path";
 import { getStrokeRenderedBounds } from "../rendered-stroke-bounds";
 import type { Stroke } from "../stroke";
 import { StrokeBuilder } from "../stroke-builder";
@@ -102,6 +104,14 @@ function strokeFromPressures(
   return builder.finalize();
 }
 
+/** Narrows to the fitted path both frozen legacy strategies carry. */
+function fitted(geometry: BrushRenderGeometry): ProfessionalInkPath {
+  if (geometry.kind === "stroked-path") {
+    throw new Error("A stroked path has no fitted-curve stage.");
+  }
+  return geometry.path;
+}
+
 function outline(geometry: ReturnType<typeof createBrushRenderGeometry>): OutlineRenderGeometry {
   if (geometry.kind !== "outline") throw new Error("Expected outline geometry.");
   return geometry;
@@ -157,9 +167,9 @@ describe("Phase 17B brush rendering", () => {
 
     expect(live.kind).toBe("centerline");
     expect(committed.kind).toBe("centerline");
-    expect(live.path.points).toEqual(committed.path.points);
-    expect(live.path.segments).toEqual(committed.path.segments);
-    expect(live.path.sourcePoints).toEqual(stroke.points);
+    expect(fitted(live).points).toEqual(fitted(committed).points);
+    expect(fitted(live).segments).toEqual(fitted(committed).segments);
+    expect(fitted(live).sourcePoints).toEqual(stroke.points);
   });
 
   it.each([
@@ -407,7 +417,7 @@ describe("Phase 17B brush rendering", () => {
 
     expect(live.kind).toBe("centerline");
     expect(committed.kind).toBe("centerline");
-    expect(live.path.segments).toEqual(committed.path.segments);
+    expect(fitted(live).segments).toEqual(fitted(committed).segments);
     expect(stroke.widthAtPressure(0.5)).toBe(12);
     drawBrushRenderGeometry(liveCanvas, live, stroke.brush);
     drawBrushRenderGeometry(finalCanvas, committed, stroke.brush);

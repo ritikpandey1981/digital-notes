@@ -58,9 +58,56 @@ describe("durable brush strategy decoding", () => {
     expect(encodeFolioProject(decoded)).toBe(encodeFolioProject(original));
   });
 
+  it("round-trips a Technical Pen stroke with its strategy and dynamics intact", () => {
+    const project = createRepresentativeProject();
+    const record = encodedRecord(project);
+    const pages = (record.sketchbook as { pages: Record<string, unknown>[] }).pages;
+    const objects = (pages[0]!.content as { objects: Record<string, unknown>[] }).objects;
+    const ink = objects.find((object) => object.type === "ink")!;
+    const brush = (ink.payload as { stroke: { brush: Record<string, unknown> } }).stroke.brush;
+    brush.renderer = { version: 1, kind: "technical-pen" };
+    brush.presetId = "pen-technical";
+    brush.size = 1.5;
+    brush.opacity = 1;
+    brush.smoothing = { mode: "average", amount: 0.3 };
+    brush.dynamics = {
+      pressureSize: {
+        enabled: false,
+        minimumFactor: 1,
+        maximumFactor: 1,
+        curve: { kind: "linear", exponent: 1 },
+      },
+      pressureOpacity: {
+        enabled: false,
+        minimumFactor: 1,
+        maximumFactor: 1,
+        curve: { kind: "linear", exponent: 1 },
+      },
+    };
+
+    const encoded = JSON.stringify(record);
+    const decoded = decodeFolioProject(encoded);
+    const stroke = inkStrokes(decoded)[0]!;
+
+    expect(stroke.brush.renderer).toEqual({ version: 1, kind: "technical-pen" });
+    expect(stroke.brush.presetId).toBe("pen-technical");
+    expect(stroke.brush.size).toBe(1.5);
+    expect(stroke.brush.opacity).toBe(1);
+    expect(stroke.brush.smoothing).toEqual({ mode: "average", amount: 0.3 });
+    expect(stroke.brush.dynamics.pressureSize.enabled).toBe(false);
+    // Ignoring pressure for appearance is not the same as discarding it.
+    expect(stroke.sourceSamples.length).toBeGreaterThan(0);
+    expect(stroke.sourceSamples.some((entry) => entry.pressure !== 0.5)).toBe(true);
+    // Encode, decode, encode: the second pass must reproduce the first exactly.
+    const reencoded = encodeFolioProject(decoded);
+    expect(encodeFolioProject(decodeFolioProject(reencoded))).toBe(reencoded);
+    expect(reencoded).toContain('"kind": "technical-pen"');
+  });
+
   it.each([
     ["a strategy no build has", { version: 1, kind: "unknown-brush" }],
-    ["a strategy a later build may add", { version: 1, kind: "technical-pen" }],
+    ["a strategy a later phase will add", { version: 1, kind: "pencil" }],
+    ["a future version of Technical Pen", { version: 2, kind: "technical-pen" }],
     ["a future version of a known strategy", { version: 999, kind: "centerline" }],
     ["a future version of the outline strategy", { version: 2, kind: "outline" }],
     ["a non-integer version", { version: 1.5, kind: "centerline" }],
@@ -83,11 +130,21 @@ describe("durable brush strategy decoding", () => {
     // The failure has to be the whole decode. A project that opens with one
     // stroke quietly re-rendered is worse than a project that will not open.
     const encoded = JSON.stringify(
-      withInkRenderer(createRepresentativeProject(), { version: 1, kind: "technical-pen" }),
+      withInkRenderer(createRepresentativeProject(), { version: 2, kind: "technical-pen" }),
     );
     expect(() => decodeFolioProject(encoded)).toThrow(FolioProjectCodecError);
   });
 });
+
+function inkStrokes(project: FolioProjectSnapshot): readonly InkObject["stroke"][] {
+  const strokes: InkObject["stroke"][] = [];
+  for (const page of project.sketchbook.pages) {
+    for (const object of page.content.objects.objects) {
+      if (object instanceof InkObject) strokes.push(object.stroke);
+    }
+  }
+  return strokes;
+}
 
 function inkStrategies(
   project: FolioProjectSnapshot,

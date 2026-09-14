@@ -85,10 +85,11 @@ function forgedSnapshot(kind: string, version: number): ResolvedBrushSnapshot {
 }
 
 describe("brush strategy vocabulary", () => {
-  it("accepts exactly the frozen legacy strategies", () => {
-    expect(supportedBrushStrategies()).toEqual(["centerline@1", "outline@1"]);
+  it("accepts exactly the strategies this build renders", () => {
+    expect(supportedBrushStrategies()).toEqual(["centerline@1", "outline@1", "technical-pen@1"]);
     expect(isSupportedBrushStrategy("centerline", 1)).toBe(true);
     expect(isSupportedBrushStrategy("outline", 1)).toBe(true);
+    expect(isSupportedBrushStrategy("technical-pen", 1)).toBe(true);
   });
 
   it("keeps the durable vocabulary and the renderer registry in step", () => {
@@ -99,8 +100,9 @@ describe("brush strategy vocabulary", () => {
 
   it.each([
     ["an unknown kind", "unknown-brush", 1],
-    ["a future kind", "technical-pen", 1],
+    ["a strategy a later phase will add", "pencil", 1],
     ["a future version of a known kind", "centerline", 2],
+    ["a future version of Technical Pen", "technical-pen", 2],
     ["a zero version", "outline", 0],
     ["a negative version", "outline", -1],
     ["a fractional version", "outline", 1.5],
@@ -132,7 +134,7 @@ describe("brush strategy vocabulary", () => {
   });
 
   it("refuses to render a forged strategy instead of substituting a nearby one", () => {
-    const forged = forgedSnapshot("technical-pen", 1);
+    const forged = forgedSnapshot("technical-pen", 99);
     const stroke = strokeWith(snapshot({ version: 1, kind: "centerline" }));
     const unsupported = Object.freeze({ ...stroke, brush: forged }) as unknown as Stroke;
 
@@ -152,7 +154,7 @@ describe("brush strategy vocabulary", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(InkError);
       expect((error as InkError).code).toBe("UNSUPPORTED_BRUSH_STRATEGY");
-      expect((error as InkError).details).toEqual({ kind: "technical-pen", version: 1 });
+      expect((error as InkError).details).toEqual({ kind: "technical-pen", version: 99 });
     }
   });
 });

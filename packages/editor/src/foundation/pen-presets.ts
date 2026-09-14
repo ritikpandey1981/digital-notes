@@ -119,6 +119,10 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     smoothing: 0.2,
     renderer: "centerline",
   }),
+  // The one preset on the real brush engine. It resolves no pressure response,
+  // so a constant width is what the snapshot says and not merely what the
+  // strategy does. Every other preset stays on its frozen legacy strategy until
+  // a phase gives it a real one.
   createCatalogPreset({
     id: "pen-technical",
     name: "Technical Pen",
@@ -127,7 +131,7 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     size: 1.5,
     opacity: 1,
     smoothing: 0.3,
-    renderer: "centerline",
+    renderer: "technical-pen",
   }),
   createCatalogPreset({
     id: "pen-brush",

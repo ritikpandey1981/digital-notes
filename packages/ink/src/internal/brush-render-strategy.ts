@@ -4,9 +4,15 @@ import { InkError } from "../errors";
 import type { Stroke } from "../stroke";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
-import { drawSmoothStrokeSegments } from "./draw-stroke";
+import { drawSmoothStrokeSegments, drawStrokedPath } from "./draw-stroke";
 import { createOutlineStrokeGeometry, type OutlineStrokeGeometry } from "./outline-geometry";
 import { createProfessionalInkPath, type ProfessionalInkPath } from "./professional-ink-path";
+import {
+  TechnicalPenEvaluator,
+  createTechnicalPenGeometry,
+  type LiveBrushEvaluator,
+  type StrokedPathRenderGeometry,
+} from "./technical-pen";
 
 export interface CenterlineRenderGeometry {
   readonly kind: "centerline";
@@ -23,7 +29,8 @@ export interface OutlineRenderGeometry {
   readonly bounds: Rect;
 }
 
-export type BrushRenderGeometry = CenterlineRenderGeometry | OutlineRenderGeometry;
+export type BrushRenderGeometry =
+  CenterlineRenderGeometry | OutlineRenderGeometry | StrokedPathRenderGeometry;
 
 interface StrokeRenderCache {
   readonly path: ProfessionalInkPath;
@@ -39,6 +46,7 @@ export interface StrokeRenderCacheSnapshot {
 }
 
 const strokeCaches = new WeakMap<Stroke, StrokeRenderCache>();
+const strokedPathCaches = new WeakMap<Stroke, Map<number, StrokedPathRenderGeometry>>();
 const MAX_OUTLINE_SCALE_CACHE_ENTRIES = 8;
 
 /**
@@ -66,6 +74,12 @@ interface BrushRenderStrategy {
     geometry: BrushRenderGeometry,
     brush: ResolvedBrushSnapshot,
   ) => void;
+  /**
+   * An incremental evaluator, for a strategy whose live path can reuse settled
+   * work. A strategy without one is simply rebuilt each frame, as both frozen
+   * legacy strategies still are.
+   */
+  readonly createLiveEvaluator?: (brush: ResolvedBrushSnapshot) => LiveBrushEvaluator;
 }
 
 const LEGACY_CENTERLINE_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
@@ -120,8 +134,37 @@ const LEGACY_OUTLINE_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderSt
   },
 });
 
+const TECHNICAL_PEN_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
+  id: "technical-pen",
+  version: 1,
+  createGeometry: (points, brush, renderedScale) =>
+    createTechnicalPenGeometry(points, brush, renderedScale),
+  resolveGeometry: (stroke, renderedScale) => {
+    let byScale = strokedPathCaches.get(stroke);
+    if (byScale === undefined) {
+      byScale = new Map<number, StrokedPathRenderGeometry>();
+      strokedPathCaches.set(stroke, byScale);
+    }
+    let geometry = byScale.get(renderedScale);
+    if (geometry === undefined) {
+      geometry = createTechnicalPenGeometry(stroke.points, stroke.brush, renderedScale);
+      if (byScale.size >= MAX_OUTLINE_SCALE_CACHE_ENTRIES) {
+        const oldestScale = byScale.keys().next().value as number | undefined;
+        if (oldestScale !== undefined) byScale.delete(oldestScale);
+      }
+      byScale.set(renderedScale, geometry);
+    }
+    return geometry;
+  },
+  draw: (context, geometry, brush) => {
+    if (geometry.kind !== "stroked-path") return;
+    drawStrokedPath(context, geometry, brush);
+  },
+  createLiveEvaluator: (brush) => new TechnicalPenEvaluator(brush),
+});
+
 const BRUSH_RENDER_STRATEGIES: ReadonlyMap<string, BrushRenderStrategy> = new Map(
-  [LEGACY_CENTERLINE_STRATEGY, LEGACY_OUTLINE_STRATEGY].map((strategy) => [
+  [LEGACY_CENTERLINE_STRATEGY, LEGACY_OUTLINE_STRATEGY, TECHNICAL_PEN_STRATEGY].map((strategy) => [
     brushStrategyKey(strategy.id, strategy.version),
     strategy,
   ]),
@@ -169,6 +212,14 @@ export function resolveStrokeRenderGeometry(
 ): BrushRenderGeometry {
   assertScale(renderedScale);
   return requireBrushRenderStrategy(stroke.brush).resolveGeometry(stroke, renderedScale);
+}
+
+/**
+ * The incremental evaluator for this snapshot's strategy, or null when it has
+ * none and its live path rebuilds instead.
+ */
+export function createLiveBrushEvaluator(brush: ResolvedBrushSnapshot): LiveBrushEvaluator | null {
+  return requireBrushRenderStrategy(brush).createLiveEvaluator?.(brush) ?? null;
 }
 
 export function drawBrushRenderGeometry(

@@ -14,10 +14,20 @@ import {
   createBrushRenderGeometry,
   getStrokeRenderCacheSnapshot,
   resolveStrokeRenderGeometry,
+  type BrushRenderGeometry,
 } from "../internal/brush-render-strategy";
+import type { ProfessionalInkPath } from "../internal/professional-ink-path";
 import { StrokeBuilder } from "../stroke-builder";
 import { StrokeSmoother } from "../stroke-smoother";
 import type { StrokePoint } from "../types";
+
+/** Narrows to the fitted path both frozen legacy strategies carry. */
+function fitted(geometry: BrushRenderGeometry): ProfessionalInkPath {
+  if (geometry.kind === "stroked-path") {
+    throw new Error("A stroked path has no fitted-curve stage.");
+  }
+  return geometry.path;
+}
 
 const POINT_COUNTS = [100, 1_000, 5_000, 10_000, 25_000] as const;
 const SMOOTHING_AMOUNTS = [0, 0.25, 1] as const;
@@ -60,7 +70,7 @@ describe("Phase 17D brush performance and device validation", () => {
         );
         framesRendered += 1;
         geometryBuilds += 1;
-        renderPoints = geometry.path.points.length;
+        renderPoints = fitted(geometry).points.length;
       }, adapter);
       const samplesPerFrame = rate / 60;
 
@@ -113,18 +123,18 @@ describe("Phase 17D brush performance and device validation", () => {
           const vertices = geometry.kind === "outline" ? geometry.outline.vertexCount : 0;
           observations[`${pointCount}/${kind}/${Math.round(smoothing * 100)}%`] = Object.freeze({
             durationMilliseconds,
-            sourcePoints: geometry.path.sourcePointCount,
-            renderPoints: geometry.path.points.length,
-            segments: geometry.path.segments.length,
+            sourcePoints: fitted(geometry).sourcePointCount,
+            renderPoints: fitted(geometry).points.length,
+            segments: fitted(geometry).segments.length,
             vertices,
           });
 
           if (process.env.FOLIO_PERFORMANCE_BASELINE === "1")
             expect(durationMilliseconds).toBeLessThan(10_000);
-          expect(geometry.path.sourcePointCount).toBe(pointCount);
-          expect(geometry.path.points.length).toBeLessThanOrEqual(pointCount);
-          expect(geometry.path.segments.length).toBeLessThanOrEqual(
-            Math.max(0, geometry.path.points.length - 1),
+          expect(fitted(geometry).sourcePointCount).toBe(pointCount);
+          expect(fitted(geometry).points.length).toBeLessThanOrEqual(pointCount);
+          expect(fitted(geometry).segments.length).toBeLessThanOrEqual(
+            Math.max(0, fitted(geometry).points.length - 1),
           );
           if (geometry.kind === "outline") {
             expect(geometry.outline.vertexCount).toBeLessThan(pointCount * 5 + 2_000);

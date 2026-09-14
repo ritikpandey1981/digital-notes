@@ -118,7 +118,7 @@ describe("Phase 17C brush catalog and tool state", () => {
       "pencil-4b": ["outline", true],
       "pencil-mechanical": ["centerline", false],
       "pen-fineliner": ["centerline", false],
-      "pen-technical": ["centerline", false],
+      "pen-technical": ["technical-pen", false],
       "pen-brush": ["outline", true],
       "marker-felt": ["centerline", false],
       "marker-broad": ["centerline", false],

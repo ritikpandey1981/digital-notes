@@ -10,7 +10,7 @@ export type BrushFamily = "pencil" | "pen" | "marker" | "highlighter";
  * draw is frozen; a strategy whose appearance must change ships as the next
  * version of itself rather than being edited in place.
  */
-export type BrushStrategyId = "centerline" | "outline";
+export type BrushStrategyId = "centerline" | "outline" | "technical-pen";
 
 /** Retained spelling for the public boundary that predates the strategy vocabulary. */
 export type BrushRendererKind = BrushStrategyId;
@@ -25,7 +25,11 @@ export type BrushPressureCurveKind = "linear" | "power";
  * only ever added: removing one would stop a saved project from opening, and
  * changing what one draws would silently rewrite artwork that already exists.
  */
-const SUPPORTED_BRUSH_STRATEGIES: ReadonlySet<string> = new Set(["centerline@1", "outline@1"]);
+const SUPPORTED_BRUSH_STRATEGIES: ReadonlySet<string> = new Set([
+  "centerline@1",
+  "outline@1",
+  "technical-pen@1",
+]);
 
 /** The lookup key one durable strategy identity resolves through. */
 export function brushStrategyKey(kind: string, version: number): string {

@@ -2,6 +2,58 @@ import type { ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
 import type { ProfessionalInkSegment } from "./professional-ink-path";
+import type { StrokedPathRenderGeometry } from "./technical-pen";
+
+/**
+ * Paints one Technical Pen path.
+ *
+ * The whole path is one `beginPath`/`stroke` pair under a single alpha, which
+ * is what makes a partly drawn stroke converge on the committed one: painting
+ * each span separately would accumulate opacity wherever spans meet, so a live
+ * stroke would darken at its own joins and then lighten when it committed.
+ *
+ * Round caps and joins come from the context rather than from geometry. A
+ * constant-width path has nothing to gain from building its own silhouette, and
+ * a great deal to lose -- that is the expensive outline pipeline this strategy
+ * exists to avoid.
+ */
+export function drawStrokedPath(
+  context: CanvasRenderingContext2D,
+  geometry: StrokedPathRenderGeometry,
+  brush: ResolvedBrushSnapshot,
+): void {
+  const origin = geometry.origin;
+  if (origin === null) return;
+  context.save();
+  context.globalAlpha *= brush.opacity;
+  context.strokeStyle = brush.color;
+  context.fillStyle = brush.color;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  if (geometry.segments.length === 0) {
+    // A tap is a round mark of the nominal width, not an absence of one.
+    context.beginPath();
+    context.arc(origin.x, origin.y, geometry.width / (geometry.renderedScale * 2), 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    return;
+  }
+  context.lineWidth = geometry.width / geometry.renderedScale;
+  context.beginPath();
+  context.moveTo(origin.x, origin.y);
+  for (const segment of geometry.segments) {
+    context.bezierCurveTo(
+      segment.control1X,
+      segment.control1Y,
+      segment.control2X,
+      segment.control2Y,
+      segment.endX,
+      segment.endY,
+    );
+  }
+  context.stroke();
+  context.restore();
+}
 
 /** Shared low-latency path used by live ink; only newly sampled segments are drawn. */
 export function drawStrokePoints(

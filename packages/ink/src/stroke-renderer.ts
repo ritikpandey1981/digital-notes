@@ -497,6 +497,14 @@ export class StrokeRenderer {
   }
 
   private addPathDiagnostics(geometry: BrushRenderGeometry): void {
+    // Every strategy reports the same three counts; only the names it keeps
+    // them under differ, because a stroked path has no fitted-curve stage.
+    if (geometry.kind === "stroked-path") {
+      this.finalizedSourcePointCountValue += geometry.sourcePointCount;
+      this.finalizedFilteredPointCountValue += geometry.keptPointCount;
+      this.finalizedSegmentCountValue += geometry.segments.length;
+      return;
+    }
     const path = geometry.path;
     this.finalizedSourcePointCountValue += path.sourcePointCount;
     this.finalizedFilteredPointCountValue += path.points.length;
@@ -525,9 +533,18 @@ export class StrokeRenderer {
   }
 }
 
+/**
+ * Whether a live frame must build real geometry rather than extend the canvas
+ * path directly.
+ *
+ * The direct path in `draw-stroke` is `centerline@1`'s own incremental
+ * painter and produces `centerline@1`'s picture. Only that strategy, and only
+ * when it is not smoothing, may use it; every other strategy asks its own
+ * geometry builder, which is also what keeps live and committed agreeing.
+ */
 function requiresFullGeometry(brush: import("./brush-model").ResolvedBrushSnapshot): boolean {
   return (
-    brush.renderer.kind === "outline" ||
+    brush.renderer.kind !== "centerline" ||
     (brush.smoothing.mode !== "none" && brush.smoothing.amount > 0)
   );
 }
