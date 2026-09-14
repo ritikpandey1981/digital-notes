@@ -170,16 +170,28 @@ Stroke source samples preserve:
 
 Rendering derives filtered points, fitted cubics, centerlines, and outlines without
 replacing source data. Tilt and twist are captured but currently do not affect visual
-output. Mouse pressure is fixed at `0.5`, so an expressive preset can resolve to its
-centerline fallback.
+output. Mouse pressure is fixed at `0.5` and must not drive expression: an expressive
+`outline@1` preset resolves to its centerline fallback, and an engine strategy keeps its
+own strategy but resolves its pressure responses off, so the mark is the brush exactly as
+configured.
 
-A stroke names its render strategy durably. Three exist: `centerline@1` and `outline@1`,
-frozen so that artwork already saved keeps its appearance, and `technical-pen@1`, the first
-strategy built on the engine. Technical Pen is a deterministic constant-width solid stroke
-that ignores pressure for appearance while keeping every pressure sample, draws the same
-for a mouse as for a pen, and evaluates incrementally so that a stroke looks the same while
-it is drawn as it does once committed. Only the `pen-technical` preset uses it; every other
-preset is still on a frozen legacy strategy.
+A stroke names its render strategy durably. Four exist. `centerline@1` and `outline@1`
+are frozen so that artwork already saved keeps its appearance. `technical-pen@1` is a
+deterministic constant-width solid stroke that ignores pressure for appearance while
+keeping every pressure sample. `pressure-pen@1` drives both width and opacity from
+pressure: width is the brush size times the `pressureSize` response, alpha is the brush
+opacity times the `pressureOpacity` response, and the silhouette is filled rather than
+stroked because a Canvas line has one width. Both engine strategies evaluate incrementally,
+so a stroke looks the same while it is drawn as it does once committed. Two presets use
+them — `pen-technical` and `pen-brush` — and every other preset is still on a frozen
+legacy strategy.
+
+Canvas has no alpha that varies along a path, so Pressure Pen paints a run of samples at a
+similar alpha as one closed shape filled once. Consecutive bands are cut at the midpoint of
+a span and share that cut cross-section exactly, so two alphas meet on an edge rather than
+overlapping across one; a deadband and a minimum band length bound how many fills a stroke
+costs. A hit test reads the variable-radius centerline the same geometry carries, so a
+light start is not caught by a heavy end's width.
 
 Nonzero smoothing derives coordinates with a deterministic symmetric triangular moving
 average. The amount controls blend strength and a bounded one-to-four-sample radius;

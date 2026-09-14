@@ -348,6 +348,27 @@ One distinction the current model gets wrong by omission: **taper is not a press
 response.** Taper is a function of normalized position along the stroke, and it needs its
 own durable field. Do not express it by bending a pressure curve.
 
+**As implemented for `pressure-pen@1`.** The existing enum plus parameters was sufficient
+for both width and opacity, and nothing was added to it: no `piecewise` kind, no curve
+editor, no second model. The shipped preset uses `linear` for width and `power` with an
+exponent below one for opacity, which is exactly the shape the existing vocabulary is for.
+Pressure is read once per kept sample through `evaluatePressureResponse`, so bounds, the
+strategy, and the codec all agree by construction rather than by review.
+
+Two rules the implementation had to add, neither of which the representation implies:
+
+- **Pressure is smoothed by the same window as position, and pinned at both ends.** A
+  width that steps between samples is as visible as a position that does, and the same
+  fixed-radius window is what lets both settle. Pinning the terminal sample means a stroke
+  ends at exactly the pressure the pen lifted on.
+- **Device-edge input is normalized at the strategy boundary, not trusted.** `StrokeBuilder`
+  already refuses a pressure outside `[0, 1]` or a non-finite one, but the strategy is
+  reachable directly; a NaN radius would poison every bound derived from it, so it clamps
+  and substitutes 0.5 for a non-finite value.
+
+Taper stayed out, for the reason above and one more: it has no durable field, and adding
+one to serve a single strategy would be speculative. It is a focused follow-up.
+
 ## 9. Velocity
 
 Today `StrokePoint.velocity` is computed in `StrokeBuilder` from smoothed positions and raw
@@ -542,6 +563,36 @@ Three consequences are worth stating:
   invalidate the model.
 - The painter is the only place that knows about Canvas 2D.
 
+**As implemented.** `stroked-path` and `filled-path` both exist, and both live in
+`internal/brush-geometry.ts` rather than inside whichever strategy happened to need one
+first. A `filled-path` carries left and right boundaries, round-cap markers at the two real
+ends, a variable-radius centerline that doubles as `hitGeometry`, and one or more **alpha
+bands**.
+
+Bands are the part the design did not anticipate, and they follow from a plain fact about
+the backend: Canvas has no alpha that varies along a path, and painting each span
+separately composites overlaps twice — the stroke darkens at its own joins, which is the
+failure `outline@1`'s single fill exists to avoid. So a run of samples at a similar alpha
+becomes one closed shape filled once:
+
+- a band is cut at the **midpoint of the span** between two samples, taken from that span's
+  own direction so it is unambiguous, and **both** bands are given the same two points.
+  They tile along a shared edge rather than overlapping across one;
+- corners are tessellated into the boundary on the outside of a turn and take the bisector
+  on the inside, so a join is always interior to a band and never straddles a cut;
+- a deadband of one part in sixty-four, plus a minimum band length of sixteen spans, bound
+  how many fills a stroke costs *relative to the boundary they ride on*. Measured on the
+  performance fixture, whose pressure is an adversarial sawtooth, that holds at one fill
+  per forty-six boundary vertices from a thousand samples to twenty thousand — 867 fills
+  for a 20 000-sample stroke, which still leaves every frame inside its budget. A brush
+  with `pressureOpacity` disabled resolves to one band and one fill, which is the same
+  opacity guarantee `outline@1` gives.
+
+The boundary is straight between samples, so unlike a stroked path a filled one must sample
+closer together when zoomed. That is why the rendered scale is fixed when an evaluator is
+created rather than asked for per frame: a scale supplied per frame would mean discarding
+everything settled the moment the canvas zoomed.
+
 ## 15. Bounds and hit geometry
 
 Every strategy supplies three pure, Canvas-free outputs:
@@ -565,6 +616,17 @@ Two existing gaps this contract gives a home to, neither of which blocks Technic
 hit testing is currently bounds-only in the editor, and the centerline bounds helper
 derives its radius from the stroke's *average* width, which understates a high-pressure
 end.
+
+**As implemented for `pressure-pen@1`.** `hitGeometry` exists and is the variable-radius
+centerline, carried by the same geometry the painter reads, so there is no second pass and
+nothing to keep in step. Editor hit testing stays bounds-only and stays strategy-independent;
+supplying the radii is what this phase owed it, and consuming them is a separate change to
+the editor rather than a strategy-shaped one.
+
+Bounds are folded from each kept sample's own disc plus each cut's, which contains every
+boundary point, corner arc and cap by construction — so they cannot under-report and leave
+a trail on the canvas. Settled discs are folded once; the open tail is folded per frame, so
+a bound costs the tail rather than the stroke, exactly as its geometry does.
 
 ## 16. Transforms
 
@@ -919,6 +981,23 @@ Technical Pen plus dynamics. The split that matters:
 
 Shared evaluation is reusable by Pencil and Marker; outline construction is not. Keeping
 that line sharp is what stops E3 from becoming a second engine.
+
+**As shipped.** Pressure to size and pressure to opacity are shared, evaluated through
+`evaluatePressureResponse` and `brushSizeAtPressure`; variable-width boundary
+construction, its corners and caps, and the terminal dot belong to the strategy. The line
+held: `pressure-pen@1` is about four hundred lines and imports no legacy geometry.
+
+Two items on the left of that table did not ship, deliberately. **Taper** is a function of
+progress rather than of pressure, has no durable field, and faking it by bending a pressure
+curve would put a lie in every saved file. **Velocity** is not derived at all: Pressure Pen
+is pressure-driven, and a durable velocity response would have expanded E3 into a different
+brush. Both remain for a focused follow-up.
+
+One rule was added that the table does not mention, because it belongs to neither column:
+**a mouse's synthetic pressure must not drive expression.** An `outline@1` preset answers
+that by resolving to centerline; a strategy that reads pressure per sample keeps its own
+strategy and resolves its responses off instead, so the mark is the brush exactly as
+configured. See D-030.
 
 ### Later — Pencil
 

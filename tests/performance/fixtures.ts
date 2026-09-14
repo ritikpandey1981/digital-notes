@@ -15,8 +15,13 @@ import {
 import type { FolioProjectSnapshot } from "../../packages/persistence/src/project/index";
 
 export const TIMESTAMP = "2026-09-13T00:00:00.000Z";
-/** Every measurable strategy shares size, opacity and smoothing, so a comparison is like for like. */
-export type BaselineBrushKind = "centerline" | "outline" | "technical-pen";
+/**
+ * Every measurable strategy shares size, opacity and smoothing, so a comparison
+ * is like for like. Dynamics are not shared, because they are the work: each
+ * kind carries exactly what the preset shipped on it carries, so what is being
+ * measured is what an artist actually pays for.
+ */
+export type BaselineBrushKind = "centerline" | "outline" | "technical-pen" | "pressure-pen";
 
 export function brush(kind: BaselineBrushKind) {
   return createResolvedBrushSnapshot({
@@ -30,17 +35,25 @@ export function brush(kind: BaselineBrushKind) {
     smoothing: { mode: "average", amount: 0.25 },
     dynamics: {
       pressureSize: {
-        enabled: kind === "outline",
+        enabled: kind === "outline" || kind === "pressure-pen",
         minimumFactor: 0.35,
         maximumFactor: 1.65,
         curve: { kind: "linear", exponent: 1 },
       },
-      pressureOpacity: {
-        enabled: false,
-        minimumFactor: 1,
-        maximumFactor: 1,
-        curve: { kind: "linear", exponent: 1 },
-      },
+      pressureOpacity:
+        kind === "pressure-pen"
+          ? {
+              enabled: true,
+              minimumFactor: 0.7,
+              maximumFactor: 1,
+              curve: { kind: "power", exponent: 0.55 },
+            }
+          : {
+              enabled: false,
+              minimumFactor: 1,
+              maximumFactor: 1,
+              curve: { kind: "linear", exponent: 1 },
+            },
     },
     renderer: { version: 1, kind },
   });

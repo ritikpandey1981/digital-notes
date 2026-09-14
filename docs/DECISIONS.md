@@ -436,3 +436,39 @@ bounded neighbourhood, or it rebuilds per frame as the frozen legacy strategies 
 Reaching for a whole-stroke statistic — a diagonal, a mean spacing, an error budget fitted
 across every sample — forfeits both properties at once. Live and committed must stay one
 code path rather than two that are compared.
+
+## D-030 — Pressure drives appearance only through the durable response, and alpha is painted in bands
+
+**Status:** accepted
+
+`pressure-pen@1` varies width and opacity within a stroke. Both come from the responses
+the model has carried since Phase 17A and from nothing else: width is `brush.size` times
+the `pressureSize` response, alpha is `brush.opacity` times the `pressureOpacity` response,
+each applied exactly once. No second pressure model, no function-valued curve, no velocity
+term. `pressureOpacity` was durable, validated and serialized but never evaluated; this is
+what closes that gap, and it changes nothing about what a stroke already on disk means.
+
+Canvas 2D has no alpha that varies along a path, and painting each span separately would
+composite overlaps twice — a stroke that darkens at its own joins, which is the failure
+`outline@1`'s single fill exists to avoid. So a run of samples at a similar alpha becomes
+one closed shape filled once. Consecutive bands are cut at the midpoint of the span between
+two samples, from that span's own direction, and **both** bands are given the same two
+points: they tile along a shared edge instead of overlapping across one. A deadband of one
+part in sixty-four and a minimum band length bound how many fills a stroke costs; a brush
+with the response disabled is a single band and a single fill.
+
+A mouse reports a synthetic pressure fixed at 0.5, so it must not drive expression. An
+`outline@1` preset answers that by resolving to the constant-width centerline strategy,
+which is also far cheaper than its silhouette. A strategy that reads pressure per sample
+answers it differently and better: it keeps its own strategy and resolves its responses
+off, so the mark is the brush exactly as configured rather than wherever the middle of
+somebody's curve happens to land. That resolution is recorded durably, so reopening
+reproduces it.
+
+**Consequence:** an appearance that varies within a stroke must be expressible as a
+bounded number of uniformly-shaded, non-overlapping pieces, or it cannot be painted
+honestly in Canvas 2D at all. Pencil and Marker will hit this harder than Pressure Pen did,
+and the `stamps` primitive is where that goes — not a wider alpha-per-vertex fiction.
+Taper stays out: it is a function of position along the stroke rather than of pressure, it
+has no durable field yet, and bending a pressure curve to imitate it would put a lie in
+every saved file.

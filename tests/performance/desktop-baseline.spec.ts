@@ -165,7 +165,7 @@ test("measured desktop baseline (no speed thresholds)", async () => {
       );
       if (sanity.timedOut || sanity.states.some((state) => state.hidden || !state.focused))
         throw new Error("Live baseline did not obtain continuous foreground rAF observations");
-      for (const kind of ["centerline", "outline", "technical-pen"] as const) {
+      for (const kind of ["centerline", "outline", "technical-pen", "pressure-pen"] as const) {
         for (const [count, density] of [
           [100, 1],
           [1000, 4],

@@ -26,25 +26,34 @@ Cancellation clears transient state without a commit. Covered paths include
 ## Rendering
 
 A stroke names its render strategy durably as `(kind, version)` on its resolved snapshot,
-and a static registry resolves that identity to the code that draws it. Three are
+and a static registry resolves that identity to the code that draws it. Four are
 implemented:
 
 - `centerline@1` — constant width from one stroke-wide average; frozen;
 - `outline@1` — pressure-aware filled silhouette; frozen;
-- `technical-pen@1` — deterministic constant-width stroked path.
+- `technical-pen@1` — deterministic constant-width stroked path;
+- `pressure-pen@1` — pressure-driven variable width and opacity, filled.
 
 The two legacy strategies are frozen because saved artwork names them. A strategy whose
 appearance must change ships as its next version; an identity this build cannot draw is
 refused by name rather than substituted.
 
-Mouse can resolve an expressive preset to centerline behavior because it has fixed
-pressure. Technical Pen has no pressure response to downgrade. Tilt and twist are retained
-but do not currently influence rendering.
+Mouse can resolve an expressive `outline@1` preset to centerline behavior because it has
+fixed pressure and an expensive silhouette. Neither engine strategy needs that swap:
+Technical Pen has no pressure response to downgrade, and Pressure Pen at a constant
+pressure draws a constant width. Tilt and twist are retained but do not currently influence
+rendering.
 
-Technical Pen evaluates incrementally: geometry behind a settled watermark is computed once
-and reused, so a live frame costs the open tail rather than the stroke, and a stroke looks
-the same while it is drawn as it does once committed. The frozen strategies still rebuild
-per frame.
+Pressure reaches appearance only through `pressureSize` and `pressureOpacity` on the
+snapshot. Pressure Pen emits a `filled-path`: a closed variable-width silhouette, a
+variable-radius centerline that doubles as hit geometry, and one or more alpha bands. Bands
+exist because Canvas has no alpha that varies along a path; consecutive bands share their
+cut cross-section exactly, so two alphas meet on an edge rather than overlapping.
+
+Both engine strategies evaluate incrementally: geometry behind a settled watermark is
+computed once and reused, so a live frame costs the open tail rather than the stroke, and a
+stroke looks the same while it is drawn as it does once committed. The frozen strategies
+still rebuild per frame.
 
 Active rendering is frame-coalesced while useful source samples are preserved.
 Committed geometry is cached by immutable Stroke identity and object scale with bounded

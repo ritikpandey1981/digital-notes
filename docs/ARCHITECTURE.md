@@ -264,27 +264,38 @@ command.
 
 A committed stroke names its render strategy durably, as `(kind, version)` on its
 resolved brush snapshot, and a static registry resolves that identity to the code that
-draws it. Three strategies are implemented:
+draws it. Four strategies are implemented:
 
 | Strategy | Behavior |
 | --- | --- |
 | `centerline@1` | constant width from one stroke-wide average; frozen |
 | `outline@1` | pressure-aware filled silhouette; frozen |
 | `technical-pen@1` | deterministic constant-width stroked path |
+| `pressure-pen@1` | pressure-driven variable width and opacity, filled |
 
 `centerline@1` and `outline@1` are compatibility strategies: artwork already saved names
 them, so what they draw does not change. A strategy whose appearance must change ships as
 the next version of itself. An identity this build cannot draw is refused by name, never
 answered with a substitute.
 
-Viewport zoom does not resample the pressure silhouette. Mouse input can legitimately
-resolve an expressive outline preset to centerline behavior because its pressure is fixed;
-Technical Pen has no pressure response to downgrade and draws identically for every device.
+Mouse input can legitimately resolve an expressive `outline@1` preset to centerline
+behavior because its pressure is fixed and its silhouette is expensive. The two engine
+strategies need no such swap: Technical Pen has no pressure response to downgrade, and
+Pressure Pen at a constant synthetic pressure simply draws a constant width and a constant
+alpha. There is no device-specific input code anywhere below the pointer boundary.
 
-Technical Pen evaluates incrementally. Geometry behind a settled watermark is computed once
-and reused, so a live frame costs the open tail rather than the stroke, and the picture a
-stroke has while it is drawn is the picture it keeps when it commits. The frozen strategies
-still rebuild per frame, which is why long strokes remain expensive on them.
+Pressure reaches appearance only through the durable `pressureSize` and `pressureOpacity`
+responses on the snapshot. Width is the brush size times the size response; alpha is the
+brush opacity times the opacity response, applied once. Because Canvas has no alpha that
+varies along a path, Pressure Pen paints a run of samples at a similar alpha as one closed
+shape filled once, and cuts consecutive bands on a shared cross-section so two alphas meet
+on an edge instead of overlapping across one.
+
+Both engine strategies evaluate incrementally. Geometry behind a settled watermark is
+computed once and reused, so a live frame costs the open tail rather than the stroke, and
+the picture a stroke has while it is drawn is the picture it keeps when it commits. The
+frozen strategies still rebuild per frame, which is why long strokes remain expensive on
+them.
 
 ## Selection, manipulation, and editing
 

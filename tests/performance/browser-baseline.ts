@@ -124,7 +124,7 @@ export function runModels(
       ),
     );
   if (group === "stroke") {
-    for (const kind of ["centerline", "outline", "technical-pen"] as const) {
+    for (const kind of ["centerline", "outline", "technical-pen", "pressure-pen"] as const) {
       const source = points(size);
       const make = () => {
         const value = builder("long", kind);

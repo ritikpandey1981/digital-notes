@@ -99,18 +99,23 @@ and documented without weakening live/final stroke parity.
 
 ### Build the real brush engine
 
-Started. The engine has a versioned strategy vocabulary, a static registry, and one
-strategy of its own — `technical-pen@1`, a deterministic constant-width stroked path that
-evaluates incrementally and converges live on committed. The contract it was built against
+Started. The engine has a versioned strategy vocabulary, a static registry, and two
+strategies of its own. `technical-pen@1` is a deterministic constant-width stroked path;
+`pressure-pen@1` drives width and opacity from pressure across a filled silhouette. Both
+evaluate incrementally and converge live on committed. The contract they were built against
 is [`design/brush-engine-architecture.md`](design/brush-engine-architecture.md), and what
-it measured is [`performance/technical-pen-e2.md`](performance/technical-pen-e2.md).
-`centerline@1` and `outline@1` are frozen compatibility strategies.
+they measured is [`performance/technical-pen-e2.md`](performance/technical-pen-e2.md) and
+[`performance/pressure-pen-e3.md`](performance/pressure-pen-e3.md). `centerline@1` and
+`outline@1` are frozen compatibility strategies. Two presets have moved:
+`pen-technical` and `pen-brush`.
 
 Remaining:
 
-- Pressure Pen: pressure to width, optional pressure to opacity, taper, and a shared
-  velocity derivation. `pressureOpacity` is modelled and serialized but still evaluates
-  to nothing.
+- Taper: a function of position along the stroke, not a pressure response, and it has no
+  durable representation yet. Deferred deliberately rather than faked by bending a
+  pressure curve.
+- A shared velocity derivation, for strategies that want it. Pressure Pen is
+  pressure-driven and does not.
 - Pencil and Marker: spacing, stamps, deterministic variation, and tip profiles. Neither
   exists; watercolor, pastel and airbrush are not planned for v1.
 - Give catalogue identities genuinely distinct behavior or reduce/catalogue-group the
