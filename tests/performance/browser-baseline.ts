@@ -16,7 +16,7 @@ import {
   encodeFolioProject,
   decodeFolioProject,
 } from "../../packages/persistence/src/project/index";
-import { builder, brush, fixture, points, TIMESTAMP } from "./fixtures";
+import { builder, brush, fixture, points, TIMESTAMP, type BaselineBrushKind } from "./fixtures";
 import { measure, measureAsync, summarize, type Measurement } from "./metrics";
 
 export { fixture, measureAsync };
@@ -124,7 +124,7 @@ export function runModels(
       ),
     );
   if (group === "stroke") {
-    for (const kind of ["centerline", "outline"] as const) {
+    for (const kind of ["centerline", "outline", "technical-pen"] as const) {
       const source = points(size);
       const make = () => {
         const value = builder("long", kind);
@@ -332,7 +332,7 @@ export function runModels(
 
 /** Uses the real input controller and live renderer on a visible canvas, with a timed native rAF adapter. */
 export async function runLive(
-  kind: "centerline" | "outline",
+  kind: BaselineBrushKind,
   count: number,
   samplesPerFrame: number,
 ): Promise<Measurement[]> {

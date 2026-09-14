@@ -67,21 +67,31 @@ export interface StrokedPathRenderGeometry {
   readonly keptPointCount: number;
 }
 
-/** Structural evidence that live evaluation reuses settled work rather than redoing it. */
-export interface TechnicalPenEvaluationSnapshot {
+/**
+ * Structural evidence that live evaluation reuses settled work rather than
+ * redoing it.
+ *
+ * Deliberately counters rather than timings: a per-frame rebuild shows up as
+ * settled samples being evaluated more than once, which a clock cannot
+ * distinguish from a slow machine.
+ */
+export interface LiveEvaluationSnapshot {
+  /** Samples evaluated into permanent geometry. Should equal the settled sample count. */
   readonly settledPointEvaluations: number;
   readonly tailPointEvaluations: number;
   readonly maximumTailPointEvaluations: number;
   readonly settledSegmentCount: number;
   readonly segmentCount: number;
   readonly keptPointCount: number;
-  readonly smoothingRadius: number;
+  /** How many later samples a sample must wait for before it can settle. */
+  readonly lookaheadSamples: number;
 }
 
 /** An evaluator a live renderer can feed a growing sample array without rebuilding. */
 export interface LiveBrushEvaluator {
   append(points: readonly StrokePoint[], final: boolean): void;
   geometry(renderedScale: number): StrokedPathRenderGeometry;
+  evaluationSnapshot(): LiveEvaluationSnapshot;
 }
 
 interface EvaluatedPoint {
@@ -100,6 +110,7 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
   readonly #width: number;
   readonly #smoothingRadius: number;
   readonly #smoothingAmount: number;
+  readonly #lookaheadSamples: number;
   readonly #minimumSpacing: number;
   readonly #kept: EvaluatedPoint[] = [];
   readonly #segments: StrokedPathSegment[] = [];
@@ -125,6 +136,9 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
     this.#smoothingRadius = active
       ? Math.min(MAXIMUM_SMOOTHING_RADIUS, 1 + Math.floor(this.#smoothingAmount * 3))
       : 0;
+    // At least one sample is always held back, so the terminal sample reaches
+    // the rule that keeps it regardless of spacing.
+    this.#lookaheadSamples = Math.max(this.#smoothingRadius, 1);
     this.#minimumSpacing = clamp(
       brush.size * SPACING_WIDTH_FACTOR,
       MINIMUM_SPACING_FLOOR,
@@ -150,8 +164,7 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
     // A point settles once smoothing can no longer move it. The terminal sample
     // is always held back until `final`, because only then does it know it is
     // terminal and qualify for the rule that keeps it regardless of spacing.
-    const reserved = Math.max(this.#smoothingRadius, 1);
-    const settleLimit = final ? points.length : Math.max(0, points.length - reserved);
+    const settleLimit = final ? points.length : Math.max(0, points.length - this.#lookaheadSamples);
     while (this.#settledRawCount < settleLimit) {
       const index = this.#settledRawCount;
       this.#settledPointEvaluations += 1;
@@ -163,7 +176,11 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
     this.#tailPointEvaluations = 0;
     for (let index = this.#settledRawCount; index < points.length; index += 1) {
       this.#tailPointEvaluations += 1;
-      this.#consume(points, index, false);
+      // The newest sample is treated as terminal whether or not the stroke has
+      // ended. It keeps the drawn tip exactly under the pen instead of lagging
+      // behind it, and it is why lifting the pen moves nothing: the endpoint was
+      // already being evaluated by the rule the committed path will use.
+      this.#consume(points, index, index === points.length - 1);
     }
     this.#maximumTailPointEvaluations = Math.max(
       this.#maximumTailPointEvaluations,
@@ -202,7 +219,7 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
     return this.#geometry(renderedScale, Object.freeze([...this.#segments]));
   }
 
-  evaluationSnapshot(): TechnicalPenEvaluationSnapshot {
+  evaluationSnapshot(): LiveEvaluationSnapshot {
     return Object.freeze({
       settledPointEvaluations: this.#settledPointEvaluations,
       tailPointEvaluations: this.#tailPointEvaluations,
@@ -210,7 +227,7 @@ export class TechnicalPenEvaluator implements LiveBrushEvaluator {
       settledSegmentCount: this.#settledSegmentCount,
       segmentCount: this.#segments.length,
       keptPointCount: this.#kept.length,
-      smoothingRadius: this.#smoothingRadius,
+      lookaheadSamples: this.#lookaheadSamples,
     });
   }
 

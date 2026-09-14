@@ -15,7 +15,10 @@ import {
 import type { FolioProjectSnapshot } from "../../packages/persistence/src/project/index";
 
 export const TIMESTAMP = "2026-09-13T00:00:00.000Z";
-export function brush(kind: "centerline" | "outline") {
+/** Every measurable strategy shares size, opacity and smoothing, so a comparison is like for like. */
+export type BaselineBrushKind = "centerline" | "outline" | "technical-pen";
+
+export function brush(kind: BaselineBrushKind) {
   return createResolvedBrushSnapshot({
     schemaVersion: 1,
     presetId: `baseline-${kind}`,
@@ -58,7 +61,7 @@ export function points(count: number, offset = 0): StrokePointInput[] {
   }));
 }
 
-export function builder(id: string, kind: "centerline" | "outline" = "outline") {
+export function builder(id: string, kind: BaselineBrushKind = "outline") {
   return new StrokeBuilder({
     id,
     timestamp: 0,

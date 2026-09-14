@@ -2,12 +2,14 @@ import { RenderScheduler, type Point, type Rect, type Viewport } from "@folio/re
 import { InkError } from "./errors";
 import {
   createBrushRenderGeometry,
+  createLiveBrushEvaluator,
   drawBrushRenderGeometry,
   resolveStrokeRenderGeometry,
   type BrushRenderGeometry,
 } from "./internal/brush-render-strategy";
 import { drawStrokePoints } from "./internal/draw-stroke";
 import { freezeRect, unionRects } from "./internal/geometry";
+import type { LiveBrushEvaluator, LiveEvaluationSnapshot } from "./internal/technical-pen";
 import { getStrokeRenderedBounds } from "./rendered-stroke-bounds";
 import type { Stroke } from "./stroke";
 import type {
@@ -22,6 +24,14 @@ import type {
 interface LiveStrokeState {
   readonly id: string;
   readonly brush: import("./brush-model").ResolvedBrushSnapshot;
+  /**
+   * The stroke's incremental evaluator, when its strategy has one.
+   *
+   * Holding it for the life of the gesture is the whole point: geometry behind
+   * the settled watermark is computed once and reused every frame after, so a
+   * frame costs the open tail rather than the stroke.
+   */
+  readonly evaluator: LiveBrushEvaluator | null;
   points: ReadonlyArray<StrokePoint>;
   dirtyRect: Rect;
 }
@@ -116,6 +126,7 @@ export class StrokeRenderer {
     this.liveStroke = {
       id: update.strokeId,
       brush: update.brush,
+      evaluator: createLiveBrushEvaluator(update.brush),
       points: update.points,
       dirtyRect: update.dirtyRect,
     };
@@ -305,6 +316,15 @@ export class StrokeRenderer {
     this.updateCanvasDiagnostics();
   }
 
+  /**
+   * How the active stroke's incremental evaluator is doing, or null when its
+   * strategy has none. The counters are what make "the tail, not the stroke"
+   * an assertion rather than a claim.
+   */
+  liveEvaluationSnapshot(): LiveEvaluationSnapshot | null {
+    return this.liveStroke?.evaluator?.evaluationSnapshot() ?? null;
+  }
+
   snapshot(): StrokeRendererSnapshot {
     return Object.freeze({
       finalizedStrokeCount: this.finalizedStrokes.length,
@@ -345,6 +365,20 @@ export class StrokeRenderer {
 
   private renderIncrementalFrame(): void {
     if (this.destroyed || this.liveStroke === null || this.pendingDirtyRect === null) return;
+    const evaluator = this.liveStroke.evaluator;
+    if (evaluator !== null) {
+      // Only the samples this frame added are evaluated; everything settled is
+      // already in the evaluator's geometry and is never rebuilt.
+      evaluator.append(this.liveStroke.points, false);
+      const geometry = evaluator.geometry(1);
+      const affected = unionRects(this.liveStroke.dirtyRect, inflateRect(geometry.bounds, 2));
+      this.liveStroke.dirtyRect = affected;
+      this.recordInvalidation(affected);
+      this.pendingDirtyRect = null;
+      this.renderedLivePointCount = this.liveStroke.points.length;
+      this.clearAndRedrawRegion(affected, true, geometry);
+      return;
+    }
     if (requiresFullGeometry(this.liveStroke.brush)) {
       const geometry = createBrushRenderGeometry(this.liveStroke.points, this.liveStroke.brush);
       const affected = unionRects(this.liveStroke.dirtyRect, inflateRect(geometry.bounds, 2));
@@ -432,6 +466,11 @@ export class StrokeRenderer {
 
   private drawLiveStroke(state: LiveStrokeState): void {
     if (state.points.length === 0) return;
+    if (state.evaluator !== null) {
+      state.evaluator.append(state.points, false);
+      drawBrushRenderGeometry(this.context, state.evaluator.geometry(1), state.brush);
+      return;
+    }
     if (!requiresFullGeometry(state.brush)) {
       this.drawPoints(state.points, state.brush, 0);
       return;

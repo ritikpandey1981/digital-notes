@@ -266,7 +266,7 @@ describe("technical-pen@1", () => {
 
     const snapshot = evaluator.evaluationSnapshot();
     expect(snapshot.settledPointEvaluations).toBe(points.length);
-    expect(snapshot.maximumTailPointEvaluations).toBeLessThanOrEqual(snapshot.smoothingRadius + 1);
+    expect(snapshot.maximumTailPointEvaluations).toBeLessThanOrEqual(snapshot.lookaheadSamples + 1);
     expect(snapshot.segmentCount).toBe(snapshot.settledSegmentCount);
   });
 
