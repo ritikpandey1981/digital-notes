@@ -1,5 +1,6 @@
 import type { Rect } from "@folio/rendering";
-import type { ResolvedBrushSnapshot } from "../brush-model";
+import { brushStrategyKey, type BrushStrategyId, type ResolvedBrushSnapshot } from "../brush-model";
+import { InkError } from "../errors";
 import type { Stroke } from "../stroke";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
@@ -40,6 +41,117 @@ export interface StrokeRenderCacheSnapshot {
 const strokeCaches = new WeakMap<Stroke, StrokeRenderCache>();
 const MAX_OUTLINE_SCALE_CACHE_ENTRIES = 8;
 
+/**
+ * One render strategy: the code that turns a resolved snapshot plus samples
+ * into geometry, and the code that paints that geometry.
+ *
+ * A strategy is addressed only by its durable `(id, version)` identity, so
+ * nothing in a saved project ever names a module or a function. Lookup is a
+ * static table: this is dispatch, not a plugin system, and there is deliberately
+ * no runtime registration and no third-party extension point.
+ */
+interface BrushRenderStrategy {
+  readonly id: BrushStrategyId;
+  readonly version: number;
+  /** Transient geometry for the samples seen so far. */
+  readonly createGeometry: (
+    points: readonly StrokePoint[],
+    brush: ResolvedBrushSnapshot,
+    renderedScale: number,
+  ) => BrushRenderGeometry;
+  /** Geometry for one finalized stroke, cached by immutable Stroke identity and scale. */
+  readonly resolveGeometry: (stroke: Stroke, renderedScale: number) => BrushRenderGeometry;
+  readonly draw: (
+    context: CanvasRenderingContext2D,
+    geometry: BrushRenderGeometry,
+    brush: ResolvedBrushSnapshot,
+  ) => void;
+}
+
+const LEGACY_CENTERLINE_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
+  id: "centerline",
+  version: 1,
+  createGeometry: (points, brush, renderedScale) =>
+    createCenterlineGeometry(
+      createProfessionalInkPath(points, brush.smoothing),
+      brush,
+      renderedScale,
+    ),
+  resolveGeometry: (stroke, renderedScale) => {
+    const cache = legacyCache(stroke);
+    return renderedScale === 1
+      ? cache.centerline
+      : createCenterlineGeometry(cache.path, stroke.brush, renderedScale);
+  },
+  draw: (context, geometry, brush) => {
+    if (geometry.kind !== "centerline") return;
+    drawSmoothStrokeSegments(
+      context,
+      geometry.path.points,
+      geometry.path.segments,
+      brush,
+      geometry.renderedScale,
+    );
+  },
+});
+
+const LEGACY_OUTLINE_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
+  id: "outline",
+  version: 1,
+  createGeometry: (points, brush, renderedScale) =>
+    createOutlineGeometry(createProfessionalInkPath(points, brush.smoothing), brush, renderedScale),
+  resolveGeometry: (stroke, renderedScale) => {
+    const cache = legacyCache(stroke);
+    let outline = cache.outlines.get(renderedScale);
+    if (outline === undefined) {
+      outline = createOutlineGeometry(cache.path, stroke.brush, renderedScale);
+      if (cache.outlines.size >= MAX_OUTLINE_SCALE_CACHE_ENTRIES) {
+        const oldestScale = cache.outlines.keys().next().value as number | undefined;
+        if (oldestScale !== undefined) cache.outlines.delete(oldestScale);
+      }
+      cache.outlines.set(renderedScale, outline);
+      cache.outlineBuildCount += 1;
+    }
+    return outline;
+  },
+  draw: (context, geometry, brush) => {
+    if (geometry.kind !== "outline") return;
+    drawOutline(context, geometry.outline, brush);
+  },
+});
+
+const BRUSH_RENDER_STRATEGIES: ReadonlyMap<string, BrushRenderStrategy> = new Map(
+  [LEGACY_CENTERLINE_STRATEGY, LEGACY_OUTLINE_STRATEGY].map((strategy) => [
+    brushStrategyKey(strategy.id, strategy.version),
+    strategy,
+  ]),
+);
+
+/** Every strategy identity the renderer can actually draw, for drift tests. */
+export function registeredBrushStrategies(): readonly string[] {
+  return Object.freeze([...BRUSH_RENDER_STRATEGIES.keys()].sort());
+}
+
+/**
+ * Resolves one durable strategy identity to the code that draws it.
+ *
+ * A snapshot that names something this build cannot render fails loudly.
+ * Substituting a nearby strategy would silently change what saved artwork looks
+ * like, which is the one outcome the versioned vocabulary exists to prevent.
+ */
+function requireBrushRenderStrategy(brush: ResolvedBrushSnapshot): BrushRenderStrategy {
+  const key = brushStrategyKey(brush.renderer.kind, brush.renderer.version);
+  const strategy = BRUSH_RENDER_STRATEGIES.get(key);
+  if (strategy === undefined) {
+    throw new InkError(
+      "UNSUPPORTED_BRUSH_STRATEGY",
+      `Brush render strategy '${key}' is not registered.`,
+      { kind: brush.renderer.kind, version: brush.renderer.version },
+    );
+  }
+  return strategy;
+}
+
 /** Builds transient geometry for the latest active-stroke points. */
 export function createBrushRenderGeometry(
   points: readonly StrokePoint[],
@@ -47,8 +159,7 @@ export function createBrushRenderGeometry(
   renderedScale = 1,
 ): BrushRenderGeometry {
   assertScale(renderedScale);
-  const path = createProfessionalInkPath(points, brush.smoothing);
-  return createGeometry(path, brush, renderedScale);
+  return requireBrushRenderStrategy(brush).createGeometry(points, brush, renderedScale);
 }
 
 /** Reuses strategy-specific geometry derived only from one immutable Stroke snapshot. */
@@ -57,29 +168,7 @@ export function resolveStrokeRenderGeometry(
   renderedScale = 1,
 ): BrushRenderGeometry {
   assertScale(renderedScale);
-  let cache = strokeCaches.get(stroke);
-  if (cache === undefined) {
-    const path = createProfessionalInkPath(stroke.points, stroke.brush.smoothing);
-    const centerline = createCenterlineGeometry(path, stroke.brush, 1);
-    cache = { path, centerline, outlines: new Map(), outlineBuildCount: 0 };
-    strokeCaches.set(stroke, cache);
-  }
-  if (stroke.brush.renderer.kind === "centerline") {
-    return renderedScale === 1
-      ? cache.centerline
-      : createCenterlineGeometry(cache.path, stroke.brush, renderedScale);
-  }
-  let outline = cache.outlines.get(renderedScale);
-  if (outline === undefined) {
-    outline = createOutlineGeometry(cache.path, stroke.brush, renderedScale);
-    if (cache.outlines.size >= MAX_OUTLINE_SCALE_CACHE_ENTRIES) {
-      const oldestScale = cache.outlines.keys().next().value as number | undefined;
-      if (oldestScale !== undefined) cache.outlines.delete(oldestScale);
-    }
-    cache.outlines.set(renderedScale, outline);
-    cache.outlineBuildCount += 1;
-  }
-  return outline;
+  return requireBrushRenderStrategy(stroke.brush).resolveGeometry(stroke, renderedScale);
 }
 
 export function drawBrushRenderGeometry(
@@ -87,17 +176,7 @@ export function drawBrushRenderGeometry(
   geometry: BrushRenderGeometry,
   brush: ResolvedBrushSnapshot,
 ): void {
-  if (geometry.kind === "centerline") {
-    drawSmoothStrokeSegments(
-      context,
-      geometry.path.points,
-      geometry.path.segments,
-      brush,
-      geometry.renderedScale,
-    );
-    return;
-  }
-  drawOutline(context, geometry.outline, brush);
+  requireBrushRenderStrategy(brush).draw(context, geometry, brush);
 }
 
 export function getStrokeRenderCacheSnapshot(stroke: Stroke): StrokeRenderCacheSnapshot {
@@ -109,14 +188,16 @@ export function getStrokeRenderCacheSnapshot(stroke: Stroke): StrokeRenderCacheS
   });
 }
 
-function createGeometry(
-  path: ProfessionalInkPath,
-  brush: ResolvedBrushSnapshot,
-  renderedScale: number,
-): BrushRenderGeometry {
-  return brush.renderer.kind === "outline"
-    ? createOutlineGeometry(path, brush, renderedScale)
-    : createCenterlineGeometry(path, brush, renderedScale);
+/** The fitted path both frozen legacy strategies share, built once per Stroke. */
+function legacyCache(stroke: Stroke): StrokeRenderCache {
+  let cache = strokeCaches.get(stroke);
+  if (cache === undefined) {
+    const path = createProfessionalInkPath(stroke.points, stroke.brush.smoothing);
+    const centerline = createCenterlineGeometry(path, stroke.brush, 1);
+    cache = { path, centerline, outlines: new Map(), outlineBuildCount: 0 };
+    strokeCaches.set(stroke, cache);
+  }
+  return cache;
 }
 
 function createCenterlineGeometry(

@@ -13,6 +13,7 @@ export type InkErrorCode =
   | "NO_ACTIVE_STROKE"
   | "POINTER_CAPTURE_FAILED"
   | "RENDERER_DESTROYED"
+  | "UNSUPPORTED_BRUSH_STRATEGY"
   | "UNSUPPORTED_POINTER";
 
 export class InkError extends Error {

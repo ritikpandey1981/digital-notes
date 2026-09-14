@@ -19,7 +19,9 @@ describe("@folio/ink public API", () => {
       "getStrokeRenderedBounds",
       "getStrokeTransformPivot",
       "getStrokeVisualLocalBounds",
+      "isSupportedBrushStrategy",
       "resolveBrushPreset",
+      "supportedBrushStrategies",
     ]);
   });
 

@@ -1,7 +1,10 @@
 import {
   Stroke,
   createResolvedBrushSnapshot,
+  isSupportedBrushStrategy,
+  supportedBrushStrategies,
   type BrushPressureResponse,
+  type BrushStrategyId,
   type ResolvedBrushSnapshot,
   type StrokeBounds,
   type StrokeData,
@@ -417,11 +420,16 @@ function parseBrush(value: unknown, path: string): ResolvedBrushSnapshot {
   );
   const rendererRecord = expectRecord(record.renderer, `${path}.renderer`, "INVALID_INK");
   assertExactKeys(rendererRecord, ["version", "kind"], [], `${path}.renderer`, "INVALID_INK");
-  if (
-    rendererRecord.version !== 1 ||
-    (rendererRecord.kind !== "centerline" && rendererRecord.kind !== "outline")
-  ) {
-    fail("INVALID_INK", `${path}.renderer`, "Resolved brush renderer is invalid.");
+  // Validated against the engine's own vocabulary rather than against literals
+  // repeated here, so the codec and the renderer cannot drift. A strategy this
+  // build cannot draw is refused by name: falling back to a nearby strategy
+  // would silently change what saved artwork looks like.
+  if (!isSupportedBrushStrategy(rendererRecord.kind, rendererRecord.version)) {
+    fail("INVALID_INK", `${path}.renderer`, "Resolved brush render strategy is not supported.", {
+      kind: rendererRecord.kind,
+      version: rendererRecord.version,
+      supported: supportedBrushStrategies(),
+    });
   }
   const decoded: ResolvedBrushSnapshot = {
     schemaVersion: 1,
@@ -442,7 +450,10 @@ function parseBrush(value: unknown, path: string): ResolvedBrushSnapshot {
         `${path}.dynamics.pressureOpacity`,
       ),
     },
-    renderer: { version: 1, kind: rendererRecord.kind },
+    renderer: {
+      version: rendererRecord.version as number,
+      kind: rendererRecord.kind as BrushStrategyId,
+    },
   };
   return constructOrFail("INVALID_INK", path, "Resolved brush data failed Ink validation.", () =>
     createResolvedBrushSnapshot(decoded),

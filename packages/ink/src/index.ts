@@ -3,7 +3,9 @@ export {
   createBrushPreset,
   createResolvedBrushSnapshot,
   evaluatePressureResponse,
+  isSupportedBrushStrategy,
   resolveBrushPreset,
+  supportedBrushStrategies,
   type BrushDynamics,
   type BrushFamily,
   type BrushPreset,
@@ -14,6 +16,7 @@ export {
   type BrushRendererDefinition,
   type BrushRendererKind,
   type BrushSmoothing,
+  type BrushStrategyId,
   type ResolvedBrushOverrides,
   type ResolvedBrushSnapshot,
 } from "./brush-model";

@@ -1,8 +1,50 @@
 import type { InkPointerType, StrokeSmoothingMode, StrokeStyle } from "./types";
 
 export type BrushFamily = "pencil" | "pen" | "marker" | "highlighter";
-export type BrushRendererKind = "centerline" | "outline";
+
+/**
+ * Every render strategy a committed stroke may durably name.
+ *
+ * `centerline` and `outline` are the two behaviours that existed before the
+ * engine had a vocabulary. Artwork already on disk names them, so what they
+ * draw is frozen; a strategy whose appearance must change ships as the next
+ * version of itself rather than being edited in place.
+ */
+export type BrushStrategyId = "centerline" | "outline";
+
+/** Retained spelling for the public boundary that predates the strategy vocabulary. */
+export type BrushRendererKind = BrushStrategyId;
+
 export type BrushPressureCurveKind = "linear" | "power";
+
+/**
+ * The exact strategy identities this build renders.
+ *
+ * Durable artwork selects a strategy by `(kind, version)`, so this set is the
+ * single place that decides what a project may legally contain. Entries are
+ * only ever added: removing one would stop a saved project from opening, and
+ * changing what one draws would silently rewrite artwork that already exists.
+ */
+const SUPPORTED_BRUSH_STRATEGIES: ReadonlySet<string> = new Set(["centerline@1", "outline@1"]);
+
+/** The lookup key one durable strategy identity resolves through. */
+export function brushStrategyKey(kind: string, version: number): string {
+  return `${kind}@${version}`;
+}
+
+/** True when this build can render exactly this durable strategy identity. */
+export function isSupportedBrushStrategy(kind: unknown, version: unknown): boolean {
+  return (
+    typeof kind === "string" &&
+    Number.isSafeInteger(version) &&
+    SUPPORTED_BRUSH_STRATEGIES.has(brushStrategyKey(kind, version as number))
+  );
+}
+
+/** Every strategy identity this build renders, for validation messages and drift tests. */
+export function supportedBrushStrategies(): readonly string[] {
+  return Object.freeze([...SUPPORTED_BRUSH_STRATEGIES].sort());
+}
 
 export interface BrushSmoothing {
   readonly mode: StrokeSmoothingMode;
@@ -28,8 +70,8 @@ export interface BrushDynamics {
 }
 
 export interface BrushRendererDefinition {
-  readonly version: 1;
-  readonly kind: BrushRendererKind;
+  readonly version: number;
+  readonly kind: BrushStrategyId;
 }
 
 export interface BrushPresetDefaults {
@@ -250,10 +292,15 @@ function freezePressureResponse(
 }
 
 function freezeRenderer(input: BrushRendererDefinition): BrushRendererDefinition {
-  if (input.version !== 1 || (input.kind !== "centerline" && input.kind !== "outline")) {
-    throw new TypeError("Brush renderer definition is invalid.");
+  // Validated against the vocabulary rather than against two literals, so the
+  // durable model and the renderer registry cannot drift into disagreeing about
+  // what a saved stroke is allowed to name.
+  if (!isSupportedBrushStrategy(input.kind, input.version)) {
+    throw new TypeError(
+      `Brush renderer strategy '${String(input.kind)}@${String(input.version)}' is not supported.`,
+    );
   }
-  return Object.freeze({ version: 1, kind: input.kind });
+  return Object.freeze({ version: input.version, kind: input.kind });
 }
 
 function assertIdentity(value: string, label: string): void {
