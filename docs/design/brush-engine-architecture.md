@@ -255,16 +255,20 @@ validated, and already the field the dispatcher reads. Use it.
 type BrushStrategyId =
   | "centerline"      // frozen legacy
   | "outline"         // frozen legacy
-  | "technical-pen"
-  | "pressure-pen"    // later
-  | "pencil"          // later
-  | "marker";         // later
+  | "technical-pen";  // pressure-pen, pencil and marker join as they ship
 
 interface BrushRendererDefinition {
   readonly version: number;        // widened from the literal 1
   readonly kind: BrushStrategyId;  // widened from "centerline" | "outline"
 }
 ```
+
+**As implemented.** One set of `"kind@version"` strings in `@folio/ink` is the whole
+vocabulary, and `isSupportedBrushStrategy` is exported so the codec validates through it
+rather than repeating literals. A second list, `registeredBrushStrategies`, reports what
+the renderer can actually draw, and a test asserts the two are equal — two tables that can
+disagree is the failure mode this arrangement exists to remove. An identity is added to
+both or to neither.
 
 Do **not** add `strategyId` and `strategyVersion` beside `renderer.kind`. Two fields
 answering one question is two things that can disagree, and the codec would have to decide
@@ -483,13 +487,31 @@ Split the live stroke at a watermark:
 
 - **Settled prefix** — samples behind the watermark. Evaluated once, by exactly the
   function the committed render will use, and never revisited. Painted once.
-- **Live tail** — a bounded window of recent samples, measured by arc length rather than by
-  count. Re-evaluated each frame and repainted into its own dirty rect.
+- **Live tail** — a bounded window of recent samples. Re-evaluated each frame.
 
 The watermark advances when a sample can no longer influence the geometry behind it, which
 requires the new strategy's fitting tolerance to depend on `brush.size` rather than on
 stroke extent. With that fixed, per-frame work is O(tail) rather than O(n), and the settled
-part is *bit-identical* to the committed result because it was produced by the same call.
+part is *identical* to the committed result because it was produced by the same call.
+
+**As implemented for `technical-pen@1`.** The window is counted in samples rather than arc
+length, because what a sample waits for is a fixed number of successors: smoothing reads a
+fixed radius, and a Catmull-Rom span reads one point back and two forward. The lookahead is
+therefore `max(smoothingRadius, 1)` samples, at most five, and per-frame evaluation is
+bounded by it.
+
+Three details the design did not anticipate, each of which the implementation had to settle:
+
+- **The newest sample is treated as terminal whether or not the stroke has ended.** It keeps
+  the drawn tip exactly under the pen rather than lagging behind it, and it is what makes
+  lifting the pen move nothing — the endpoint was already being evaluated by the rule the
+  committed path will use. Without this, live and committed differed by one point.
+- **At least one sample is always held back from settling.** The terminal sample is admitted
+  under a rule of its own, and it cannot reach that rule if it has already settled under the
+  ordinary one.
+- **Painting is not incremental, and does not need to be.** The whole path is one
+  `beginPath`/`stroke` under a single alpha, which is what stops opacity accumulating at
+  joins. Evaluation is what was expensive; a draw loop over cached cubics is not.
 
 This is the single most important architectural output of this document. It replaces the
 current choice between "cheap but divergent" and "convergent but quadratic" with a design
@@ -943,6 +965,12 @@ The 20 000-sample expectation deserves saying plainly: the settled-prefix design
 make long strokes *faster*, not merely no slower, because it removes the per-frame full
 rebuild. A Technical Pen that merely matches centerline at 20 000 samples has not
 implemented the contract in §13.
+
+**Result.** Measured in [`../performance/technical-pen-e2.md`](../performance/technical-pen-e2.md).
+Every criterion is met with room to spare: live callback work is 0.6 ms p95 on a short
+stroke and 2.3 ms at twenty thousand samples, input-to-callback-end holds at 8.6-8.7 ms at
+every length, no frame exceeded the budget in any workload, and geometry costs roughly a
+fourteenth of centerline. Both frozen strategies stayed inside the ±10% band.
 
 ### Architecture decisions that would make the baseline worse
 

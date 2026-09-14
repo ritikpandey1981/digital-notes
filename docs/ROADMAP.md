@@ -99,11 +99,23 @@ and documented without weakening live/final stroke parity.
 
 ### Build the real brush engine
 
+Started. The engine has a versioned strategy vocabulary, a static registry, and one
+strategy of its own — `technical-pen@1`, a deterministic constant-width stroked path that
+evaluates incrementally and converges live on committed. The contract it was built against
+is [`design/brush-engine-architecture.md`](design/brush-engine-architecture.md), and what
+it measured is [`performance/technical-pen-e2.md`](performance/technical-pen-e2.md).
+`centerline@1` and `outline@1` are frozen compatibility strategies.
+
+Remaining:
+
+- Pressure Pen: pressure to width, optional pressure to opacity, taper, and a shared
+  velocity derivation. `pressureOpacity` is modelled and serialized but still evaluates
+  to nothing.
+- Pencil and Marker: spacing, stamps, deterministic variation, and tip profiles. Neither
+  exists; watercolor, pastel and airbrush are not planned for v1.
 - Give catalogue identities genuinely distinct behavior or reduce/catalogue-group the
-  identities that currently share the same underlying preset. The 45-entry catalogue is
-  provisional and maps onto nine presets.
-- Add rendering behavior only when it is supported end-to-end; watercolor, pastel,
-  airbrush, and texture simulation are not currently implemented.
+  identities that share an underlying preset. The 45-entry catalogue is still provisional
+  and still maps onto nine presets; only `pen-technical` has moved to a real strategy.
 - Replace family-symbol slot glyphs with brush-accurate stroke previews.
 - Extend physical-device QA when tilt/twist begin affecting rendering.
 

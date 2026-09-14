@@ -80,12 +80,13 @@ canvas or continuous render loop. Presentation invalidation must remain explicit
 
 ## D-007 — Preserve exact Ink input
 
-**Status:** accepted
+**Status:** accepted; rendering boundary extended by D-028
 
 Committed strokes retain exact useful source/process samples, including timing,
 pressure, tilt, twist, buttons, and device information. Smoothing and fitted geometry
-are derived views. Existing centerline and outline strategies are the rendering
-boundary.
+are derived views. The rendering boundary is now the versioned strategy vocabulary rather
+than the two original behaviours; retaining source samples is unchanged, and a strategy
+that ignores a signal still may not discard it.
 
 **Consequence:** an optimization may change derived caches but not discard canonical
 source samples or change old strokes when a preset changes.
@@ -388,3 +389,50 @@ Recovered artwork is activated with no file and no checkpoint.
 save asks where to put it; opening the original is a separate, deliberate choice. A
 valid record is never deleted for being old, and is consumed only after the replacement
 it produced has committed.
+
+## D-028 — A stroke names its render strategy, and a shipped strategy is frozen
+
+**Status:** accepted
+
+`ResolvedBrushSnapshot.renderer` carries `(kind, version)`, and a static registry resolves
+that pair to the code that draws it. One set of identities in `@folio/ink` is the whole
+vocabulary; the codec validates through it rather than repeating literals, and a test
+asserts the vocabulary and the registry list the same identities.
+
+A shipped pair draws the same pixels for ever. `centerline@1` and `outline@1` are frozen at
+what they drew before the vocabulary existed, including centerline's stroke-wide average
+width. A strategy whose appearance must change ships as its next version, and old strokes
+keep naming the one they were drawn with.
+
+An identity this build cannot draw is refused by name, and the refusal is the whole decode.
+Answering it with a nearby strategy would open the project while silently redrawing
+somebody's artwork, which is worse than not opening it, because only one of those is
+visible to the person who drew it.
+
+**Consequence:** adding a strategy means adding an identity to the vocabulary and the
+registry together, never editing an existing one. `.folio` `formatVersion` does not change,
+because the document shape does not: what grows is the set of legal values inside a field
+that already existed. A file written by a newer build will not open in an older one, which
+is ordinary forward-incompatibility within a version rather than a format change.
+
+## D-029 — Live brush evaluation is prefix-stable, not rebuilt
+
+**Status:** accepted
+
+A brush strategy that evaluates incrementally must produce the same geometry for a prefix
+whether the stroke ends there or continues. `technical-pen@1` earns this at every stage:
+smoothing reads a fixed window, decimation is causal, and a span is a centripetal
+Catmull-Rom cubic reading one point back and two forward. Its spacing and tolerance come
+from the brush's own width, never from the stroke's extent.
+
+Geometry behind the settled watermark is computed once by exactly the function the
+committed render uses, so a live frame costs the open tail rather than the stroke, and
+committing replaces nothing. The newest sample is evaluated as terminal whether or not the
+stroke has ended, which keeps the drawn tip under the pen and is what makes lifting it move
+nothing.
+
+**Consequence:** a new strategy either derives its parameters from the brush and its own
+bounded neighbourhood, or it rebuilds per frame as the frozen legacy strategies still do.
+Reaching for a whole-stroke statistic — a diagonal, a mean spacing, an error budget fitted
+across every sample — forfeits both properties at once. Live and committed must stay one
+code path rather than two that are compared.

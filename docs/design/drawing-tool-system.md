@@ -173,6 +173,14 @@ replacing source data. Tilt and twist are captured but currently do not affect v
 output. Mouse pressure is fixed at `0.5`, so an expressive preset can resolve to its
 centerline fallback.
 
+A stroke names its render strategy durably. Three exist: `centerline@1` and `outline@1`,
+frozen so that artwork already saved keeps its appearance, and `technical-pen@1`, the first
+strategy built on the engine. Technical Pen is a deterministic constant-width solid stroke
+that ignores pressure for appearance while keeping every pressure sample, draws the same
+for a mouse as for a pen, and evaluates incrementally so that a stroke looks the same while
+it is drawn as it does once committed. Only the `pen-technical` preset uses it; every other
+preset is still on a frozen legacy strategy.
+
 Nonzero smoothing derives coordinates with a deterministic symmetric triangular moving
 average. The amount controls blend strength and a bounded one-to-four-sample radius;
 endpoints stay fixed and corner retention limits smoothing through handwriting turns.
@@ -312,7 +320,8 @@ Drawing surfaces use the shared owner-aware dismissal stack.
 
 ## Current limitations and future decisions
 
-- Catalogue names outnumber materially distinct rendering presets.
+- Catalogue names outnumber materially distinct rendering presets. Forty-five identities
+  still map onto nine presets, and only `pen-technical` has a strategy of its own.
 - Slot icons are family glyphs, not brush-accurate live previews.
 - The Drawing Property Rail routes to other surfaces rather than supporting direct
   value manipulation.

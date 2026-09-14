@@ -262,10 +262,29 @@ include `pointercancel`, lost capture, an uncaptured leave, tool detach/switch, 
 window blur. A completed stroke becomes one immutable Ink object and one History
 command.
 
-The renderer has two implemented behavior families: centerline and pressure-aware
-outline. Viewport zoom does not resample the pressure silhouette. Mouse input can
-legitimately resolve an expressive outline preset to centerline behavior because its
-pressure is fixed.
+A committed stroke names its render strategy durably, as `(kind, version)` on its
+resolved brush snapshot, and a static registry resolves that identity to the code that
+draws it. Three strategies are implemented:
+
+| Strategy | Behavior |
+| --- | --- |
+| `centerline@1` | constant width from one stroke-wide average; frozen |
+| `outline@1` | pressure-aware filled silhouette; frozen |
+| `technical-pen@1` | deterministic constant-width stroked path |
+
+`centerline@1` and `outline@1` are compatibility strategies: artwork already saved names
+them, so what they draw does not change. A strategy whose appearance must change ships as
+the next version of itself. An identity this build cannot draw is refused by name, never
+answered with a substitute.
+
+Viewport zoom does not resample the pressure silhouette. Mouse input can legitimately
+resolve an expressive outline preset to centerline behavior because its pressure is fixed;
+Technical Pen has no pressure response to downgrade and draws identically for every device.
+
+Technical Pen evaluates incrementally. Geometry behind a settled watermark is computed once
+and reused, so a live frame costs the open tail rather than the stroke, and the picture a
+stroke has while it is drawn is the picture it keeps when it commits. The frozen strategies
+still rebuild per frame, which is why long strokes remain expensive on them.
 
 ## Selection, manipulation, and editing
 

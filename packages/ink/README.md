@@ -25,21 +25,34 @@ Cancellation clears transient state without a commit. Covered paths include
 
 ## Rendering
 
-Two behavior kinds are implemented:
+A stroke names its render strategy durably as `(kind, version)` on its resolved snapshot,
+and a static registry resolves that identity to the code that draws it. Three are
+implemented:
 
-- centerline;
-- pressure-aware outline.
+- `centerline@1` — constant width from one stroke-wide average; frozen;
+- `outline@1` — pressure-aware filled silhouette; frozen;
+- `technical-pen@1` — deterministic constant-width stroked path.
+
+The two legacy strategies are frozen because saved artwork names them. A strategy whose
+appearance must change ships as its next version; an identity this build cannot draw is
+refused by name rather than substituted.
 
 Mouse can resolve an expressive preset to centerline behavior because it has fixed
-pressure. Tilt and twist are retained but do not currently influence rendering.
+pressure. Technical Pen has no pressure response to downgrade. Tilt and twist are retained
+but do not currently influence rendering.
+
+Technical Pen evaluates incrementally: geometry behind a settled watermark is computed once
+and reused, so a live frame costs the open tail rather than the stroke, and a stroke looks
+the same while it is drawn as it does once committed. The frozen strategies still rebuild
+per frame.
 
 Active rendering is frame-coalesced while useful source samples are preserved.
 Committed geometry is cached by immutable Stroke identity and object scale with bounded
 scale variants. Viewport zoom is not an object scale and does not rewrite the pressure
 silhouette.
 
-Very long outline strokes can exceed a 60 Hz frame near completion. Optimize only from
-profiling evidence and preserve live/final parity and source data.
+Very long strokes on the frozen strategies can exceed a 60 Hz frame near completion.
+Optimize only from profiling evidence and preserve live/final parity and source data.
 
 ## Public surface
 
