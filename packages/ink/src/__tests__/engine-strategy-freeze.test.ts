@@ -169,8 +169,8 @@ describe("frozen engine brush strategies", () => {
     expect(digests).toEqual([
       "technical-pen@0:x1q4l0",
       "technical-pen@0.3:a2i6kf",
-      "pressure-pen@0:iuzbgc",
-      "pressure-pen@0.18:5xlmoa",
+      "pressure-pen@0:6bm694",
+      "pressure-pen@0.18:92y0oo",
     ]);
   });
 
@@ -182,7 +182,7 @@ describe("frozen engine brush strategies", () => {
     const digests = [0.5, 2.5].map(
       (scale) => `${scale}:${hash(digest(resolveStrokeRenderGeometry(stroke, scale)))}`,
     );
-    expect(digests).toEqual(["0.5:7rwu", "2.5:hablqb"]);
+    expect(digests).toEqual(["0.5:58sh20", "2.5:1drflrf"]);
   });
 });
 

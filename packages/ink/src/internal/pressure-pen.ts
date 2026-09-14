@@ -63,13 +63,20 @@ const ALPHA_BAND_TOLERANCE = 1 / 64;
 /**
  * The shortest run of spans a band may cover before it may be cut again.
  *
- * The tolerance above already absorbs the pressure noise a real stylus
- * produces. This bounds the pathological case instead: a signal that swings
- * across the tolerance on every sample would otherwise buy one fill per sample,
- * and a fill per sample is the accumulating-alpha design this one exists to
- * avoid the cost of.
+ * The tolerance above absorbs the pressure noise a real stylus produces; this
+ * bounds the pathological case, where a signal swinging across that tolerance
+ * every few samples would otherwise buy a fill per sample.
+ *
+ * Sixteen because the cost that matters is fills relative to boundary points,
+ * not fills in absolute terms. A band covers at least sixteen spans, so it
+ * amortizes at least thirty-two vertices, and the banding overhead stays a
+ * bounded fraction of the drawing it rides on however long the stroke gets. At
+ * the decimation spacing that is roughly four brush widths -- long enough that
+ * an alpha change reads as a gradient along the stroke rather than a rung
+ * across it, and far shorter than a pen takes to change pressure by anything a
+ * reader could see.
  */
-const MINIMUM_BAND_SPANS = 4;
+const MINIMUM_BAND_SPANS = 16;
 
 const EMPTY_BANDS: readonly FilledPathBand[] = Object.freeze([]);
 const ZERO_DIRECTION: Point = Object.freeze({ x: 1, y: 0 });

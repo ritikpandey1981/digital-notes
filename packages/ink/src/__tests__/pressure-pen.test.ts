@@ -426,7 +426,7 @@ describe("Pressure Pen opacity", () => {
     const brush = pressurePen({ pressureOpacity: response(0.2, 1) });
     const noisy = samplesFor("curved", 400, (index) => (index % 2 === 0 ? 0.15 : 0.95));
     const geometry = evaluate(brush, noisy);
-    expect(geometry.bands.length).toBeLessThanOrEqual(Math.ceil(geometry.keptPointCount / 4) + 1);
+    expect(geometry.bands.length).toBeLessThanOrEqual(Math.ceil(geometry.keptPointCount / 16) + 1);
     expect(geometry.bands.length).toBeLessThan(geometry.keptPointCount);
   });
 
