@@ -25,7 +25,7 @@ describe("the Pressure Pen preset", () => {
 
     for (const preset of DEFAULT_BRUSH_PRESETS) {
       if (preset.id === PRESSURE_PEN_ID) continue;
-      expect(["centerline", "outline", "technical-pen"]).toContain(preset.renderer.kind);
+      expect(["centerline", "outline", "technical-pen", "pencil"]).toContain(preset.renderer.kind);
     }
   });
 
@@ -59,7 +59,9 @@ describe("the Pressure Pen preset", () => {
 
   it("leaves every other preset's dynamics exactly as they were", () => {
     for (const preset of DEFAULT_BRUSH_PRESETS) {
-      if (preset.id === PRESSURE_PEN_ID) continue;
+      // Pencil reads the same durable response, as coverage rather than as
+      // alpha, so it is the one other preset that legitimately enables it.
+      if (preset.id === PRESSURE_PEN_ID || preset.id === "pencil-hb") continue;
       expect(preset.dynamics.pressureOpacity).toEqual({
         enabled: false,
         minimumFactor: 1,
@@ -123,6 +125,6 @@ describe("the Pressure Pen preset", () => {
     store.selectPreset("pen", "pen-technical");
     expect(store.resolvedBrush("pen").renderer.kind).toBe("technical-pen");
     expect(store.resolvedBrush("marker").renderer.kind).toBe("centerline");
-    expect(store.resolvedBrush("pencil").renderer.kind).toBe("outline");
+    expect(store.resolvedBrush("pencil").renderer.kind).toBe("pencil");
   });
 });

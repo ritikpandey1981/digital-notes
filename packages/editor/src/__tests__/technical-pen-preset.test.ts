@@ -18,8 +18,8 @@ describe("the Technical Pen preset", () => {
     expect(onNewStrategy.map(({ id }) => id)).toEqual([TECHNICAL_PEN_ID]);
 
     for (const preset of DEFAULT_BRUSH_PRESETS) {
-      if (preset.id === TECHNICAL_PEN_ID || preset.id === "pen-brush") continue;
-      expect(["centerline", "outline"]).toContain(preset.renderer.kind);
+      if (preset.id === TECHNICAL_PEN_ID) continue;
+      expect(["centerline", "outline", "pressure-pen", "pencil"]).toContain(preset.renderer.kind);
     }
   });
 
@@ -83,6 +83,6 @@ describe("the Technical Pen preset", () => {
     store.selectPreset("pen", "pen-brush");
     expect(store.resolvedBrush("pen").renderer.kind).toBe("pressure-pen");
     expect(store.resolvedBrush("marker").renderer.kind).toBe("centerline");
-    expect(store.resolvedBrush("pencil").renderer.kind).toBe("outline");
+    expect(store.resolvedBrush("pencil").renderer.kind).toBe("pencil");
   });
 });

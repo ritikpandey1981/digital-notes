@@ -1,5 +1,5 @@
 import { InkObject } from "@folio/document";
-import { supportedBrushStrategies } from "@folio/ink";
+import { getStrokeVisualLocalBounds, supportedBrushStrategies } from "@folio/ink";
 import { describe, expect, it } from "vitest";
 import {
   FolioProjectCodecError,
@@ -158,11 +158,72 @@ describe("durable brush strategy decoding", () => {
     expect((JSON.parse(reencoded) as { formatVersion: number }).formatVersion).toBe(1);
   });
 
+  it("round-trips a Pencil stroke without persisting anything it generates", () => {
+    const record = encodedRecord(createRepresentativeProject());
+    const brush = inkBrush(record);
+    brush.renderer = { version: 1, kind: "pencil" };
+    brush.presetId = "pencil-hb";
+    brush.family = "pencil";
+    brush.size = 2;
+    brush.opacity = 0.78;
+    brush.smoothing = { mode: "average", amount: 0.2 };
+    brush.dynamics = {
+      pressureSize: {
+        enabled: true,
+        minimumFactor: 0.65,
+        maximumFactor: 1.25,
+        curve: { kind: "linear", exponent: 1 },
+      },
+      pressureOpacity: {
+        enabled: true,
+        minimumFactor: 0.45,
+        maximumFactor: 1,
+        curve: { kind: "power", exponent: 0.75 },
+      },
+    };
+
+    const encoded = JSON.stringify(record);
+    const decoded = decodeFolioProject(encoded);
+    const stroke = inkStrokes(decoded)[0]!;
+
+    expect(stroke.brush.renderer).toEqual({ version: 1, kind: "pencil" });
+    expect(stroke.brush.presetId).toBe("pencil-hb");
+    // The response Pencil reads as coverage is the same durable field, written
+    // and read back exactly, curve included.
+    expect(stroke.brush.dynamics.pressureOpacity).toEqual({
+      enabled: true,
+      minimumFactor: 0.45,
+      maximumFactor: 1,
+      curve: { kind: "power", exponent: 0.75 },
+    });
+
+    // The appearance is reproduced from the file rather than stored in it: two
+    // independent decodes of the same bytes evaluate to the same graphite.
+    const again = inkStrokes(decodeFolioProject(encoded))[0]!;
+    expect(again).not.toBe(stroke);
+    expect(again.id).toBe(stroke.id);
+    const bounds = getStrokeVisualLocalBounds(stroke);
+    expect(Number.isFinite(bounds.width)).toBe(true);
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(getStrokeVisualLocalBounds(again)).toEqual(bounds);
+
+    const reencoded = encodeFolioProject(decoded);
+    expect(encodeFolioProject(decodeFolioProject(reencoded))).toBe(reencoded);
+    expect(reencoded).toContain('"kind": "pencil"');
+    // No format bump, and nothing generated reaches the file: a Pencil project
+    // holds samples and a snapshot, and no stamp, mark, grain value or seed.
+    expect((JSON.parse(reencoded) as { formatVersion: number }).formatVersion).toBe(1);
+    for (const key of ["stamps", "marks", "grain", "seed", "coverage", "lanes"]) {
+      expect(reencoded).not.toContain(`"${key}"`);
+    }
+  });
+
   it.each([
     ["a strategy no build has", { version: 1, kind: "unknown-brush" }],
-    ["a strategy a later phase will add", { version: 1, kind: "pencil" }],
+    ["a strategy a later phase will add", { version: 1, kind: "marker" }],
     ["a future version of Technical Pen", { version: 2, kind: "technical-pen" }],
     ["a future version of Pressure Pen", { version: 2, kind: "pressure-pen" }],
+    ["a tilt-reading Pencil that has not shipped", { version: 2, kind: "pencil" }],
     ["a future version of a known strategy", { version: 999, kind: "centerline" }],
     ["a future version of the outline strategy", { version: 2, kind: "outline" }],
     ["a non-integer version", { version: 1.5, kind: "centerline" }],

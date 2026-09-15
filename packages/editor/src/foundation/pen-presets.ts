@@ -67,6 +67,14 @@ export const DEFAULT_BRUSH_PRESET_IDS: Readonly<Record<DrawingToolKind, string>>
 });
 
 export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
+  // The one pencil on the real engine, and the family's default. Its width
+  // range is the one it already had, so the mark it makes is the mark it made;
+  // what is new is that pressure now also decides how much of the tip deposits
+  // graphite, which is what a pencil physically varies. The response it reads
+  // for that is `pressureOpacity` -- the durable field for "how much medium
+  // pressure lays down" -- because for a dry medium a lighter touch leaves less
+  // graphite rather than translucent graphite. Strokes already saved keep
+  // naming outline@1 and keep rendering as they were drawn.
   createCatalogPreset({
     id: "pencil-hb",
     name: "HB",
@@ -76,7 +84,9 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     opacity: 0.78,
     smoothing: 0.2,
     pressureRange: [0.65, 1.25],
-    renderer: "outline",
+    opacityRange: [0.45, 1],
+    opacityCurve: Object.freeze({ kind: "power", exponent: 0.75 }),
+    renderer: "pencil",
   }),
   createCatalogPreset({
     id: "pencil-2b",

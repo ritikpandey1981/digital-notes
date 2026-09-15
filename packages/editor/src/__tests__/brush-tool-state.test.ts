@@ -113,7 +113,7 @@ describe("Phase 17C brush catalog and tool state", () => {
   it("resolves the intended renderer and pressure capability for every preset", () => {
     const store = createBrushToolStateStore();
     const expectations: Readonly<Record<string, readonly [string, boolean]>> = {
-      "pencil-hb": ["outline", true],
+      "pencil-hb": ["pencil", true],
       "pencil-2b": ["outline", true],
       "pencil-4b": ["outline", true],
       "pencil-mechanical": ["centerline", false],
