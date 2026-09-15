@@ -17,11 +17,13 @@ import { brushHash, unitFromHash } from "./brush-random";
  * The first dry-media strategy, and the first to use the `stamps` primitive.
  * Where the two pens describe a continuous shape, a pencil describes *where the
  * medium landed*: graphite is spatially discontinuous, and the gaps are most of
- * the character of the mark. So the stroke is a stream of tip placements, and
- * each placement lays down a few short streaks of graphite -- some of them, not
- * all of them -- according to a grain field fixed in the stroke's own space.
+ * the character of the mark. So the stroke is a stream of tip placements; each
+ * placement offers a few lanes across the tip, a grain field fixed in the
+ * stroke's own space decides which of them take graphite, and consecutive
+ * placements that agree are drawn as one run.
  *
- * Four decisions carry the design.
+ * Six decisions carry the design, and two of them are about the rasterizer
+ * rather than about pencils.
  *
  * - **Placement is by distance, not by sample.** An arc-length cursor walks the
  *   smoothed centerline and drops a stamp every fixed advance, so the mark is
@@ -101,20 +103,25 @@ const GRAIN_FLECK = 0.8;
  *
  * Lane count comes from the brush's *nominal* radius and never from the
  * pressure-varied one: a tip that gained and lost lanes as the hand pressed
- * would reshuffle its own grain mid-stroke. A pencil two or three page units
- * across gets one lane, because a second one would be laying texture finer than
- * the mark is wide -- invisible, and paid for on every repaint.
+ * would reshuffle its own grain mid-stroke. Two lanes at the minimum: with one,
+ * a declined tooth breaks the mark across its whole width, and a pencil that
+ * skips entirely reads as a dashed line rather than as graphite.
  */
 const GRAIN_LANE_SPAN = 1.1;
 const MINIMUM_LANES = 2;
 const MAXIMUM_LANES = 6;
 
 /**
- * How far a run reaches past the stamps at its two ends, against the advance.
+ * How far a run reaches past the stamps at its two ends, as a fraction of the
+ * advance: half of this at each end, so 0.45 of an advance.
  *
- * Below one half, so two runs separated by a single declined stamp still leave
- * paper between them. That bound is what makes runs disjoint, and disjoint runs
- * are what let the painter batch them without compositing an overlap twice.
+ * Under one half is the point. Two runs in one lane are separated by at least
+ * one declined stamp, so ends that each reach less than half an advance still
+ * leave paper between them. That bound is what makes runs disjoint, and
+ * disjoint runs are what let the painter batch them without compositing an
+ * overlap twice. It also gives a single-stamp run a body: without it a lone
+ * fleck would be a degenerate line, and at low pressure most runs are lone
+ * flecks.
  */
 const RUN_END_FACTOR = 0.9;
 
