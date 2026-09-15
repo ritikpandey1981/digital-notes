@@ -1,17 +1,9 @@
 import { cn } from "@folio/ui";
-import {
-  Eraser,
-  Highlighter,
-  MousePointer2,
-  Paintbrush,
-  Pencil,
-  PenTool,
-  Shapes,
-  type LucideIcon,
-} from "lucide-react";
+import { Eraser, MousePointer2, Pencil, Shapes, type LucideIcon } from "lucide-react";
 import type { DrawingToolKind } from "@folio/editor";
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import { useTheme } from "../theme/ThemeProvider";
+import { BRUSH_FAMILY_GLYPHS, brushFamilyGlyphName } from "./brush-family-glyphs";
 import { dockGlyphNeedsContour, type DockAppearance } from "./dock-glyph-legibility";
 import type { EditorTool } from "./editor-types";
 import {
@@ -72,20 +64,6 @@ const SLOT_ICONS: Readonly<Record<string, LucideIcon>> = Object.freeze({
   select: MousePointer2,
   eraser: Eraser,
   shapes: Shapes,
-});
-
-/**
- * A drawing slot's glyph follows the family it currently holds.
- *
- * A slot given a pencil must stop reading as a pen; the dock would otherwise
- * be labelling the slot with a tool it no longer activates. The glyphs are the
- * existing Folio vocabulary, unchanged.
- */
-const FAMILY_ICONS: Readonly<Record<DrawingToolKind, LucideIcon>> = Object.freeze({
-  pencil: Pencil,
-  pen: PenTool,
-  marker: Paintbrush,
-  highlighter: Highlighter,
 });
 
 /** Optical nudges for glyphs whose ink sits off-centre in their box. */
@@ -238,8 +216,10 @@ function DockButton({
   readonly appearance?: DockAppearance | undefined;
   readonly onActivate: (slotId: string) => void;
 }) {
-  const Icon =
-    family === undefined ? (SLOT_ICONS[slot.id] ?? Pencil) : (FAMILY_ICONS[family] ?? Pencil);
+  // A slot given a pencil must stop reading as a pen: the dock would otherwise
+  // be labelling the slot with a tool it no longer activates. Utilities keep
+  // their own semantic icon, and an unknown slot keeps the existing fallback.
+  const Icon = (family === undefined ? SLOT_ICONS[slot.id] : BRUSH_FAMILY_GLYPHS[family]) ?? Pencil;
   // Position and contents together: the number is the stable physical slot the
   // artist reaches for, the brush name is what is currently in it. A utility is
   // a fixed category and keeps its own name.
@@ -274,6 +254,9 @@ function DockButton({
         data-tool-name={tooltipLabel}
         data-dock-slot={slot.id}
         data-slot-family={family ?? ""}
+        // The instrument this slot is currently showing. Reported so a glyph
+        // can be asserted by name rather than by comparing pixels.
+        data-slot-glyph={brushFamilyGlyphName(family)}
         data-slot-brush={brushId ?? ""}
         data-interaction-motion="selection-140ms"
         // One press, whatever modifiers are held. What it means is decided by

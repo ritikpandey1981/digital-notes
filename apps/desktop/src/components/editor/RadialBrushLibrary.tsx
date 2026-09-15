@@ -1,5 +1,4 @@
 import { cn } from "@folio/ui";
-import { Paintbrush, Pencil, PenTool, type LucideIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -14,7 +13,7 @@ import {
   useTransientPresentation,
   type TransientPresentation,
 } from "../../motion/transient-presentation";
-import type { BrushLibraryFamily } from "./brush-library-catalogue";
+import { BRUSH_FAMILY_GLYPHS, brushFamilyGlyphName } from "./brush-family-glyphs";
 import {
   RADIAL_OPEN_MOTION,
   RADIAL_ROTATION_DRAG_THRESHOLD,
@@ -60,22 +59,6 @@ interface RadialBrushLibraryProps {
   readonly onSelectBrush: (brushId: string) => void;
   readonly onDismiss: () => void;
 }
-
-/**
- * One semantic glyph per library family, matching the dock's own vocabulary.
- *
- * Deliberately coarse. Every pencil identity shares the pencil glyph and every
- * pen the nib, because a per-brush specimen would imply that forty-five
- * distinct brush behaviours exist. They do not yet: several identities share
- * one backing preset, and drawing a unique mark for each would be the wheel
- * making a promise the engine cannot keep. Names carry the distinction, through
- * the accessible name on every cell.
- */
-const FAMILY_ICONS: Readonly<Record<BrushLibraryFamily, LucideIcon>> = Object.freeze({
-  pencil: Pencil,
-  pen: PenTool,
-  marker: Paintbrush,
-});
 
 const ICON_SIZE = 22;
 
@@ -748,7 +731,7 @@ function BrushCell({
   // so nothing detaches from its cell while the ring travels.
   const drawn = expandCell(cell, expansion);
   const iconMid = polarPoint(center, drawn.midRadius, drawn.midAngleDegrees);
-  const Icon = FAMILY_ICONS[cell.brush.family];
+  const Icon = BRUSH_FAMILY_GLYPHS[cell.brush.family];
   // Opacity on the group, so surface, seam, icon and hover tint all fade as one
   // object rather than the glyph floating at full strength over a ghost cell.
   //
@@ -799,6 +782,9 @@ function BrushCell({
       data-brush-selected={selected ? "true" : "false"}
       data-brush-item={cell.brush.id}
       data-brush-family={cell.brush.family}
+      // The instrument this cell is drawn with, by name, so the wheel's
+      // iconography is assertable without comparing pixels.
+      data-brush-glyph={brushFamilyGlyphName(cell.brush.family)}
       // The real preset backing this identity today. Reported so the
       // provisional mapping is observable rather than an unverifiable claim.
       data-brush-fallback-preset={cell.brush.fallbackPresetId}
