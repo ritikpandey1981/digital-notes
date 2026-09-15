@@ -150,7 +150,12 @@ function digest(geometry: BrushRenderGeometry): string {
     // Everything a painter reads, plus the stamp stream the bounds, the hit
     // geometry and the eraser read. A grain that moved would show up here even
     // if the marks happened to cover the same paper.
-    parts.push(round(geometry.alpha), String(geometry.markCount), String(geometry.stamps.length));
+    parts.push(
+      round(geometry.alpha),
+      String(geometry.markCount),
+      String(geometry.stamps.length),
+      String(geometry.ribbons.length),
+    );
     parts.push(
       geometry.dot === null
         ? "none"
@@ -159,7 +164,10 @@ function digest(geometry: BrushRenderGeometry): string {
     for (const stamp of geometry.stamps) {
       parts.push(point(stamp), round(stamp.radius), round(stamp.coverage), String(stamp.markCount));
     }
-    for (const value of geometry.marks) parts.push(round(value));
+    for (const ribbon of geometry.ribbons) {
+      for (const value of ribbon.left) parts.push(round(value));
+      for (const value of ribbon.right) parts.push(round(value));
+    }
   }
   return parts.join("|");
 }
@@ -187,8 +195,8 @@ describe("frozen engine brush strategies", () => {
       "technical-pen@0.3:a2i6kf",
       "pressure-pen@0:6bm694",
       "pressure-pen@0.18:92y0oo",
-      "pencil@0:1av0s6m",
-      "pencil@0.2:1lk49kd",
+      "pencil@0:196qqho",
+      "pencil@0.2:1jmtiqj",
     ]);
   });
 
@@ -212,7 +220,7 @@ describe("frozen engine brush strategies", () => {
     const digests = [0.5, 2.5].map(
       (scale) => `${scale}:${hash(digest(resolveStrokeRenderGeometry(stroke, scale)))}`,
     );
-    expect(digests).toEqual(["0.5:v847gs", "2.5:1afpk1r"]);
+    expect(digests).toEqual(["0.5:1ti933o", "2.5:52rt1y"]);
   });
 });
 

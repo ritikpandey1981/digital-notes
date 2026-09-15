@@ -202,8 +202,12 @@ describe("Pencil live rendering", () => {
     expect(committed.length).toBeGreaterThan(100);
     const geometry = resolveStrokeRenderGeometry(stroke);
     if (geometry.kind !== "stamps") throw new Error("Expected stamps geometry.");
-    expect(committed.filter((entry) => entry.startsWith("fill"))).toHaveLength(1);
-    expect(committed.filter((entry) => entry.startsWith("move"))).toHaveLength(geometry.markCount);
+    // One subpath per run of graphite, not one per placement: consecutive
+    // stamps in a lane are merged into the ribbon they actually paint.
+    expect(committed.filter((entry) => entry.startsWith("move"))).toHaveLength(
+      geometry.ribbons.length,
+    );
+    expect(geometry.ribbons.length).toBeLessThan(geometry.markCount / 2);
   });
 
   it("seeds live grain from the stroke id the builder already fixed", () => {
@@ -223,7 +227,7 @@ describe("Pencil live rendering", () => {
     expect(paintedPath(other.commands)).not.toEqual(live);
   });
 
-  it("paints the whole stroke under one alpha, once", () => {
+  it("paints the whole stroke under one alpha", () => {
     const brush = pencil();
     const harness = createHarness(brush);
     drawWhole(harness, curvedSamples(120, ramp(120)));
@@ -236,7 +240,10 @@ describe("Pencil live rendering", () => {
     const alphas = harness.commands
       .filter((entry) => entry.kind === "fill")
       .map((entry) => Number(entry.values[0] ?? 0));
-    expect(alphas).toEqual([brush.opacity]);
+    // Runs are painted in batches, so there is a fill per batch -- but every
+    // one of them runs at the brush's own opacity and at nothing else.
+    expect(alphas.length).toBeGreaterThan(0);
+    expect(new Set(alphas)).toEqual(new Set([brush.opacity]));
     expect(geometry.alpha).toBe(brush.opacity);
   });
 

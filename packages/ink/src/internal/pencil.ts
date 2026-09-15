@@ -2,12 +2,12 @@ import type { Rect } from "@folio/rendering";
 import { evaluatePressureResponse, type ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
-import {
-  STAMP_MARK_STRIDE,
-  type BrushStamp,
-  type LiveBrushEvaluator,
-  type LiveEvaluationSnapshot,
-  type StampsRenderGeometry,
+import type {
+  BrushStamp,
+  LiveBrushEvaluator,
+  LiveEvaluationSnapshot,
+  StampRibbon,
+  StampsRenderGeometry,
 } from "./brush-geometry";
 import { brushHash, unitFromHash } from "./brush-random";
 
@@ -28,12 +28,29 @@ import { brushHash, unitFromHash } from "./brush-random";
  *   the same whether the device reported 60 or 240 samples per second, and a
  *   fast flick cannot leave a gap: stamps follow the path, not the events.
  * - **Pressure moves coverage, not alpha.** Every mark in a stroke is painted at
- *   one alpha in one `fill()`, so overlapping marks composite exactly once and a
- *   stroke cannot darken at its own overlaps. What pressure changes is how many
- *   of the tip's grain lanes receive graphite -- which is what darkness on paper
- *   physically is, and the only way to vary tone within a stroke that Canvas 2D
- *   can paint in a single pass. Pressure also widens the tip, through the same
- *   durable response every other strategy reads.
+ *   one alpha, and the runs of graphite are laid out so that no two of them
+ *   overlap, so the deposited tone is the brush's own opacity wherever graphite
+ *   landed and nowhere darker. What pressure changes is how many of the tip's
+ *   grain lanes receive graphite -- which is what darkness on paper physically
+ *   is, and the only tonal variation Canvas 2D can paint without compositing an
+ *   overlap twice. Pressure also widens the tip, through the same durable
+ *   response every other strategy reads.
+ * - **A lane's consecutive graphite is one contour, not one per stamp.** Stamps
+ *   overlap by construction, so a contour each would hand the rasterizer tens of
+ *   thousands of disjoint shapes to resolve against one another for a picture
+ *   their union already describes -- measured at 195 ms a frame where the merged
+ *   form costs single digits. A run of inked stamps in one lane is therefore
+ *   accumulated into a single ribbon, and a lane closes its ribbon the moment
+ *   the grain declines. Every vertex is appended and never revised, so rewinding
+ *   a run to a settled length is a truncation and cannot leave a stale value
+ *   behind -- which is what makes the merged form safe to build incrementally.
+ * - **Runs never overlap one another, so the painter may batch them.** A lane's
+ *   mark always stays inside that lane's own share of the tip, and a run's far
+ *   end always stops short of where the next run in the same lane begins. That
+ *   costs a little irregularity and buys the freedom to paint runs in small
+ *   groups: one `fill()` over thousands of disjoint contours is quadratic in
+ *   Canvas 2D and was measured at 155 ms a frame, where the same contours in
+ *   batches are linear and cost single digits.
  * - **Grain is a field in the stroke's own space, not a sequence.** A mark's
  *   threshold and jitter are hashed from the grain cell it falls in, so
  *   neighbouring stamps agree about where the paper's tooth is and the texture
@@ -53,56 +70,64 @@ import { brushHash, unitFromHash } from "./brush-random";
 const EPSILON = 0.000_001;
 
 /** Stamp advance as a fraction of nominal diameter, with page-space guard rails. */
-const SPACING_WIDTH_FACTOR = 0.55;
-const MINIMUM_SPACING_FLOOR = 0.4;
-const MINIMUM_SPACING_CEILING = 4;
+const SPACING_WIDTH_FACTOR = 0.8;
+const MINIMUM_SPACING_FLOOR = 0.5;
+const MINIMUM_SPACING_CEILING = 1.8;
 
 const MAXIMUM_SMOOTHING_RADIUS = 4;
 
 /**
- * Paper tooth, measured in painted page units.
+ * Two lattices, both in painted page units, both anchored in the stroke's own
+ * space so the texture keeps one physical size whatever the object's scale.
  *
- * The grain field is one two-dimensional lattice of this size in painted page
- * space, so the tooth stays one physical size whatever the object's scale,
- * exactly as the painted width does. Coarse enough to read as texture rather
- * than as noise, fine enough that even a two-unit pencil crosses several cells.
+ * They are separate because the two things they address have genuinely
+ * different scales on real paper, and because conflating them is expensive.
+ * `GRAIN_TOOTH` decides *whether* a patch of paper catches graphite, and it is
+ * the coarser of the two: tooth is a property of the sheet, it persists over a
+ * few page units, and a run of stamps that agree about it is a run the painter
+ * can draw as one contour. `GRAIN_FLECK` decides how a mark wobbles once it has
+ * been laid down, and it is fine, because a ragged edge is a fibre-scale thing.
  *
- * It is capped against the lane pitch below, because a cell wider than the
- * distance between two lanes would hand both lanes the same answer and the
- * tooth would come out as stripes along the stroke rather than as grain.
+ * The split is what lets the mark stay finely irregular while the number of
+ * contours a repaint costs stays bounded by the tooth rather than by the stamp
+ * rate. Measured: collapsing them into one fine lattice costs an order of
+ * magnitude more contours for a picture no reader can tell apart.
  */
-const GRAIN_CELL = 0.9;
-const GRAIN_CELL_LANE_FRACTION = 0.85;
+const GRAIN_TOOTH = 1.3;
+const GRAIN_FLECK = 0.8;
 
 /**
  * How much tip one grain lane wants before the tip is split again.
  *
  * Lane count comes from the brush's *nominal* radius and never from the
  * pressure-varied one: a tip that gained and lost lanes as the hand pressed
- * would reshuffle its own grain mid-stroke. Two lanes minimum, so a light touch
- * thins the mark instead of only breaking it.
+ * would reshuffle its own grain mid-stroke. A pencil two or three page units
+ * across gets one lane, because a second one would be laying texture finer than
+ * the mark is wide -- invisible, and paid for on every repaint.
  */
 const GRAIN_LANE_SPAN = 1.1;
 const MINIMUM_LANES = 2;
 const MAXIMUM_LANES = 6;
 
-/** A lane's mark slightly overruns its share of the tip, so full coverage closes up. */
-const LANE_FILL = 1.15;
-
-/** A streak spans rather more than an advance, so consecutive stamps join into a trail. */
-const STREAK_LENGTH_FACTOR = 1.35;
+/**
+ * How far a run reaches past the stamps at its two ends, against the advance.
+ *
+ * Below one half, so two runs separated by a single declined stamp still leave
+ * paper between them. That bound is what makes runs disjoint, and disjoint runs
+ * are what let the painter batch them without compositing an overlap twice.
+ */
+const RUN_END_FACTOR = 0.9;
 
 /**
- * Deterministic excursions, as fractions of the tip radius and of the nominal
- * streak.
+ * How much of its lane a mark may decline to fill.
  *
- * Kept small and bounded on purpose. Edge irregularity is what separates
- * graphite from ink, but scatter that grows with the brush stops reading as a
- * rough edge and starts reading as a broken stroke.
+ * Irregularity here only ever *removes* graphite: a mark is narrowed by this
+ * fraction and then placed anywhere in the slack that leaves, so it wanders and
+ * wobbles while staying inside its own lane. Jitter that could push a mark out
+ * of its lane would put two runs on top of each other, and two runs on top of
+ * each other is a darker patch the artist did not draw.
  */
-const LATERAL_JITTER = 0.22;
-const WIDTH_JITTER = 0.3;
-const LENGTH_JITTER = 0.35;
+const WIDTH_JITTER = 0.18;
 
 /**
  * The most of a tip that graphite ever covers.
@@ -112,13 +137,18 @@ const LENGTH_JITTER = 0.35;
  */
 const FULL_COVERAGE = 0.92;
 
-/** Independent hash channels. Adding one must not perturb the others. */
-const CHANNEL_INK = 0;
+/**
+ * Independent hash channels. Adding one must not perturb the others.
+ *
+ * Ink is addressed per lane as well as per cell, because the tooth lattice is
+ * coarser than the distance between two lanes: without the lane, a wide tip
+ * would ink or decline across its whole width at once and the grain would come
+ * out as rungs. The channels sit in separate ranges so the two lattices cannot
+ * collide on a cell that happens to carry the same coordinates in both.
+ */
+const CHANNEL_INK = 0x100;
 const CHANNEL_LATERAL = 1;
 const CHANNEL_WIDTH = 2;
-const CHANNEL_LENGTH = 3;
-
-const EMPTY_MARKS: readonly number[] = Object.freeze([]);
 
 interface EvaluatedSample {
   readonly x: number;
@@ -135,13 +165,34 @@ interface EvaluatedSample {
  * Restoring it is four assignments, which is what keeps a frame's cost
  * independent of how long the stroke already is.
  */
+interface MutableRibbon {
+  readonly left: number[];
+  readonly right: number[];
+}
+
+/** Where one grain lane's open run stood, so it can be reopened exactly. */
+interface LaneCheckpoint {
+  /** Index into the ribbon list, or -1 when the lane has no run open. */
+  readonly ribbon: number;
+  readonly leftLength: number;
+  readonly rightLength: number;
+}
+
 interface EmissionCheckpoint {
   readonly previous: EvaluatedSample | null;
   /** Distance still to travel before the next stamp lands. */
   readonly residual: number;
   readonly stampCount: number;
-  readonly markLength: number;
+  readonly ribbonCount: number;
+  readonly markCount: number;
+  readonly lanes: readonly LaneCheckpoint[];
 }
+
+const CLOSED_LANE: LaneCheckpoint = Object.freeze({
+  ribbon: -1,
+  leftLength: 0,
+  rightLength: 0,
+});
 
 interface Extent {
   minimumX: number;
@@ -158,22 +209,21 @@ export class PencilEvaluator implements LiveBrushEvaluator {
   readonly #smoothingAmount: number;
   readonly #lookaheadSamples: number;
   readonly #spacing: number;
-  readonly #grainCell: number;
+  readonly #toothCell: number;
+  readonly #fleckCell: number;
   readonly #lanes: number;
   readonly #laneOffsets: readonly number[];
   readonly #laneHalfWidth: number;
-  readonly #halfLength: number;
+  readonly #runEnd: number;
   readonly #alpha: number;
   readonly #stamps: BrushStamp[] = [];
-  readonly #marks: number[] = [];
+  readonly #ribbons: MutableRibbon[] = [];
+  /** Which ribbon each lane is currently extending, or -1 for none. */
+  readonly #openRibbons: number[];
   readonly #settledExtent: Extent = emptyExtent();
+  #markCount = 0;
   #provisionalExtent: Extent = emptyExtent();
-  #checkpoint: EmissionCheckpoint = Object.freeze({
-    previous: null,
-    residual: 0,
-    stampCount: 0,
-    markLength: 0,
-  });
+  #checkpoint: EmissionCheckpoint;
   #previous: EvaluatedSample | null = null;
   #residual = 0;
   #settledRawCount = 0;
@@ -208,17 +258,25 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     const nominalRadius = brush.size / 2;
     this.#lanes = Math.min(
       MAXIMUM_LANES,
-      Math.max(MINIMUM_LANES, 1 + Math.round(nominalRadius / GRAIN_LANE_SPAN)),
+      Math.max(MINIMUM_LANES, Math.round(nominalRadius / GRAIN_LANE_SPAN)),
     );
-    this.#grainCell =
-      Math.min(GRAIN_CELL, ((2 * nominalRadius) / this.#lanes) * GRAIN_CELL_LANE_FRACTION) /
-      renderedScale;
+    this.#toothCell = GRAIN_TOOTH / renderedScale;
+    this.#fleckCell = GRAIN_FLECK / renderedScale;
     this.#laneOffsets = Object.freeze(
       Array.from({ length: this.#lanes }, (_, lane) => (2 * (lane + 0.5)) / this.#lanes - 1),
     );
-    this.#laneHalfWidth = LANE_FILL / this.#lanes;
-    this.#halfLength = (this.#spacing * STREAK_LENGTH_FACTOR) / 2;
+    this.#laneHalfWidth = 1 / this.#lanes;
+    this.#runEnd = (this.#spacing * RUN_END_FACTOR) / 2;
     this.#alpha = clamp(brush.opacity, 0, 1);
+    this.#openRibbons = Array.from({ length: this.#lanes }, () => -1);
+    this.#checkpoint = Object.freeze({
+      previous: null,
+      residual: 0,
+      stampCount: 0,
+      ribbonCount: 0,
+      markCount: 0,
+      lanes: Object.freeze(Array.from({ length: this.#lanes }, () => CLOSED_LANE)),
+    });
   }
 
   /**
@@ -258,15 +316,22 @@ export class PencilEvaluator implements LiveBrushEvaluator {
       this.#maximumTailPointEvaluations,
       this.#tailPointEvaluations,
     );
+    const reopen = this.#openRibbons.slice();
+    this.#closeOpenLanes();
+    // Reopening is what lets the next frame continue a run rather than start a
+    // new one; the far end it just wrote is discarded by the rewind first.
+    for (let lane = 0; lane < this.#lanes; lane += 1) {
+      this.#openRibbons[lane] = reopen[lane] ?? -1;
+    }
     if (final) this.#finalized = true;
   }
 
   /**
    * The current stamp stream.
    *
-   * `stamps` and `marks` alias evaluator state so a live frame allocates nothing
-   * proportional to the stroke; they are valid until the next `append`. Use
-   * {@link frozenGeometry} for anything retained.
+   * `stamps` and `ribbons` alias evaluator state so a live frame allocates
+   * nothing proportional to the stroke; they are valid until the next `append`.
+   * Use {@link frozenGeometry} for anything retained.
    */
   geometry(): StampsRenderGeometry {
     return this.#geometry(false);
@@ -291,7 +356,6 @@ export class PencilEvaluator implements LiveBrushEvaluator {
 
   #geometry(frozen: boolean): StampsRenderGeometry {
     const stamps = this.#stamps;
-    const marks = this.#marks;
     const extent = copyExtent(this.#settledExtent);
     unionExtent(extent, this.#provisionalExtent);
     const previous = this.#previous;
@@ -305,8 +369,8 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     return Object.freeze({
       kind: "stamps",
       stamps: stream,
-      marks: marks.length === 0 ? EMPTY_MARKS : frozen ? Object.freeze([...marks]) : marks,
-      markCount: marks.length / STAMP_MARK_STRIDE,
+      ribbons: frozen ? Object.freeze(this.#ribbons.map(freezeRibbon)) : this.#ribbons,
+      markCount: this.#markCount,
       alpha: this.#alpha,
       dot:
         resting === null
@@ -323,10 +387,31 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     });
   }
 
+  /**
+   * Rewinds to the last settled moment.
+   *
+   * Every lane is put back to the run it was extending and the length that run
+   * had, so a frame throws away only what the open tail produced. A run opened
+   * during the tail simply ceases to exist when the ribbon list is truncated,
+   * and its lane is recorded as closed.
+   */
   #restoreCheckpoint(): void {
     const checkpoint = this.#checkpoint;
     this.#stamps.length = checkpoint.stampCount;
-    this.#marks.length = checkpoint.markLength;
+    this.#ribbons.length = checkpoint.ribbonCount;
+    this.#markCount = checkpoint.markCount;
+    for (let lane = 0; lane < this.#lanes; lane += 1) {
+      const state = checkpoint.lanes[lane] ?? CLOSED_LANE;
+      this.#openRibbons[lane] = state.ribbon;
+      if (state.ribbon < 0) continue;
+      const ribbon = this.#ribbons[state.ribbon];
+      if (ribbon === undefined) {
+        this.#openRibbons[lane] = -1;
+        continue;
+      }
+      ribbon.left.length = state.leftLength;
+      ribbon.right.length = state.rightLength;
+    }
     this.#previous = checkpoint.previous;
     this.#residual = checkpoint.residual;
   }
@@ -336,7 +421,19 @@ export class PencilEvaluator implements LiveBrushEvaluator {
       previous: this.#previous,
       residual: this.#residual,
       stampCount: this.#stamps.length,
-      markLength: this.#marks.length,
+      ribbonCount: this.#ribbons.length,
+      markCount: this.#markCount,
+      lanes: Object.freeze(
+        this.#openRibbons.map((ribbon) => {
+          if (ribbon < 0) return CLOSED_LANE;
+          const open = this.#ribbons[ribbon];
+          return Object.freeze({
+            ribbon,
+            leftLength: open?.left.length ?? 0,
+            rightLength: open?.right.length ?? 0,
+          });
+        }),
+      ),
     });
   }
 
@@ -396,6 +493,11 @@ export class PencilEvaluator implements LiveBrushEvaluator {
    * stamp's position in the stream, two stamps overlapping the same tooth agree
    * about it -- so the gaps survive the stroke's own overlap instead of filling
    * in, and raising coverage only ever *adds* marks rather than moving them.
+   *
+   * A lane that inks extends the run it already has open, by appending one
+   * vertex pair and nothing else. A lane that declines closes its run, which is
+   * where the run's far end is appended. Nothing already written is ever
+   * revised, so a rewind is a truncation.
    */
   #emitStamp(
     x: number,
@@ -407,58 +509,108 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     settled: boolean,
   ): void {
     const seed = this.#seed;
-    const cell = this.#grainCell;
+    const tooth = this.#toothCell;
+    const fleck = this.#fleckCell;
     const normalX = -tangentY;
     const normalY = tangentX;
     const extent = settled ? this.#settledExtent : this.#provisionalExtent;
-    const marks = this.#marks;
     let markCount = 0;
     for (let lane = 0; lane < this.#lanes; lane += 1) {
-      // The field is asked about where this lane's graphite would actually
-      // land, not about where the tip's centre is. Hashing the mark's own patch
-      // of paper is what makes the tooth two-dimensional: a lane channel keyed
-      // to the stamp would give one lane the same answer stamp after stamp, and
-      // the grain would come out as stripes running along the stroke.
+      // Both lattices are asked about where this lane's graphite would actually
+      // land, not about where the tip's centre is. Addressing the mark's own
+      // patch of paper is what makes the grain two-dimensional and what keeps
+      // it attached to the artwork rather than to a position in a stream.
       const laneOffset = requireOffset(this.#laneOffsets, lane) * radius;
-      const cellX = Math.floor((x + normalX * laneOffset) / cell);
-      const cellY = Math.floor((y + normalY * laneOffset) / cell);
-      const threshold = unitFromHash(brushHash(seed, cellX, cellY, CHANNEL_INK));
-      if (threshold >= coverage) continue;
-      const lateral = unitFromHash(brushHash(seed, cellX, cellY, CHANNEL_LATERAL)) - 0.5;
-      const widthNoise = unitFromHash(brushHash(seed, cellX, cellY, CHANNEL_WIDTH));
-      const lengthNoise = unitFromHash(brushHash(seed, cellX, cellY, CHANNEL_LENGTH));
-      const offset = laneOffset + lateral * LATERAL_JITTER * 2 * radius;
-      const halfWidth =
-        this.#laneHalfWidth * radius * (1 - WIDTH_JITTER + widthNoise * WIDTH_JITTER * 2);
-      const halfLength = this.#halfLength * (1 - LENGTH_JITTER + lengthNoise * LENGTH_JITTER * 2);
-      const centerX = x + normalX * offset;
-      const centerY = y + normalY * offset;
-      const alongX = tangentX * halfLength;
-      const alongY = tangentY * halfLength;
+      const markX = x + normalX * laneOffset;
+      const markY = y + normalY * laneOffset;
+      const threshold = unitFromHash(
+        brushHash(seed, Math.floor(markX / tooth), Math.floor(markY / tooth), CHANNEL_INK + lane),
+      );
+      if (threshold >= coverage) {
+        this.#closeLane(lane, extent);
+        continue;
+      }
+      const fleckX = Math.floor(markX / fleck);
+      const fleckY = Math.floor(markY / fleck);
+      const lateral = unitFromHash(brushHash(seed, fleckX, fleckY, CHANNEL_LATERAL)) * 2 - 1;
+      const widthNoise = unitFromHash(brushHash(seed, fleckX, fleckY, CHANNEL_WIDTH));
+      const laneHalf = this.#laneHalfWidth * radius;
+      const halfWidth = laneHalf * (1 - WIDTH_JITTER * widthNoise);
+      // Narrowed first, then moved within exactly the slack that leaves, so the
+      // mark can never reach into the lane beside it.
+      const offset = laneOffset + lateral * (laneHalf - halfWidth);
       const acrossX = normalX * halfWidth;
       const acrossY = normalY * halfWidth;
-      // One winding for every mark, whichever way the stroke is travelling:
-      // `(tangent, normal)` is always the same handed pair, so a non-zero fill
-      // unions overlapping marks instead of cancelling them into holes.
-      marks.push(
-        centerX - alongX - acrossX,
-        centerY - alongY - acrossY,
-        centerX + alongX - acrossX,
-        centerY + alongY - acrossY,
-        centerX + alongX + acrossX,
-        centerY + alongY + acrossY,
-        centerX - alongX + acrossX,
-        centerY - alongY + acrossY,
-      );
-      foldQuad(extent, marks, marks.length - STAMP_MARK_STRIDE);
+      const leftX = x + normalX * offset + acrossX;
+      const leftY = y + normalY * offset + acrossY;
+      const rightX = x + normalX * offset - acrossX;
+      const rightY = y + normalY * offset - acrossY;
+      // Left forward then right backward is one winding whichever way the
+      // stroke travels, because `(tangent, normal)` is always the same handed
+      // pair. A non-zero fill therefore unions overlapping runs instead of
+      // cancelling them into holes.
+      const open = this.#openRibbons[lane] ?? -1;
+      if (open < 0) {
+        const behindX = tangentX * this.#runEnd;
+        const behindY = tangentY * this.#runEnd;
+        this.#openRibbons[lane] = this.#ribbons.length;
+        this.#ribbons.push({
+          left: [leftX - behindX, leftY - behindY, leftX, leftY],
+          right: [rightX - behindX, rightY - behindY, rightX, rightY],
+        });
+        foldPoint(extent, leftX - behindX, leftY - behindY);
+        foldPoint(extent, rightX - behindX, rightY - behindY);
+      } else {
+        const ribbon = requireRibbon(this.#ribbons, open);
+        ribbon.left.push(leftX, leftY);
+        ribbon.right.push(rightX, rightY);
+      }
+      foldPoint(extent, leftX, leftY);
+      foldPoint(extent, rightX, rightY);
       markCount += 1;
     }
+    this.#markCount += markCount;
     this.#stamps.push(
       Object.freeze({ index: this.#stamps.length, x, y, radius, coverage, markCount }),
     );
     // The nominal tip is folded whether or not the grain inked it, so the bound
     // always contains the hit geometry a selection frame and the eraser read.
     foldDisc(extent, { x, y, radius, coverage });
+  }
+
+  /**
+   * Ends one lane's run of graphite.
+   *
+   * The far end is extrapolated from the run's own last two vertices rather
+   * than remembered from the stamp that wrote them. That is deliberate: a
+   * remembered value would be state outside the arrays, and rewinding the
+   * arrays would leave it pointing at a stamp the rewind had just discarded.
+   * Derived from what the run contains, it cannot go stale.
+   */
+  #closeLane(lane: number, extent: Extent): void {
+    const open = this.#openRibbons[lane] ?? -1;
+    if (open < 0) return;
+    this.#openRibbons[lane] = -1;
+    const ribbon = this.#ribbons[open];
+    if (ribbon === undefined) return;
+    extendRunEnd(ribbon.left, this.#runEnd, extent);
+    extendRunEnd(ribbon.right, this.#runEnd, extent);
+  }
+
+  /**
+   * Ends every run the tail left open.
+   *
+   * These vertices are provisional in exactly the way the tail is: the next
+   * frame rewinds past them, and the frame after re-derives them from wherever
+   * the run has got to. At the terminal sample they are simply the last thing
+   * written, which is why lifting the pencil moves nothing.
+   */
+  #closeOpenLanes(): void {
+    for (let lane = 0; lane < this.#lanes; lane += 1) {
+      this.#closeLane(lane, this.#provisionalExtent);
+      // The lane stays logically open across frames; only its far end is
+      // provisional, so the checkpoint's own record of it is what reopens it.
+    }
   }
 
   /**
@@ -561,16 +713,44 @@ function unionExtent(target: Extent, other: Extent): void {
   target.maximumY = Math.max(target.maximumY, other.maximumY);
 }
 
-function foldQuad(extent: Extent, marks: readonly number[], offset: number): void {
-  for (let corner = 0; corner < STAMP_MARK_STRIDE; corner += 2) {
-    const x = marks[offset + corner];
-    const y = marks[offset + corner + 1];
-    if (x === undefined || y === undefined) continue;
-    extent.minimumX = Math.min(extent.minimumX, x);
-    extent.minimumY = Math.min(extent.minimumY, y);
-    extent.maximumX = Math.max(extent.maximumX, x);
-    extent.maximumY = Math.max(extent.maximumY, y);
+/** Appends the far end of a run, extrapolated from the two vertices before it. */
+function extendRunEnd(side: number[], reach: number, extent: Extent): void {
+  const length = side.length;
+  const x = side[length - 2];
+  const y = side[length - 1];
+  const previousX = side[length - 4];
+  const previousY = side[length - 3];
+  if (x === undefined || y === undefined || previousX === undefined || previousY === undefined) {
+    return;
   }
+  const deltaX = x - previousX;
+  const deltaY = y - previousY;
+  const span = Math.hypot(deltaX, deltaY);
+  if (span <= EPSILON) return;
+  const endX = x + (deltaX / span) * reach;
+  const endY = y + (deltaY / span) * reach;
+  side.push(endX, endY);
+  foldPoint(extent, endX, endY);
+}
+
+function foldPoint(extent: Extent, x: number, y: number): void {
+  extent.minimumX = Math.min(extent.minimumX, x);
+  extent.minimumY = Math.min(extent.minimumY, y);
+  extent.maximumX = Math.max(extent.maximumX, x);
+  extent.maximumY = Math.max(extent.maximumY, y);
+}
+
+function freezeRibbon(ribbon: MutableRibbon): StampRibbon {
+  return Object.freeze({
+    left: Object.freeze([...ribbon.left]),
+    right: Object.freeze([...ribbon.right]),
+  });
+}
+
+function requireRibbon(ribbons: readonly MutableRibbon[], index: number): MutableRibbon {
+  const ribbon = ribbons[index];
+  if (ribbon === undefined) throw new RangeError(`Missing Pencil ribbon at index ${index}.`);
+  return ribbon;
 }
 
 function foldDisc(extent: Extent, sample: EvaluatedSample): void {

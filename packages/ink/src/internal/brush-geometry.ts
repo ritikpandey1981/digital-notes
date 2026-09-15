@@ -101,28 +101,42 @@ export interface BrushStamp extends BrushHitSample {
   readonly markCount: number;
 }
 
-/** Vertices per mark in {@link StampsRenderGeometry.marks}: four corners, x then y. */
-export const STAMP_MARK_STRIDE = 8;
+/**
+ * One unbroken run of medium in one grain lane.
+ *
+ * A ribbon is a closed shape: `left` forward, across the far end, `right`
+ * backward. It exists because the unit a stamped medium *paints* is not the
+ * unit it is *evaluated* in. Consecutive stamps in one lane overlap by
+ * construction, so emitting a separate contour for each would hand the
+ * rasterizer tens of thousands of disjoint shapes to resolve against one
+ * another -- which is superlinear, and measurably ruinous -- for a picture
+ * identical to the one their union already describes. Merging a run into a
+ * single contour is therefore not an optimization applied to the geometry; it
+ * *is* the geometry.
+ *
+ * Both sides are flat `x, y` pairs rather than points, because a long stroke
+ * holds tens of thousands of vertices and the painter wants a tight loop.
+ */
+export interface StampRibbon {
+  readonly left: readonly number[];
+  readonly right: readonly number[];
+}
 
 /**
- * A stream of tip placements painted as one flat batch of quadrilaterals.
+ * A stream of tip placements, painted as the runs of medium they leave.
  *
- * Marks live in one flat number array rather than in objects because a long
- * stroke holds tens of thousands of them, and because the painter wants a tight
- * loop over coordinates rather than a walk over a graph. Every mark is four
- * corners in a consistent winding, so a single non-zero `fill()` paints their
- * union: overlapping marks composite exactly once, which is what stops a
- * stroke from darkening at its own overlaps the way separate fills would.
- *
- * There is exactly one `alpha`. Variation within a stroke is carried by which
- * marks exist, not by how dark each one is -- the only arrangement Canvas 2D
- * can paint in one pass without compositing an overlap twice.
+ * There is exactly one `alpha`: variation within a stroke is carried by which
+ * ribbons exist and where they break, which is the only tonal variation Canvas
+ * 2D can paint without compositing an overlap twice. Ribbons are laid out never
+ * to overlap one another, which is what frees the painter to draw them in
+ * batches rather than in one path -- see `drawStamps`, and the measurement
+ * behind it.
  */
 export interface StampsRenderGeometry {
   readonly kind: "stamps";
   readonly stamps: readonly BrushStamp[];
-  /** Flat quad corners, {@link STAMP_MARK_STRIDE} numbers per mark. */
-  readonly marks: readonly number[];
+  readonly ribbons: readonly StampRibbon[];
+  /** Lane placements that received medium: how much the stroke laid down. */
   readonly markCount: number;
   /** Resolved page alpha, base opacity already included, applied exactly once. */
   readonly alpha: number;

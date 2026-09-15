@@ -2,11 +2,10 @@ import type { Point } from "@folio/rendering";
 import type { ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
-import {
-  STAMP_MARK_STRIDE,
-  type FilledPathRenderGeometry,
-  type StampsRenderGeometry,
-  type StrokedPathRenderGeometry,
+import type {
+  FilledPathRenderGeometry,
+  StampsRenderGeometry,
+  StrokedPathRenderGeometry,
 } from "./brush-geometry";
 import type { ProfessionalInkSegment } from "./professional-ink-path";
 
@@ -117,15 +116,27 @@ export function drawFilledPath(
 }
 
 /**
+ * The most contours one `fill()` is given.
+ *
+ * Canvas 2D resolves a path's contours against one another, and the cost of
+ * doing so is quadratic in how many there are: measured on a twenty-thousand
+ * sample stroke, six thousand contours in a single fill took 155 ms a frame,
+ * while the same contours in batches take single digits. Batching is safe here
+ * only because a Pencil's runs are laid out never to overlap -- see `pencil.ts`
+ * -- so splitting the path cannot composite anything twice.
+ *
+ * Forty-eight is the balance: large enough that the per-call overhead is a
+ * small share of the work, small enough that the quadratic term never matters.
+ */
+const STAMP_FILL_BATCH = 48;
+
+/**
  * Paints one Pencil stamp stream.
  *
- * Every mark in the stroke goes into one path and is painted by one `fill()`
- * under one alpha. That is not an optimization, it is the correctness argument:
- * a pencil's stamps overlap heavily by construction, and painting them in more
- * than one pass would composite those overlaps twice, so a stroke would darken
- * along itself in proportion to how densely it was stamped. A single non-zero
- * fill paints the union instead, so the deposited tone is exactly the brush's
- * own opacity wherever graphite landed and nowhere darker.
+ * Every run is painted at one alpha, and runs do not overlap, so the deposited
+ * tone is exactly the brush's own opacity wherever graphite landed and nowhere
+ * darker. Where a stroke crosses *itself* the crossing does darken, which is
+ * both what graphite does and what `pressure-pen@1` already does between bands.
  *
  * The inherited alpha is read rather than multiplied into, for the same reason
  * a band's is: the geometry's alpha already carries the brush's opacity, and
@@ -136,26 +147,39 @@ export function drawStamps(
   geometry: StampsRenderGeometry,
   brush: ResolvedBrushSnapshot,
 ): void {
-  const marks = geometry.marks;
+  const ribbons = geometry.ribbons;
   const dot = geometry.dot;
-  if (marks.length === 0 && dot === null) return;
+  if (ribbons.length === 0 && dot === null) return;
   const inherited = context.globalAlpha;
   context.save();
   context.fillStyle = brush.color;
   context.globalAlpha = inherited * geometry.alpha;
-  context.beginPath();
   if (dot !== null) {
-    context.moveTo(dot.center.x + dot.radius, dot.center.y);
+    context.beginPath();
     context.arc(dot.center.x, dot.center.y, dot.radius, 0, Math.PI * 2);
+    context.fill();
   }
-  for (let offset = 0; offset + STAMP_MARK_STRIDE <= marks.length; offset += STAMP_MARK_STRIDE) {
-    context.moveTo(marks[offset] as number, marks[offset + 1] as number);
-    context.lineTo(marks[offset + 2] as number, marks[offset + 3] as number);
-    context.lineTo(marks[offset + 4] as number, marks[offset + 5] as number);
-    context.lineTo(marks[offset + 6] as number, marks[offset + 7] as number);
+  let batched = 0;
+  if (ribbons.length > 0) context.beginPath();
+  for (const ribbon of ribbons) {
+    const left = ribbon.left;
+    const right = ribbon.right;
+    if (left.length < 4) continue;
+    context.moveTo(left[0] as number, left[1] as number);
+    for (let index = 2; index < left.length; index += 2) {
+      context.lineTo(left[index] as number, left[index + 1] as number);
+    }
+    for (let index = right.length - 2; index >= 0; index -= 2) {
+      context.lineTo(right[index] as number, right[index + 1] as number);
+    }
     context.closePath();
+    batched += 1;
+    if (batched < STAMP_FILL_BATCH) continue;
+    context.fill();
+    context.beginPath();
+    batched = 0;
   }
-  context.fill();
+  if (batched > 0) context.fill();
   context.restore();
 }
 

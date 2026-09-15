@@ -7,11 +7,7 @@ import {
   type BrushSmoothing,
   type ResolvedBrushSnapshot,
 } from "../brush-model";
-import {
-  STAMP_MARK_STRIDE,
-  type BrushStamp,
-  type StampsRenderGeometry,
-} from "../internal/brush-geometry";
+import type { BrushStamp, StampsRenderGeometry } from "../internal/brush-geometry";
 import { brushSeed } from "../internal/brush-random";
 import {
   createBrushRenderGeometry,
@@ -173,7 +169,9 @@ function digest(geometry: StampsRenderGeometry): string {
     geometry.dot === null
       ? "none"
       : `${round(geometry.dot.center.x)},${round(geometry.dot.center.y)},${round(geometry.dot.radius)}`,
-    geometry.marks.map(round).join(","),
+    geometry.ribbons
+      .map((ribbon) => `${ribbon.left.map(round).join(",")}/${ribbon.right.map(round).join(",")}`)
+      .join(";"),
   ].join("|");
 }
 
@@ -183,21 +181,51 @@ function stampDigest(stamp: BrushStamp): string {
     .join(",");
 }
 
-function markCenters(
+/** Every vertex a painter would visit, in one flat list. */
+function ribbonVertices(
   geometry: StampsRenderGeometry,
 ): readonly Readonly<{ x: number; y: number }>[] {
-  const centers: Array<Readonly<{ x: number; y: number }>> = [];
-  const marks = geometry.marks;
-  for (let offset = 0; offset + STAMP_MARK_STRIDE <= marks.length; offset += STAMP_MARK_STRIDE) {
-    let x = 0;
-    let y = 0;
-    for (let corner = 0; corner < STAMP_MARK_STRIDE; corner += 2) {
-      x += marks[offset + corner] ?? 0;
-      y += marks[offset + corner + 1] ?? 0;
+  const vertices: Array<Readonly<{ x: number; y: number }>> = [];
+  for (const ribbon of geometry.ribbons) {
+    for (const side of [ribbon.left, ribbon.right]) {
+      for (let index = 0; index + 1 < side.length; index += 2) {
+        vertices.push({ x: side[index] ?? 0, y: side[index + 1] ?? 0 });
+      }
     }
-    centers.push({ x: x / 4, y: y / 4 });
   }
-  return centers;
+  return vertices;
+}
+
+/** One ribbon as the closed polygon the painter traces. */
+function ribbonPolygon(
+  ribbon: Readonly<{ left: readonly number[]; right: readonly number[] }>,
+): readonly Readonly<{ x: number; y: number }>[] {
+  const polygon: Array<Readonly<{ x: number; y: number }>> = [];
+  for (let index = 0; index + 1 < ribbon.left.length; index += 2) {
+    polygon.push({ x: ribbon.left[index] ?? 0, y: ribbon.left[index + 1] ?? 0 });
+  }
+  for (let index = ribbon.right.length - 2; index >= 0; index -= 2) {
+    polygon.push({ x: ribbon.right[index] ?? 0, y: ribbon.right[index + 1] ?? 0 });
+  }
+  return polygon;
+}
+
+function containsPoint(
+  polygon: readonly Readonly<{ x: number; y: number }>[],
+  point: Readonly<{ x: number; y: number }>,
+): boolean {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; index += 1) {
+    const current = polygon[index];
+    const before = polygon[previous];
+    previous = index;
+    if (current === undefined || before === undefined) continue;
+    if (current.y > point.y === before.y > point.y) continue;
+    const crossing =
+      ((before.x - current.x) * (point.y - current.y)) / (before.y - current.y) + current.x;
+    if (point.x < crossing) inside = !inside;
+  }
+  return inside;
 }
 
 function spacings(geometry: StampsRenderGeometry): readonly number[] {
@@ -274,8 +302,8 @@ describe("Pencil strategy", () => {
       // sampled polyline, so a stamp straddling a corner sits marginally closer
       // in a straight line than the arc it was placed along -- never further.
       for (const advance of advances.slice(0, -1)) {
-        expect(advance).toBeLessThanOrEqual(1.1 + 1e-9);
-        expect(advance).toBeGreaterThan(1.1 * 0.99);
+        expect(advance).toBeLessThanOrEqual(1.6 + 1e-9);
+        expect(advance).toBeGreaterThan(1.6 * 0.99);
       }
     }
   });
@@ -299,8 +327,8 @@ describe("Pencil strategy", () => {
         .slice(0, -1)
         .map((advance) => advance * scale);
       for (const advance of painted) {
-        expect(advance).toBeLessThanOrEqual(1.1 + 1e-9);
-        expect(advance).toBeGreaterThan(1.1 * 0.99);
+        expect(advance).toBeLessThanOrEqual(1.6 + 1e-9);
+        expect(advance).toBeGreaterThan(1.6 * 0.99);
       }
     }
   });
@@ -326,6 +354,7 @@ describe("Pencil strategy", () => {
     const geometry = evaluate(brush, [sample(120, 60, 0, 0.9)]);
     expect(geometry.stamps).toHaveLength(0);
     expect(geometry.markCount).toBe(0);
+    expect(geometry.ribbons).toHaveLength(0);
     expect(geometry.dot).not.toBeNull();
     expect(geometry.dot?.center).toEqual({ x: 120, y: 60 });
     expect(geometry.dot?.radius).toBeCloseTo((4 * (0.65 + 0.6 * 0.9)) / 2, 9);
@@ -404,27 +433,29 @@ describe("Pencil strategy", () => {
     for (const stamp of fixed.stamps) expect(stamp.radius).toBeCloseTo(1, 9);
   });
 
-  it("carries base opacity exactly once, as one alpha for the whole stroke", () => {
+  it("carries base opacity exactly once, as one alpha for every fill", () => {
     for (const opacity of [0.25, 0.78, 1]) {
       const geometry = evaluate(pencil({ opacity }), curveSamples(60));
       expect(geometry.alpha).toBe(opacity);
     }
-    // And the painter applies it to the inherited alpha once, in one fill.
+    // And the painter applies it to the inherited alpha once. Runs are painted
+    // in batches, so there is more than one fill on a long stroke -- but every
+    // one of them runs at the same single alpha, and the context is left as it
+    // was found.
     const { context, calls } = recordingContext();
     context.globalAlpha = 0.5;
     const brush = pencil({ opacity: 0.4 });
     const geometry = evaluate(brush, curveSamples(60));
     drawBrushRenderGeometry(context, geometry, brush);
     const fills = calls.filter((entry) => entry.startsWith("fill@"));
-    expect(fills).toEqual([`fill@${(0.5 * 0.4).toFixed(9)}`]);
+    expect(fills.length).toBeGreaterThan(0);
+    expect(new Set(fills)).toEqual(new Set([`fill@${(0.5 * 0.4).toFixed(9)}`]));
     expect(context.globalAlpha).toBe(0.5);
   });
 
-  it("paints every mark in one fill, so a stroke never darkens at its own overlaps", () => {
+  it("paints runs in bounded batches, one contour per run and one alpha throughout", () => {
     const { context, calls } = recordingContext();
     const brush = pencil();
-    // A loop crossing itself many times: with a fill per mark this is where
-    // accumulated alpha would show.
     const inputs = Array.from({ length: 200 }, (_, index) =>
       sample(
         120 + Math.cos((index / 25) * Math.PI * 2) * 40,
@@ -436,9 +467,43 @@ describe("Pencil strategy", () => {
     const geometry = evaluate(brush, inputs);
     drawBrushRenderGeometry(context, geometry, brush);
     expect(geometry.markCount).toBeGreaterThan(200);
-    expect(calls.filter((entry) => entry.startsWith("fill@"))).toHaveLength(1);
-    expect(calls.filter((entry) => entry === "beginPath")).toHaveLength(1);
-    expect(calls.filter((entry) => entry === "closePath")).toHaveLength(geometry.markCount);
+    // One contour per run, however the painter groups them, and a bounded
+    // number of contours per fill -- which is what keeps the rasterizer's
+    // quadratic contour resolution from ever becoming the cost of a frame.
+    expect(calls.filter((entry) => entry === "closePath")).toHaveLength(geometry.ribbons.length);
+    const fills = calls.filter((entry) => entry.startsWith("fill@")).length;
+    expect(fills).toBeGreaterThan(0);
+    expect(fills).toBeLessThanOrEqual(Math.ceil(geometry.ribbons.length / 48));
+    expect(geometry.ribbons.length / fills).toBeGreaterThan(8);
+  });
+
+  it("lays runs that never overlap, so batching them cannot darken anything", () => {
+    // The invariant the batching rests on, checked where it actually matters:
+    // on the paper. A lane's mark is narrowed before it is moved, and a run
+    // stops short of the next run in its lane, so no point of a stroke that
+    // does not cross itself is covered twice.
+    const brush = pencil({ size: 5, smoothing: PRESET_SMOOTHING });
+    const geometry = evaluate(
+      brush,
+      curveSamples(90, (progress) => 0.25 + progress * 0.6),
+    );
+    const polygons = geometry.ribbons.map(ribbonPolygon);
+    expect(polygons.length).toBeGreaterThan(10);
+    const { bounds } = geometry;
+    let covered = 0;
+    let doubled = 0;
+    for (let step = 0; step < 24_000; step += 1) {
+      const point = {
+        x: bounds.x + ((step * 7919) % 1000) * (bounds.width / 1000),
+        y: bounds.y + ((step * 104_729) % 97) * (bounds.height / 97),
+      };
+      let hits = 0;
+      for (const polygon of polygons) if (containsPoint(polygon, point)) hits += 1;
+      if (hits > 0) covered += 1;
+      if (hits > 1) doubled += 1;
+    }
+    expect(covered).toBeGreaterThan(100);
+    expect(doubled).toBe(0);
   });
 
   it("tints graphite with the selected colour rather than a hardcoded grey", () => {
@@ -577,7 +642,10 @@ describe("Pencil strategy", () => {
       expect(stamp.coverage).toBeGreaterThanOrEqual(0);
       expect(stamp.coverage).toBeLessThanOrEqual(1);
     }
-    for (const value of geometry.marks) expect(Number.isFinite(value)).toBe(true);
+    for (const vertex of ribbonVertices(geometry)) {
+      expect(Number.isFinite(vertex.x)).toBe(true);
+      expect(Number.isFinite(vertex.y)).toBe(true);
+    }
 
     // The strategy is reachable directly, so a device-edge pressure the builder
     // would have refused must still resolve to something finite.
@@ -608,7 +676,10 @@ describe("Pencil strategy", () => {
       ] as readonly StrokePoint[],
       true,
     );
-    for (const value of forged.frozenGeometry().marks) expect(Number.isFinite(value)).toBe(true);
+    for (const vertex of ribbonVertices(forged.frozenGeometry())) {
+      expect(Number.isFinite(vertex.x)).toBe(true);
+      expect(Number.isFinite(vertex.y)).toBe(true);
+    }
   });
 
   it("bounds everything it paints, including the grain's own excursion", () => {
@@ -620,18 +691,13 @@ describe("Pencil strategy", () => {
     const { bounds } = geometry;
     expect(Number.isFinite(bounds.width)).toBe(true);
     expect(bounds.width).toBeGreaterThan(0);
-    for (const center of markCenters(geometry)) {
-      expect(center.x).toBeGreaterThanOrEqual(bounds.x);
-      expect(center.x).toBeLessThanOrEqual(bounds.x + bounds.width);
-    }
-    const marks = geometry.marks;
-    for (let offset = 0; offset + STAMP_MARK_STRIDE <= marks.length; offset += STAMP_MARK_STRIDE) {
-      for (let corner = 0; corner < STAMP_MARK_STRIDE; corner += 2) {
-        expect(marks[offset + corner]).toBeGreaterThanOrEqual(bounds.x);
-        expect(marks[offset + corner]).toBeLessThanOrEqual(bounds.x + bounds.width);
-        expect(marks[offset + corner + 1]).toBeGreaterThanOrEqual(bounds.y);
-        expect(marks[offset + corner + 1]).toBeLessThanOrEqual(bounds.y + bounds.height);
-      }
+    const vertices = ribbonVertices(geometry);
+    expect(vertices.length).toBeGreaterThan(100);
+    for (const vertex of vertices) {
+      expect(vertex.x).toBeGreaterThanOrEqual(bounds.x);
+      expect(vertex.x).toBeLessThanOrEqual(bounds.x + bounds.width);
+      expect(vertex.y).toBeGreaterThanOrEqual(bounds.y);
+      expect(vertex.y).toBeLessThanOrEqual(bounds.y + bounds.height);
     }
     // And the nominal tip too, so a bound never under-reports where coverage
     // happened to drop every lane.
@@ -653,12 +719,12 @@ describe("Pencil strategy", () => {
       expect(entry.radius).toBeGreaterThan(0);
       expect(Number.isFinite(entry.x)).toBe(true);
     }
-    // Every mark sits within a tip's reach of some hit sample, so a hit test
-    // against the centerline cannot miss visible graphite by much.
-    const reach = Math.max(...geometry.hitGeometry.map(({ radius }) => radius)) * 2;
-    for (const center of markCenters(geometry)) {
+    // Every painted vertex sits within a tip's reach of some hit sample, so a
+    // hit test against the centerline cannot miss visible graphite by much.
+    const reach = Math.max(...geometry.hitGeometry.map(({ radius }) => radius)) * 3;
+    for (const vertex of ribbonVertices(geometry)) {
       const nearest = Math.min(
-        ...geometry.hitGeometry.map((entry) => Math.hypot(entry.x - center.x, entry.y - center.y)),
+        ...geometry.hitGeometry.map((entry) => Math.hypot(entry.x - vertex.x, entry.y - vertex.y)),
       );
       expect(nearest).toBeLessThanOrEqual(reach);
     }
