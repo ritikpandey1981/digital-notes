@@ -472,3 +472,61 @@ and the `stamps` primitive is where that goes — not a wider alpha-per-vertex f
 Taper stays out: it is a function of position along the stroke rather than of pressure, it
 has no durable field yet, and bending a pressure curve to imitate it would put a lie in
 every saved file.
+## D-031 — Dry media varies by coverage, and its grain is a field in the artwork's own space
+
+**Status:** accepted
+
+`pencil@1` is the engine's first dry medium and its first stamped strategy. Two choices
+carry it, and neither is about pencils: both are what D-030's consequence forces once a
+strategy stops describing a continuous shape.
+
+**Pressure moves coverage, not alpha.** Tone varies by *which marks exist* rather than by
+how dark each one is, which is the only variation Canvas 2D can express without compositing
+an overlap twice, and also what coverage physically is. The response it reads is
+`pressureOpacity`: for a dry medium a lighter touch leaves less graphite rather than
+translucent graphite, so "how much medium pressure lays down" is the honest reading of that
+field. It is a per-strategy reading of one durable field rather than a second field, and
+`(kind, version)` pins it for ever. Width still comes from `pressureSize`, as it does
+everywhere else.
+
+**Overlapping medium is merged into runs, and runs are laid out not to overlap.** A
+stamped medium's placements overlap by construction, and the naive form — one contour per
+placement, all in one `fill()` — is not merely slow but quadratic: Canvas 2D resolves a
+path's contours against one another, and six thousand of them in one fill measured 155 ms a
+frame where the same contours in batches of forty-eight measure 8.4 ms, at an equal vertex
+count. So consecutive placements in one grain lane become one contour, and the geometry
+then earns the right to be split: a mark is narrowed before it is moved so it cannot leave
+its lane, and a run stops short of where the next run in that lane begins. Disjoint
+contours can be batched; overlapping ones cannot. A stroke that crosses itself still
+darkens where it crosses, exactly as `pressure-pen@1` does between bands, and for graphite
+that is the right answer rather than a concession.
+
+**Deterministic variation is addressed by place, not by index.** The seed is
+`fnv1a32(stroke.id)` — already unique, already durable, already round-tripping, and the
+right identity for duplication, since `cloneObject` reuses the same `Stroke` and a copied
+mark keeps its grain. From it, `brushHash(seed, cellX, cellY, channel)` addresses a
+two-dimensional lattice in painted page space through `Math.imul`, `^` and `>>>` only. The
+brush-engine design proposed hashing the stamp *index* instead; that would fail twice over.
+Overlapping stamps would disagree about where the paper's tooth is, so the gaps would fill
+in solid at exactly the coverage where texture matters most. And the stamp count depends on
+the rendered scale, so scaling an object would reshuffle every mark in it. A field survives
+both: translation and rotation do not rebuild geometry at all, and a scale rebuilds it
+against the same field at the same physical tooth size.
+
+Because live drawing has no finalized stroke, the seed is an argument rather than something
+read off one: `StrokeRenderer.beginStroke` passes the id `StrokeBuilder` fixed before the
+first sample. Without that, live and committed would be different grain, and the
+convergence contract would be false for every stamped strategy.
+
+**Consequence:** a strategy's durable authority is the snapshot plus the samples plus the
+stroke's own identity, and identity is now load-bearing rather than incidental. Any future
+operation that rebuilds a `Stroke` under a new id silently redraws its grain. Nothing does
+today — the codec, `cloneObject`, `applyInkStyle` and History all preserve it — and that is
+a property to keep rather than a coincidence to rely on.
+
+Grain parameters stay strategy constants. Hardness, grain strength, edge roughness and
+spacing were all expected to become durable fields; none did, because no preset varies one
+yet, and a durable field with nothing behind it is the mistake `pressureOpacity` and
+`brushTextureId` each made once already. The phase that ships per-hardness pencils is the
+phase that should add them. Tilt is ignored deliberately: a pencil that reads tilt is
+`pencil@2`.

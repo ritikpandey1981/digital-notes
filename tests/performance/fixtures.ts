@@ -21,27 +21,30 @@ export const TIMESTAMP = "2026-09-13T00:00:00.000Z";
  * kind carries exactly what the preset shipped on it carries, so what is being
  * measured is what an artist actually pays for.
  */
-export type BaselineBrushKind = "centerline" | "outline" | "technical-pen" | "pressure-pen";
+export type BaselineBrushKind =
+  "centerline" | "outline" | "technical-pen" | "pressure-pen" | "pencil";
 
 export function brush(kind: BaselineBrushKind) {
   return createResolvedBrushSnapshot({
     schemaVersion: 1,
     presetId: `baseline-${kind}`,
     presetVersion: 1,
-    family: "pen",
+    family: kind === "pencil" ? "pencil" : "pen",
     color: "#111111",
     size: 3,
     opacity: 1,
     smoothing: { mode: "average", amount: 0.25 },
     dynamics: {
       pressureSize: {
-        enabled: kind === "outline" || kind === "pressure-pen",
+        enabled: kind === "outline" || kind === "pressure-pen" || kind === "pencil",
         minimumFactor: 0.35,
         maximumFactor: 1.65,
         curve: { kind: "linear", exponent: 1 },
       },
+      // Pencil reads this response as coverage rather than as alpha, so it is
+      // enabled for the same reason and measured under the same sawtooth.
       pressureOpacity:
-        kind === "pressure-pen"
+        kind === "pressure-pen" || kind === "pencil"
           ? {
               enabled: true,
               minimumFactor: 0.7,

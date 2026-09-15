@@ -124,7 +124,13 @@ export function runModels(
       ),
     );
   if (group === "stroke") {
-    for (const kind of ["centerline", "outline", "technical-pen", "pressure-pen"] as const) {
+    for (const kind of [
+      "centerline",
+      "outline",
+      "technical-pen",
+      "pressure-pen",
+      "pencil",
+    ] as const) {
       const source = points(size);
       const make = () => {
         const value = builder("long", kind);
@@ -133,7 +139,35 @@ export function runModels(
       };
       record(`${kind}/builder-total`, make);
       const stroke = make().finalize();
-      record(`${kind}/geometry`, () => createBrushRenderGeometry(stroke.points, stroke.brush));
+      record(`${kind}/geometry`, () =>
+        createBrushRenderGeometry(stroke.points, stroke.brush, 1, stroke.id),
+      );
+      // What a repaint of this stroke actually costs the painter. Which of
+      // evaluation, generation and painting dominates is not answerable from
+      // one timing, and a stamped strategy is the first where painting might.
+      const geometry = createBrushRenderGeometry(stroke.points, stroke.brush, 1, stroke.id);
+      if (geometry.kind === "stamps") {
+        results.push(summarize(`${group}/${size}/${kind}/stamps`, [geometry.stamps.length]));
+        results.push(summarize(`${group}/${size}/${kind}/marks`, [geometry.markCount]));
+        results.push(summarize(`${group}/${size}/${kind}/contours`, [geometry.ribbons.length]));
+        results.push(
+          summarize(`${group}/${size}/${kind}/path-vertices`, [
+            geometry.ribbons.reduce(
+              (total, ribbon) => total + (ribbon.left.length + ribbon.right.length) / 2,
+              0,
+            ),
+          ]),
+        );
+      }
+      if (geometry.kind === "filled-path") {
+        results.push(summarize(`${group}/${size}/${kind}/fills`, [geometry.bands.length]));
+        results.push(summarize(`${group}/${size}/${kind}/contours`, [geometry.bands.length]));
+        results.push(
+          summarize(`${group}/${size}/${kind}/path-vertices`, [
+            geometry.bands.reduce((total, band) => total + band.left.length + band.right.length, 0),
+          ]),
+        );
+      }
       const times = [];
       for (let i = 0; i < 24; i++) {
         const value = make();

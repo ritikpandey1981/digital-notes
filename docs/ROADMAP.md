@@ -99,29 +99,40 @@ and documented without weakening live/final stroke parity.
 
 ### Build the real brush engine
 
-Started. The engine has a versioned strategy vocabulary, a static registry, and two
+Started. The engine has a versioned strategy vocabulary, a static registry, and three
 strategies of its own. `technical-pen@1` is a deterministic constant-width stroked path;
-`pressure-pen@1` drives width and opacity from pressure across a filled silhouette. Both
+`pressure-pen@1` drives width and opacity from pressure across a filled silhouette;
+`pencil@1` is the first dry medium and the first stamped strategy, placing tips by distance
+along the path and varying tone by coverage against a deterministic grain field. All three
 evaluate incrementally and converge live on committed. The contract they were built against
 is [`design/brush-engine-architecture.md`](design/brush-engine-architecture.md), and what
-they measured is [`performance/technical-pen-e2.md`](performance/technical-pen-e2.md) and
-[`performance/pressure-pen-e3.md`](performance/pressure-pen-e3.md). `centerline@1` and
-`outline@1` are frozen compatibility strategies. Two presets have moved:
-`pen-technical` and `pen-brush`.
+they measured is [`performance/technical-pen-e2.md`](performance/technical-pen-e2.md),
+[`performance/pressure-pen-e3.md`](performance/pressure-pen-e3.md) and
+[`performance/pencil-e4.md`](performance/pencil-e4.md). `centerline@1` and `outline@1` are
+frozen compatibility strategies. Three presets have moved: `pen-technical`, `pen-brush` and
+`pencil-hb`.
 
 Remaining:
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a
   pressure curve.
-- A shared velocity derivation, for strategies that want it. Pressure Pen is
-  pressure-driven and does not.
-- Pencil and Marker: spacing, stamps, deterministic variation, and tip profiles. Neither
-  exists; watercolor, pastel and airbrush are not planned for v1.
+- A shared velocity derivation, for strategies that want it. Neither pressure-driven
+  strategy needs one.
+- Marker: an oriented chisel tip over the stamp primitive spacing and grain already
+  provide. Watercolor, pastel and airbrush are not planned for v1.
+- Pencil hardness as real parameters. Grain strength, edge roughness and spacing are
+  strategy constants pinned by `pencil@1`; the phase that ships per-hardness pencils is
+  the one that should make them durable.
+- Tilt, including side-of-pencil shading. The normalized sample model already carries it;
+  `pencil@1` ignores it deliberately, and a pencil that reads it is `pencil@2`.
 - Give catalogue identities genuinely distinct behavior or reduce/catalogue-group the
   identities that share an underlying preset. The 45-entry catalogue is still provisional
-  and still maps onto nine presets; only `pen-technical` has moved to a real strategy.
-- Replace family-symbol slot glyphs with brush-accurate stroke previews.
+  and still maps onto nine presets; three of them now reach a real strategy.
+- Let the eraser and hit testing consume `hitGeometry` rather than object bounds. Both
+  engine strategies that vary width now supply it; consuming it is an editor change.
+- Replace family-symbol slot glyphs with brush-accurate stroke previews. The family-level
+  mapping now has one owner, which is where a per-brush preview would replace it.
 - Extend physical-device QA when tilt/twist begin affecting rendering.
 
 ### Refine direct tool adjustment

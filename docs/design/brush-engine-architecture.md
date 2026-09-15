@@ -255,7 +255,7 @@ validated, and already the field the dispatcher reads. Use it.
 type BrushStrategyId =
   | "centerline"      // frozen legacy
   | "outline"         // frozen legacy
-  | "technical-pen";  // pressure-pen, pencil and marker join as they ship
+  | "technical-pen";  // pressure-pen and pencil have since shipped; marker joins next
 
 interface BrushRendererDefinition {
   readonly version: number;        // widened from the literal 1
@@ -479,6 +479,31 @@ Deterministic, reproducible after Save/Open, identical across engines, and never
   stroke as it moved would read as a bug.
 - **Nothing generated is ever persisted.**
 
+**As implemented for `pencil@1`.** `internal/brush-random.ts` is the whole of it: `fnv1a32`
+over the stroke id for the seed, a splitmix32 finalizer for mixing, and
+`brushHash(seed, first, second, channel)` addressing a three-coordinate grid through
+`Math.imul`, `^` and `>>>` and nothing else. No new durable field was needed, and the
+duplication behaviour above holds in practice: `cloneObject` reuses the same `Stroke`, so a
+copied pencil mark keeps its grain.
+
+Two things the design sketched and the implementation had to settle differently:
+
+- **The seed is an argument, not something read off a `Stroke`.** Live drawing has no
+  finalized stroke, so `createBrushRenderGeometry` and `createLiveBrushEvaluator` take the
+  stroke id, and `StrokeRenderer.beginStroke` supplies the one `StrokeBuilder` fixed before
+  the first sample. Without that the live grain and the committed grain would be different
+  grain, and the convergence contract in the next section would be false for every stamped
+  strategy.
+- **Variation is addressed by *place*, not by stamp index.** This section proposed
+  `rand(seed, stampIndex, channel)`; Pencil hashes the grain cell a mark would land in
+  instead. Two reasons, both load-bearing. A pencil's stamps overlap heavily, so
+  index-addressed thresholds would let one stamp ink exactly where its neighbour declined,
+  and the tooth would fill in solid at precisely the coverage where texture matters most.
+  And the stamp *count* depends on the rendered scale, so index-addressed grain would
+  reshuffle an entire mark the moment its object was scaled, which section 16 forbids. The
+  index stays the ordering authority and is never renumbered; it is simply not an input to
+  appearance.
+
 ## 13. Live and committed convergence
 
 ### The contract
@@ -593,6 +618,62 @@ closer together when zoomed. That is why the rendered scale is fixed when an eva
 created rather than asked for per frame: a scale supplied per frame would mean discarding
 everything settled the moment the canvas zoomed.
 
+**As implemented for `pencil@1`.** `stamps` carries an ordered `BrushStamp[]` -- position,
+radius, coverage, and how many marks the stamp emitted -- plus the marks themselves in one
+flat number array, four corners each. A long stroke holds tens of thousands of marks, so
+they are coordinates in a flat sequence rather than objects in a graph.
+
+The row in the table above proposed `{x, y, width, height, rotation, alpha, grainPhase}`
+per stamp. Three of those turned out to belong somewhere else:
+
+- **There is one `alpha` for the whole geometry, not one per stamp.** This follows directly
+  from D-030's consequence: tone varies by *which marks exist* rather than by how dark each
+  one is, which is also what coverage physically means. What the marks are is then
+  constrained by the rasterizer rather than by the medium — see below.
+- **`grainPhase` is not a stamp field.** Grain is a field that marks are sampled against,
+  so a phase stored per stamp would be a cached answer rather than the question.
+- **Rotation is implied rather than stored.** A mark is already a quadrilateral built from
+  the local tangent, so its orientation is in its corners. A chisel tip that needs an
+  independent angle can still carry one; nothing here prevents it.
+
+Marks are quadrilaterals rather than discs because a pencil at Folio's sizes is one to
+three page units across, where a sub-pixel disc costs four cubics and a quad costs four
+line segments. That difference is paid on every repaint of the stroke, not once.
+
+### Contours are the cost, and they are quadratic
+
+The single most expensive thing a stamped strategy can do in Canvas 2D is hand one
+`fill()` a great many disjoint contours. Measured on the 20 000-sample live workload, where
+the whole live stroke is repainted every frame:
+
+| Contours | Vertices | Fills | Frame |
+| ---: | ---: | ---: | ---: |
+| 1 013 (`pressure-pen@1`) | 50 775 | 1 013 | 2.9 ms |
+| 6 375 (Pencil, one fill) | 107 876 | 1 | 155.6 ms |
+| 8 439 (Pencil, batches of 48) | 143 768 | 176 | 8.4 ms |
+
+The third row has more contours and more vertices than the second and is eighteen times
+faster; the only difference is that its path reaches the rasterizer in batches. Contour
+count is the term that matters, the cost is quadratic in it *within one fill*, and it is
+linear across fills. An early Pencil that emitted a contour per mark rather than per run
+measured 195 ms a frame at a *quarter* of that length, and killed the renderer at full
+length.
+
+Two rules follow, and Marker will need both:
+
+1. **Merge before you emit.** Marks that overlap along the stroke are one contour, not
+   many. This is a property of the geometry, not an optimization of the painter: the
+   evaluator must produce runs.
+2. **Then batch, which requires disjointness.** Splitting the path is only safe if no two
+   contours overlap, so the geometry has to guarantee that — Pencil narrows a mark before
+   moving it so it cannot leave its lane, and stops a run short of the next run in the same
+   lane. Earn disjointness and the painter can bound contours per fill; skip it and the
+   only safe arrangement is the quadratic one.
+
+A stroke that crosses *itself* still darkens where it crosses, as `pressure-pen@1` already
+does between bands. That is the one overlap the layout cannot remove, and for graphite it
+is also the right answer.
+
 ## 15. Bounds and hit geometry
 
 Every strategy supplies three pure, Canvas-free outputs:
@@ -649,7 +730,12 @@ Brush-engine requirements:
   canvas, so an oriented tip rotates with the object. That is the correct physical reading:
   rotating the paper rotates the mark.
 - **Grain is anchored in the stroke's local space** (see §12), so texture travels with the
-  mark under both translation and rotation.
+  mark under both translation and rotation, neither of which rebuilds geometry. A uniform
+  *scale* does rebuild it, because the mark gets longer while its painted width does not
+  and therefore needs proportionally more stamps. The grain field is addressed in painted
+  page units, so the tooth keeps its physical size and its character across that rebuild;
+  the particular cells a scaled mark lands on are not the ones it landed on before, and
+  cannot be, because it is a different length of mark.
 - **Do not assume isotropy in the model.** The `stamps` primitive carries independent
   width, height and rotation so that a future non-uniform transform has somewhere to land.
 
@@ -712,7 +798,8 @@ yet.
 
 ```ts
 // --- identity and versioning -------------------------------------------------
-type BrushStrategyId = "centerline" | "outline" | "technical-pen"; // grows per phase
+type BrushStrategyId =                   // grows per phase
+  | "centerline" | "outline" | "technical-pen" | "pressure-pen" | "pencil";
 interface BrushRendererDefinition {      // the existing durable field, widened
   readonly version: number;
   readonly kind: BrushStrategyId;
@@ -752,11 +839,10 @@ type BrushGeometry =
       readonly roundJoins: readonly Disc[]; readonly dot: Disc | null }
   | { readonly kind: "stamps"; readonly stamps: readonly BrushStamp[] };
 
-interface BrushStamp {
+interface BrushStamp {                   // as shipped; §14 records what moved and why
   readonly x: number; readonly y: number;
-  readonly width: number; readonly height: number;
-  readonly rotation: number; readonly alpha: number;
-  readonly grainPhase: number; readonly index: number;
+  readonly radius: number; readonly coverage: number;
+  readonly markCount: number; readonly index: number;
 }
 
 // --- strategy ----------------------------------------------------------------
@@ -866,10 +952,15 @@ and the `catmull-rom` / `bezier` smoothing modes — decodable values with no im
 
 **CAN WAIT FOR PENCIL AND MARKER**
 
-10. Spacing and stamp evaluation.
-11. The deterministic PRNG and grain phase.
-12. The `logicalBounds` / `visualBounds` split.
-13. `hitGeometry` as a first-class strategy output, with the eraser consuming it.
+10. ~~Spacing and stamp evaluation.~~ Shipped with `pencil@1`: an arc-length cursor over
+    the smoothed centerline, advancing by a fraction of nominal diameter.
+11. ~~The deterministic PRNG and grain phase.~~ Shipped as `internal/brush-random.ts`; the
+    phase became a spatial field rather than a per-stamp value (§12).
+12. The `logicalBounds` / `visualBounds` split. Still one number; Pencil's two differ by
+    its bounded jitter allowance, which no consumer has yet needed separated.
+13. ~~`hitGeometry` as a first-class strategy output~~ -- shipped for both `pressure-pen@1`
+    and `pencil@1`. The eraser consuming it rather than object bounds is still open, and is
+    an editor change rather than a strategy one.
 14. Move the 45-identity catalogue into `@folio/editor`.
 
 **DEFER AFTER V1**
@@ -935,7 +1026,7 @@ frozen legacy entries. No strategy is created to serve a name.
 | Technical Pen, Micro Liner, Drafting Pen, Fine Ink, Ruling Pen | `pen-technical` | `technical-pen` | size, smoothing | **Ruling Pen** implies constrained straight-line drawing, which is a *tool*, not a brush |
 | Mechanical Pencil, Draughting Pencil, Fine Lead | `pencil-mechanical` | `technical-pen` | size | could instead be `pencil` at very low grain; needs a visual decision |
 | Brush Pen Soft, Brush Pen Firm, Fountain Pen, Calligraphy Pen, Sign Pen, Dynamic Pen | `pen-brush` | `pressure-pen` | pressure range, curve exponent, taper | **Calligraphy Pen** and **Fountain Pen** want an oriented chisel tip, which is marker geometry with pen opacity. **Dynamic Pen** names no defined behaviour |
-| HB Pencil, Hard Pencil, Layout Pencil, Blueline Pencil | `pencil-hb` | `pencil` | hardness, grain strength, coverage, default colour | Blueline's non-black default is a preset default, not a strategy |
+| HB Pencil, Hard Pencil, Layout Pencil, Blueline Pencil | `pencil-hb` | **`pencil@1`, shipped** | hardness, grain strength, coverage, default colour | Blueline's non-black default is a preset default, not a strategy |
 | Soft Pencil, 2B Pencil, Sketch Pencil, Contour Pencil | `pencil-2b` | `pencil` | hardness, grain, pressure range | |
 | 4B Pencil, 6B Pencil, Shading Pencil, Broad Lead | `pencil-4b` | `pencil` | hardness, grain, size, edge roughness | tilt shading is deferred; these are the presets that will want it first |
 | Fine Marker, Felt Marker, Bullet Marker, Sketch Marker, Layout Marker, Slim Marker | `marker-felt` | `marker` | round tip, size, flow | |
@@ -999,13 +1090,44 @@ that by resolving to centerline; a strategy that reads pressure per sample keeps
 strategy and resolves its responses off instead, so the mark is the brush exactly as
 configured. See D-030.
 
-### Later — Pencil
+### E4 — Pencil
 
-Durable: hardness, grain strength, coverage, pressure response, edge roughness, spacing.
-Derived at render time: the grain field itself, per-stamp jitter, the stamp stream. Texture
-stays deterministic because it is a pure function of `(seed, position, index)` — **one
-bitmap per stroke is not proposed and would not be justified**: it would allocate per
-stroke, bloat the already-dominant encode cost, and make partial erase per-strategy.
+The first dry medium, and the first strategy to emit `stamps`.
+
+In: `pencil@1`; distance-based stamp placement with an incremental arc-length cursor; a
+deterministic grain field; pressure driving coverage and width through the durable
+responses already in the model; bounded edge roughness; the stamp stream as hit geometry.
+
+Out: tilt and side-of-pencil shading, per-hardness physics, wet media, external texture
+assets, any change to a frozen strategy, and the rest of the catalogue.
+
+**As shipped.** The section above expected hardness, grain strength, edge roughness and
+spacing to become durable fields. **None of them did, and none should until an artist can
+set one.** They are strategy constants pinned by `pencil@1`, which is exactly what a
+version is for: a field added before a preset varies it is a durable promise with nothing
+behind it, which is the mistake `pressureOpacity` and `brushTextureId` each made once
+already. When per-hardness presets arrive they will need real parameters; that is the phase
+that should add them.
+
+Texture is deterministic and procedural, as predicted, and no bitmap is generated per
+stroke. What the prediction got wrong is its *address*: the grain is a pure function of
+`(seed, painted position)` rather than of `(seed, position, index)`, for the reasons in
+§12.
+
+Two decisions carry the rest of it, and both follow from Canvas 2D rather than from
+pencils:
+
+- **Pressure moves coverage, not alpha.** Varying *which marks exist* is the only tonal
+  variation Canvas 2D can express without compositing an overlap twice, and it happens to
+  be what coverage physically is. The marks are then laid out so that no two of them
+  overlap, which is what lets the painter batch them — §14 has the measurement that makes
+  this the whole shape of the strategy.
+- **Coverage reads `pressureOpacity`.** For a dry medium a lighter touch leaves less
+  graphite rather than translucent graphite, so that response — "how much medium pressure
+  lays down" — is read as coverage. It is a per-strategy reading of one durable field, not
+  a second field, and `(kind, version)` pins it for ever.
+
+Measured in [`../performance/pencil-e4.md`](../performance/pencil-e4.md).
 
 ### Later — Marker
 
@@ -1120,6 +1242,15 @@ and duplicated timestamps producing finite, non-spiking velocity.
 duplicate and paste; a stamp stream identical whether evaluated incrementally or at once;
 spacing independent of sample rate; `visualBounds` actually containing the grain spill;
 chisel tip orientation correct under object rotation.
+
+**As covered for `pencil@1`**, all of the above except the chisel, plus five the list did
+not anticipate: that a settled prefix is byte-identical under a reversal, a pressure slam, a
+long jump, a dense burst and a sparse one; that raising coverage only ever *adds* marks
+rather than moving them; that the painter issues exactly one `fill()` at exactly one alpha
+over a self-crossing loop; that a mouse resolves to one width and one coverage rather than
+to the middle of a curve; and that a stroke carrying the dead `brushTextureId` renders
+identically to one without it, so the field cannot quietly have become the texture
+mechanism.
 
 Unit tests for everything that is a pure function — which, by design, is nearly all of it.
 Electron end-to-end tests only for pointer capture, cancellation and foreground-dependent

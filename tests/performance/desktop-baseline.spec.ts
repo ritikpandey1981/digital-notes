@@ -165,7 +165,21 @@ test("measured desktop baseline (no speed thresholds)", async () => {
       );
       if (sanity.timedOut || sanity.states.some((state) => state.hidden || !state.focused))
         throw new Error("Live baseline did not obtain continuous foreground rAF observations");
-      for (const kind of ["centerline", "outline", "technical-pen", "pressure-pen"] as const) {
+      for (const kind of [
+        "centerline",
+        "outline",
+        "technical-pen",
+        "pressure-pen",
+        "pencil",
+      ] as const) {
+        // A phase measures the strategy it shipped and the ones it must not
+        // have moved, not necessarily all five. Narrowing also keeps one
+        // crashing workload from costing every measurement behind it.
+        if (
+          process.env.FOLIO_BASELINE_LIVE_KINDS &&
+          !process.env.FOLIO_BASELINE_LIVE_KINDS.split(",").includes(kind)
+        )
+          continue;
         for (const [count, density] of [
           [100, 1],
           [1000, 4],
