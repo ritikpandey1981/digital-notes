@@ -80,8 +80,65 @@ export interface FilledPathRenderGeometry {
   readonly keptPointCount: number;
 }
 
+/**
+ * One evaluated tip placement along a stamped stroke.
+ *
+ * The stamp is the semantic unit -- where the tip touched down, how wide it was
+ * and how much of it inked -- and stays separate from the marks a painter
+ * draws, so bounds, hit testing and the tests can read the stroke without
+ * knowing how any one strategy renders a tip.
+ *
+ * It extends {@link BrushHitSample} rather than duplicating position and
+ * radius, so the stamp stream *is* the hit geometry and there is no second
+ * array to keep in step.
+ */
+export interface BrushStamp extends BrushHitSample {
+  /** Monotonic from zero along the stroke. Never renumbered. */
+  readonly index: number;
+  /** Fraction of the tip that received medium, 0..1. Pressure moves this. */
+  readonly coverage: number;
+  /** How many marks this stamp actually emitted, after the grain threshold. */
+  readonly markCount: number;
+}
+
+/** Vertices per mark in {@link StampsRenderGeometry.marks}: four corners, x then y. */
+export const STAMP_MARK_STRIDE = 8;
+
+/**
+ * A stream of tip placements painted as one flat batch of quadrilaterals.
+ *
+ * Marks live in one flat number array rather than in objects because a long
+ * stroke holds tens of thousands of them, and because the painter wants a tight
+ * loop over coordinates rather than a walk over a graph. Every mark is four
+ * corners in a consistent winding, so a single non-zero `fill()` paints their
+ * union: overlapping marks composite exactly once, which is what stops a
+ * stroke from darkening at its own overlaps the way separate fills would.
+ *
+ * There is exactly one `alpha`. Variation within a stroke is carried by which
+ * marks exist, not by how dark each one is -- the only arrangement Canvas 2D
+ * can paint in one pass without compositing an overlap twice.
+ */
+export interface StampsRenderGeometry {
+  readonly kind: "stamps";
+  readonly stamps: readonly BrushStamp[];
+  /** Flat quad corners, {@link STAMP_MARK_STRIDE} numbers per mark. */
+  readonly marks: readonly number[];
+  readonly markCount: number;
+  /** Resolved page alpha, base opacity already included, applied exactly once. */
+  readonly alpha: number;
+  /** A press that never moved: the whole mark is one disc. */
+  readonly dot: Readonly<{ center: Point; radius: number }> | null;
+  /** The variable-radius centerline, for hit testing and the eraser. */
+  readonly hitGeometry: readonly BrushHitSample[];
+  readonly renderedScale: number;
+  readonly bounds: Rect;
+  readonly sourcePointCount: number;
+  readonly keptPointCount: number;
+}
+
 /** Geometry an incremental evaluator can produce. */
-export type LiveRenderGeometry = StrokedPathRenderGeometry | FilledPathRenderGeometry;
+export type LiveRenderGeometry =
+  StrokedPathRenderGeometry | FilledPathRenderGeometry | StampsRenderGeometry;
 
 /**
  * Structural evidence that live evaluation reuses settled work rather than

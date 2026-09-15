@@ -2,7 +2,12 @@ import type { Point } from "@folio/rendering";
 import type { ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
-import type { FilledPathRenderGeometry, StrokedPathRenderGeometry } from "./brush-geometry";
+import {
+  STAMP_MARK_STRIDE,
+  type FilledPathRenderGeometry,
+  type StampsRenderGeometry,
+  type StrokedPathRenderGeometry,
+} from "./brush-geometry";
 import type { ProfessionalInkSegment } from "./professional-ink-path";
 
 /**
@@ -108,6 +113,49 @@ export function drawFilledPath(
     context.closePath();
     context.fill();
   }
+  context.restore();
+}
+
+/**
+ * Paints one Pencil stamp stream.
+ *
+ * Every mark in the stroke goes into one path and is painted by one `fill()`
+ * under one alpha. That is not an optimization, it is the correctness argument:
+ * a pencil's stamps overlap heavily by construction, and painting them in more
+ * than one pass would composite those overlaps twice, so a stroke would darken
+ * along itself in proportion to how densely it was stamped. A single non-zero
+ * fill paints the union instead, so the deposited tone is exactly the brush's
+ * own opacity wherever graphite landed and nowhere darker.
+ *
+ * The inherited alpha is read rather than multiplied into, for the same reason
+ * a band's is: the geometry's alpha already carries the brush's opacity, and
+ * multiplying again would apply it twice.
+ */
+export function drawStamps(
+  context: CanvasRenderingContext2D,
+  geometry: StampsRenderGeometry,
+  brush: ResolvedBrushSnapshot,
+): void {
+  const marks = geometry.marks;
+  const dot = geometry.dot;
+  if (marks.length === 0 && dot === null) return;
+  const inherited = context.globalAlpha;
+  context.save();
+  context.fillStyle = brush.color;
+  context.globalAlpha = inherited * geometry.alpha;
+  context.beginPath();
+  if (dot !== null) {
+    context.moveTo(dot.center.x + dot.radius, dot.center.y);
+    context.arc(dot.center.x, dot.center.y, dot.radius, 0, Math.PI * 2);
+  }
+  for (let offset = 0; offset + STAMP_MARK_STRIDE <= marks.length; offset += STAMP_MARK_STRIDE) {
+    context.moveTo(marks[offset] as number, marks[offset + 1] as number);
+    context.lineTo(marks[offset + 2] as number, marks[offset + 3] as number);
+    context.lineTo(marks[offset + 4] as number, marks[offset + 5] as number);
+    context.lineTo(marks[offset + 6] as number, marks[offset + 7] as number);
+    context.closePath();
+  }
+  context.fill();
   context.restore();
 }
 

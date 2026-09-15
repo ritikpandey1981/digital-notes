@@ -89,6 +89,7 @@ describe("brush strategy vocabulary", () => {
     expect(supportedBrushStrategies()).toEqual([
       "centerline@1",
       "outline@1",
+      "pencil@1",
       "pressure-pen@1",
       "technical-pen@1",
     ]);
@@ -96,6 +97,7 @@ describe("brush strategy vocabulary", () => {
     expect(isSupportedBrushStrategy("outline", 1)).toBe(true);
     expect(isSupportedBrushStrategy("technical-pen", 1)).toBe(true);
     expect(isSupportedBrushStrategy("pressure-pen", 1)).toBe(true);
+    expect(isSupportedBrushStrategy("pencil", 1)).toBe(true);
   });
 
   it("keeps the durable vocabulary and the renderer registry in step", () => {
@@ -106,10 +108,11 @@ describe("brush strategy vocabulary", () => {
 
   it.each([
     ["an unknown kind", "unknown-brush", 1],
-    ["a strategy a later phase will add", "pencil", 1],
+    ["a strategy a later phase will add", "marker", 1],
     ["a future version of a known kind", "centerline", 2],
     ["a future version of Technical Pen", "technical-pen", 2],
     ["a future version of Pressure Pen", "pressure-pen", 2],
+    ["a tilt-reading Pencil that has not shipped", "pencil", 2],
     ["a zero version", "outline", 0],
     ["a negative version", "outline", -1],
     ["a fractional version", "outline", 1.5],

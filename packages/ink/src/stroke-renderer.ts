@@ -126,7 +126,7 @@ export class StrokeRenderer {
     this.liveStroke = {
       id: update.strokeId,
       brush: update.brush,
-      evaluator: createLiveBrushEvaluator(update.brush),
+      evaluator: createLiveBrushEvaluator(update.brush, 1, update.strokeId),
       points: update.points,
       dirtyRect: update.dirtyRect,
     };
@@ -380,7 +380,12 @@ export class StrokeRenderer {
       return;
     }
     if (requiresFullGeometry(this.liveStroke.brush)) {
-      const geometry = createBrushRenderGeometry(this.liveStroke.points, this.liveStroke.brush);
+      const geometry = createBrushRenderGeometry(
+        this.liveStroke.points,
+        this.liveStroke.brush,
+        1,
+        this.liveStroke.id,
+      );
       const affected = unionRects(this.liveStroke.dirtyRect, inflateRect(geometry.bounds, 2));
       this.liveStroke.dirtyRect = affected;
       this.recordInvalidation(affected);
@@ -477,7 +482,7 @@ export class StrokeRenderer {
     }
     drawBrushRenderGeometry(
       this.context,
-      createBrushRenderGeometry(state.points, state.brush),
+      createBrushRenderGeometry(state.points, state.brush, 1, state.id),
       state.brush,
     );
   }
@@ -550,6 +555,14 @@ export class StrokeRenderer {
       // A filled silhouette has spans between kept samples rather than fitted
       // curves, and one span is the same unit of work a segment is elsewhere.
       this.finalizedSegmentCountValue += Math.max(0, geometry.keptPointCount - 1);
+      return;
+    }
+    if (geometry.kind === "stamps") {
+      this.finalizedSourcePointCountValue += geometry.sourcePointCount;
+      this.finalizedFilteredPointCountValue += geometry.keptPointCount;
+      // A stamped stroke has no curves at all. Its comparable unit of drawn
+      // work is the mark, which is what a repaint actually costs.
+      this.finalizedSegmentCountValue += geometry.markCount;
       return;
     }
     const path = geometry.path;

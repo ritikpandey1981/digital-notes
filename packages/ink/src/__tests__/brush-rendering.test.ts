@@ -106,7 +106,7 @@ function strokeFromPressures(
 
 /** Narrows to the fitted path both frozen legacy strategies carry. */
 function fitted(geometry: BrushRenderGeometry): ProfessionalInkPath {
-  if (geometry.kind === "stroked-path" || geometry.kind === "filled-path") {
+  if (geometry.kind !== "centerline" && geometry.kind !== "outline") {
     throw new Error("An evaluated strategy has no fitted-curve stage.");
   }
   return geometry.path;

@@ -5,8 +5,15 @@ import type { Stroke } from "../stroke";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
 import type { LiveBrushEvaluator, LiveRenderGeometry } from "./brush-geometry";
-import { drawFilledPath, drawSmoothStrokeSegments, drawStrokedPath } from "./draw-stroke";
+import { brushSeed } from "./brush-random";
+import {
+  drawFilledPath,
+  drawSmoothStrokeSegments,
+  drawStamps,
+  drawStrokedPath,
+} from "./draw-stroke";
 import { createOutlineStrokeGeometry, type OutlineStrokeGeometry } from "./outline-geometry";
+import { PencilEvaluator, createPencilGeometry } from "./pencil";
 import { PressurePenEvaluator, createPressurePenGeometry } from "./pressure-pen";
 import { createProfessionalInkPath, type ProfessionalInkPath } from "./professional-ink-path";
 import { TechnicalPenEvaluator, createTechnicalPenGeometry } from "./technical-pen";
@@ -63,6 +70,7 @@ interface BrushRenderStrategy {
     points: readonly StrokePoint[],
     brush: ResolvedBrushSnapshot,
     renderedScale: number,
+    seed: number,
   ) => BrushRenderGeometry;
   /** Geometry for one finalized stroke, cached by immutable Stroke identity and scale. */
   readonly resolveGeometry: (stroke: Stroke, renderedScale: number) => BrushRenderGeometry;
@@ -79,6 +87,7 @@ interface BrushRenderStrategy {
   readonly createLiveEvaluator?: (
     brush: ResolvedBrushSnapshot,
     renderedScale: number,
+    seed: number,
   ) => LiveBrushEvaluator;
 }
 
@@ -170,12 +179,35 @@ const PRESSURE_PEN_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStra
   createLiveEvaluator: (brush, renderedScale) => new PressurePenEvaluator(brush, renderedScale),
 });
 
+/**
+ * The same settled-prefix contract again, over a stream of tip placements
+ * rather than a continuous shape, with pressure driving how much of each tip
+ * inks rather than how dark it is.
+ */
+const PENCIL_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
+  id: "pencil",
+  version: 1,
+  createGeometry: (points, brush, renderedScale, seed) =>
+    createPencilGeometry(points, brush, renderedScale, seed),
+  resolveGeometry: (stroke, renderedScale) =>
+    cachedEvaluatedGeometry(stroke, "pencil", renderedScale, () =>
+      createPencilGeometry(stroke.points, stroke.brush, renderedScale, brushSeed(stroke.id)),
+    ),
+  draw: (context, geometry, brush) => {
+    if (geometry.kind !== "stamps") return;
+    drawStamps(context, geometry, brush);
+  },
+  createLiveEvaluator: (brush, renderedScale, seed) =>
+    new PencilEvaluator(brush, renderedScale, seed),
+});
+
 const BRUSH_RENDER_STRATEGIES: ReadonlyMap<string, BrushRenderStrategy> = new Map(
   [
     LEGACY_CENTERLINE_STRATEGY,
     LEGACY_OUTLINE_STRATEGY,
     TECHNICAL_PEN_STRATEGY,
     PRESSURE_PEN_STRATEGY,
+    PENCIL_STRATEGY,
   ].map((strategy) => [brushStrategyKey(strategy.id, strategy.version), strategy]),
 );
 
@@ -204,14 +236,28 @@ function requireBrushRenderStrategy(brush: ResolvedBrushSnapshot): BrushRenderSt
   return strategy;
 }
 
-/** Builds transient geometry for the latest active-stroke points. */
+/**
+ * Builds transient geometry for the latest active-stroke points.
+ *
+ * `strokeId` is the identity a strategy with deterministic variation seeds
+ * itself from. It is an argument rather than something read off a `Stroke`
+ * because live drawing has no finalized stroke yet -- only the id the builder
+ * fixed before the first sample, which is exactly the id the committed stroke
+ * will carry. That is what makes the live and committed grain the same grain.
+ */
 export function createBrushRenderGeometry(
   points: readonly StrokePoint[],
   brush: ResolvedBrushSnapshot,
   renderedScale = 1,
+  strokeId = "",
 ): BrushRenderGeometry {
   assertScale(renderedScale);
-  return requireBrushRenderStrategy(brush).createGeometry(points, brush, renderedScale);
+  return requireBrushRenderStrategy(brush).createGeometry(
+    points,
+    brush,
+    renderedScale,
+    brushSeed(strokeId),
+  );
 }
 
 /** Reuses strategy-specific geometry derived only from one immutable Stroke snapshot. */
@@ -230,9 +276,16 @@ export function resolveStrokeRenderGeometry(
 export function createLiveBrushEvaluator(
   brush: ResolvedBrushSnapshot,
   renderedScale = 1,
+  strokeId = "",
 ): LiveBrushEvaluator | null {
   assertScale(renderedScale);
-  return requireBrushRenderStrategy(brush).createLiveEvaluator?.(brush, renderedScale) ?? null;
+  return (
+    requireBrushRenderStrategy(brush).createLiveEvaluator?.(
+      brush,
+      renderedScale,
+      brushSeed(strokeId),
+    ) ?? null
+  );
 }
 
 /**

@@ -34,16 +34,15 @@ const OFF: BrushPressureResponse = Object.freeze({
   curve: LINEAR,
 });
 
-function engineBrush(
-  kind: "technical-pen" | "pressure-pen",
-  smoothing: BrushSmoothing,
-): ResolvedBrushSnapshot {
-  const expressive = kind === "pressure-pen";
+type EngineStrategy = "technical-pen" | "pressure-pen" | "pencil";
+
+function engineBrush(kind: EngineStrategy, smoothing: BrushSmoothing): ResolvedBrushSnapshot {
+  const expressive = kind !== "technical-pen";
   return createResolvedBrushSnapshot({
     schemaVersion: 1,
     presetId: `frozen-${kind}`,
     presetVersion: 1,
-    family: "pen",
+    family: kind === "pencil" ? "pencil" : "pen",
     color: "#111111",
     size: 6,
     opacity: 0.9,
@@ -147,6 +146,21 @@ function digest(geometry: BrushRenderGeometry): string {
       for (const vertex of band.right) parts.push(point(vertex));
     }
   }
+  if (geometry.kind === "stamps") {
+    // Everything a painter reads, plus the stamp stream the bounds, the hit
+    // geometry and the eraser read. A grain that moved would show up here even
+    // if the marks happened to cover the same paper.
+    parts.push(round(geometry.alpha), String(geometry.markCount), String(geometry.stamps.length));
+    parts.push(
+      geometry.dot === null
+        ? "none"
+        : `${point(geometry.dot.center)},${round(geometry.dot.radius)}`,
+    );
+    for (const stamp of geometry.stamps) {
+      parts.push(point(stamp), round(stamp.radius), round(stamp.coverage), String(stamp.markCount));
+    }
+    for (const value of geometry.marks) parts.push(round(value));
+  }
   return parts.join("|");
 }
 
@@ -157,6 +171,8 @@ describe("frozen engine brush strategies", () => {
       ["technical-pen", Object.freeze({ mode: "average", amount: 0.3 }) as BrushSmoothing],
       ["pressure-pen", Object.freeze({ mode: "none", amount: 0 }) as BrushSmoothing],
       ["pressure-pen", Object.freeze({ mode: "average", amount: 0.18 }) as BrushSmoothing],
+      ["pencil", Object.freeze({ mode: "none", amount: 0 }) as BrushSmoothing],
+      ["pencil", Object.freeze({ mode: "average", amount: 0.2 }) as BrushSmoothing],
     ] as const;
     const digests = cases.map(([kind, smoothing]) => {
       const brush = engineBrush(kind, smoothing);
@@ -171,6 +187,8 @@ describe("frozen engine brush strategies", () => {
       "technical-pen@0.3:a2i6kf",
       "pressure-pen@0:6bm694",
       "pressure-pen@0.18:92y0oo",
+      "pencil@0:1av0s6m",
+      "pencil@0.2:1lk49kd",
     ]);
   });
 
@@ -183,6 +201,18 @@ describe("frozen engine brush strategies", () => {
       (scale) => `${scale}:${hash(digest(resolveStrokeRenderGeometry(stroke, scale)))}`,
     );
     expect(digests).toEqual(["0.5:58sh20", "2.5:1drflrf"]);
+  });
+
+  it("pins Pencil at a non-unit rendered scale, where its grain resamples", () => {
+    // A scaled pencil is a longer mark of the same painted width, so it places
+    // proportionally more stamps and samples the grain field at more places.
+    // The field itself does not move, and this is what proves the rule did not.
+    const brush = engineBrush("pencil", Object.freeze({ mode: "average", amount: 0.2 }));
+    const stroke = frozenStroke(brush, "frozen-pencil-scaled");
+    const digests = [0.5, 2.5].map(
+      (scale) => `${scale}:${hash(digest(resolveStrokeRenderGeometry(stroke, scale)))}`,
+    );
+    expect(digests).toEqual(["0.5:v847gs", "2.5:1afpk1r"]);
   });
 });
 
