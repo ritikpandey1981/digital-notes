@@ -43,17 +43,33 @@ export async function openSlotToolOptions(window: Page, slotId: string): Promise
   const palette = window.getByTestId("context-tool-palette");
   await expect(rail).toBeVisible();
   const expectedTool = await rail.getAttribute("data-property-rail-tool");
-  let paletteAlreadyMatches =
-    (await palette.isVisible()) &&
-    (await palette.getAttribute("data-tool-options-tool")) === expectedTool;
+  /**
+   * Whether a palette for this slot's tool is already standing open.
+   *
+   * `isVisible` answers true for an *exiting* palette as well as a settled
+   * one, and reading an attribute off one that detaches between the two calls
+   * blocks until that read times out -- thirty seconds later, on a step whose
+   * whole intent is to notice the exit and reopen. Treating a palette that
+   * vanishes mid-read as "not the one being looked for" is what the comment
+   * below has always meant; this is what lets it actually say so.
+   */
+  const paletteMatchesTool = async (): Promise<boolean> => {
+    if (!(await palette.isVisible())) return false;
+    try {
+      return (
+        (await palette.getAttribute("data-tool-options-tool", { timeout: 1_000 })) === expectedTool
+      );
+    } catch {
+      return false;
+    }
+  };
+  let paletteAlreadyMatches = await paletteMatchesTool();
   if (paletteAlreadyMatches) {
     // AnimatePresence keeps the previous palette visible while it exits. Give
     // that short choreography time to distinguish a stable open palette from
     // an old matching instance that is about to detach.
     await window.waitForTimeout(250);
-    paletteAlreadyMatches =
-      (await palette.isVisible()) &&
-      (await palette.getAttribute("data-tool-options-tool")) === expectedTool;
+    paletteAlreadyMatches = await paletteMatchesTool();
   }
   if (!paletteAlreadyMatches) {
     // A palette left in its close choreography can still cover the rail for a
