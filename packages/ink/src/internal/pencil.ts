@@ -17,12 +17,12 @@ import { brushHash, unitFromHash } from "./brush-random";
  * The first dry-media strategy, and the first to use the `stamps` primitive.
  * Where the two pens describe a continuous shape, a pencil describes *where the
  * medium landed*: graphite is spatially discontinuous, and the gaps are most of
- * the character of the mark. So the stroke is a stream of tip placements; each
- * placement offers a few lanes across the tip, a grain field fixed in the
- * stroke's own space decides which of them take graphite, and consecutive
- * placements that agree are drawn as one run.
+ * the character of the mark. So the stroke is a stream of tip placements, a
+ * grain field fixed in the stroke's own space decides which patches of paper
+ * under each tip take graphite, and consecutive placements that agree are drawn
+ * as one tapered streak.
  *
- * Six decisions carry the design, and two of them are about the rasterizer
+ * Seven decisions carry the design, and two of them are about the rasterizer
  * rather than about pencils.
  *
  * - **Placement is by distance, not by sample.** An arc-length cursor walks the
@@ -30,35 +30,49 @@ import { brushHash, unitFromHash } from "./brush-random";
  *   the same whether the device reported 60 or 240 samples per second, and a
  *   fast flick cannot leave a gap: stamps follow the path, not the events.
  * - **Pressure moves coverage, not alpha.** Every mark in a stroke is painted at
- *   one alpha, and the runs of graphite are laid out so that no two of them
+ *   one alpha, and the streaks of graphite are laid out so that no two of them
  *   overlap, so the deposited tone is the brush's own opacity wherever graphite
- *   landed and nowhere darker. What pressure changes is how many of the tip's
- *   grain lanes receive graphite -- which is what darkness on paper physically
- *   is, and the only tonal variation Canvas 2D can paint without compositing an
+ *   landed and nowhere darker. What pressure changes is how much of the tip's
+ *   paper receives graphite -- which is what darkness on paper physically is,
+ *   and the only tonal variation Canvas 2D can paint without compositing an
  *   overlap twice. Pressure also widens the tip, through the same durable
  *   response every other strategy reads.
- * - **A lane's consecutive graphite is one contour, not one per stamp.** Stamps
- *   overlap by construction, so a contour each would hand the rasterizer tens of
- *   thousands of disjoint shapes to resolve against one another for a picture
- *   their union already describes -- measured at 195 ms a frame where the merged
- *   form costs single digits. A run of inked stamps in one lane is therefore
- *   accumulated into a single ribbon, and a lane closes its ribbon the moment
- *   the grain declines. Every vertex is appended and never revised, so rewinding
- *   a run to a settled length is a truncation and cannot leave a stale value
- *   behind -- which is what makes the merged form safe to build incrementally.
- * - **Runs never overlap one another, so the painter may batch them.** A lane's
- *   mark always stays inside that lane's own share of the tip, and a run's far
- *   end always stops short of where the next run in the same lane begins. That
- *   costs a little irregularity and buys the freedom to paint runs in small
- *   groups: one `fill()` over thousands of disjoint contours is quadratic in
- *   Canvas 2D and was measured at 155 ms a frame, where the same contours in
- *   batches are linear and cost single digits.
- * - **Grain is a field in the stroke's own space, not a sequence.** A mark's
- *   threshold and jitter are hashed from the grain cell it falls in, so
- *   neighbouring stamps agree about where the paper's tooth is and the texture
- *   survives being overdrawn by the stroke's own overlap. A value drawn from a
- *   sequence would be reshuffled by anything that changed the stamp count, and
- *   the tooth would fill in solid wherever stamps overlapped.
+ * - **The tip has a profile, not an edge.** Deposition is certain through the
+ *   core and fades to nothing at the rim, so the silhouette breaks up into
+ *   individual grains instead of ending at a mathematical wall. A dry medium
+ *   that stops dead at its own radius reads as a shape, not as a material.
+ * - **The grain field is a field in the artwork's space.** Whether a patch of
+ *   paper catches graphite is hashed from the patch, so neighbouring stamps
+ *   agree about it, the texture survives being overdrawn by the stroke's own
+ *   overlap, and pressing harder *reveals more of the same paper* rather than
+ *   dealing a new pattern. A value drawn from a sequence would be reshuffled by
+ *   anything that changed the stamp count, and the tooth would fill in solid
+ *   wherever stamps overlapped.
+ * - **The tip's own divisions drift.** Graphite is gathered into filaments
+ *   across the tip, because that is how a tip loaded with medium actually
+ *   deposits it; but filaments fixed at the same offsets for a whole stroke
+ *   paint parallel rails, which is a picture of the implementation rather than
+ *   of a pencil. So the divisions are carried by two smooth fields in the
+ *   artwork's space -- one sliding the whole set sideways, one breathing it
+ *   wider and narrower -- which wander the filaments without ever reordering
+ *   them. See {@link DRIFT_SHIFT} for why that matters.
+ * - **A filament's consecutive graphite is one tapered streak, not one contour
+ *   per stamp.** Stamps overlap by construction, so a contour each would hand
+ *   the rasterizer tens of thousands of disjoint shapes to resolve against one
+ *   another for a picture their union already describes -- measured at 195 ms a
+ *   frame where the merged form costs single digits. A run of inked stamps in
+ *   one filament is therefore accumulated into a single streak, pointed at both
+ *   ends. Every vertex is appended and never revised, so rewinding a run to a
+ *   settled length is a truncation and cannot leave a stale value behind --
+ *   which is what makes the merged form safe to build incrementally.
+ * - **Streaks never overlap one another, so the painter may batch them.** The
+ *   tip's divisions tile it exactly and drift together rather than
+ *   independently, so no filament can reach into the one beside it; and a
+ *   streak's far end always stops short of where the next streak in the same
+ *   filament begins. That buys the freedom to paint streaks in small groups:
+ *   one `fill()` over thousands of disjoint contours is quadratic in Canvas 2D
+ *   and was measured at 155 ms a frame, where the same contours in batches are
+ *   linear and cost single digits.
  * - **Nothing generated is durable.** Stamps, marks and grain are a pure
  *   function of the source samples, the resolved snapshot, the rendered scale
  *   and a seed derived from `Stroke.id`. The document stores none of it.
@@ -71,120 +85,230 @@ import { brushHash, unitFromHash } from "./brush-random";
 
 const EPSILON = 0.000_001;
 
-/** Stamp advance as a fraction of nominal diameter, with page-space guard rails. */
-const SPACING_WIDTH_FACTOR = 0.8;
-const MINIMUM_SPACING_FLOOR = 0.5;
-const MINIMUM_SPACING_CEILING = 1.8;
+/**
+ * Stamp advance as a fraction of nominal diameter, with page-space guard rails.
+ *
+ * The advance is matched to a filament's *width* rather than to the paper's
+ * tooth, because that is what keeps the grain isotropic: a mark is about one
+ * filament across and about one advance long, and two numbers of the same order
+ * give a texture with no direction in it. Much finer buys nothing -- two stamps
+ * that overlap ask the same paper the same question and get the same answer, so
+ * the second one only lengthens streaks already open -- and costs a contour
+ * every time a streak is cut, which is the whole of Pencil's repaint budget.
+ * Much coarser combs the texture out along the stroke.
+ */
+const SPACING_WIDTH_FACTOR = 0.5;
+const MINIMUM_SPACING_FLOOR = 0.4;
+const MINIMUM_SPACING_CEILING = 1.5;
 
 const MAXIMUM_SMOOTHING_RADIUS = 4;
 
 /**
- * Two lattices, both in painted page units, both anchored in the stroke's own
- * space so the texture keeps one physical size whatever the object's scale.
+ * The paper's tooth, in painted page units, anchored in the stroke's own space
+ * so the texture keeps one physical size whatever the object's scale.
  *
- * They are separate because the two things they address have genuinely
- * different scales on real paper, and because conflating them is expensive.
- * `GRAIN_TOOTH` decides *whether* a patch of paper catches graphite, and it is
- * the coarser of the two: tooth is a property of the sheet, it persists over a
- * few page units, and a run of stamps that agree about it is a run the painter
- * can draw as one contour. `GRAIN_FLECK` decides how a mark wobbles once it has
- * been laid down, and it is fine, because a ragged edge is a fibre-scale thing.
- *
- * The split is what lets the mark stay finely irregular while the number of
- * contours a repaint costs stays bounded by the tooth rather than by the stamp
- * rate. Measured: collapsing them into one fine lattice costs an order of
- * magnitude more contours for a picture no reader can tell apart.
+ * This is the only lattice the ink decision reads, and it is deliberately fine:
+ * a patch this size is well under a pixel at ordinary zoom, which is what lets
+ * the eye integrate thousands of them into a tone rather than count them. The
+ * previous model split the decision into a coarse "does this catch" lattice and
+ * a fine "how does it wobble" one; the coarse half is what made the grain read
+ * as cells, and the wobble is now carried by the drift fields instead.
  */
-const GRAIN_TOOTH = 1.3;
-const GRAIN_FLECK = 0.8;
+const GRAIN_TOOTH = 0.62;
 
 /**
- * How much tip one grain lane wants before the tip is split again.
+ * How much tip one filament wants before the tip is divided again.
  *
- * Lane count comes from the brush's *nominal* radius and never from the
- * pressure-varied one: a tip that gained and lost lanes as the hand pressed
- * would reshuffle its own grain mid-stroke. Two lanes at the minimum: with one,
- * a declined tooth breaks the mark across its whole width, and a pencil that
- * skips entirely reads as a dashed line rather than as graphite.
+ * Filament count comes from the brush's *nominal* radius and never from the
+ * pressure-varied one: a tip that gained and lost filaments as the hand pressed
+ * would reshuffle its own grain mid-stroke. Two at the minimum: with one, a
+ * declined tooth breaks the mark across its whole width, and a pencil that
+ * skips entirely reads as a dashed line rather than as graphite. The span is
+ * wider than {@link GRAIN_TOOTH} so that two filaments never sample the same
+ * patch of paper as each other, which is what would come out as rungs.
  */
-const GRAIN_LANE_SPAN = 1.1;
-const MINIMUM_LANES = 2;
-const MAXIMUM_LANES = 6;
+const FILAMENT_SPAN = 1.3;
+const MINIMUM_FILAMENTS = 2;
+const MAXIMUM_FILAMENTS = 24;
 
 /**
- * How far a run reaches past the stamps at its two ends, as a fraction of the
- * advance: half of this at each end, so 0.45 of an advance.
+ * How far a streak reaches past the stamps at its two ends, as a fraction of
+ * the advance: half of this at each end, so 0.4 of an advance.
  *
- * Under one half is the point. Two runs in one lane are separated by at least
+ * Under one is the point. Two streaks in one filament are separated by at least
  * one declined stamp, so ends that each reach less than half an advance still
- * leave paper between them. That bound is what makes runs disjoint, and
- * disjoint runs are what let the painter batch them without compositing an
- * overlap twice. It also gives a single-stamp run a body: without it a lone
- * fleck would be a degenerate line, and at low pressure most runs are lone
- * flecks.
+ * leave paper between them. That bound is what makes streaks disjoint, and
+ * disjoint streaks are what let the painter batch them without compositing an
+ * overlap twice. It also gives a single-stamp streak a body: without it a lone
+ * grain would be a degenerate line, and at low pressure most streaks are lone
+ * grains.
  */
-const RUN_END_FACTOR = 0.9;
+const RUN_END_FACTOR = 0.8;
 
 /**
- * How much of its lane a mark may decline to fill.
+ * How many stamps one streak may absorb before it is cut and a new one started:
+ * a base, and a per-filament spread on top of it.
  *
- * Irregularity here only ever *removes* graphite: a mark is narrowed by this
- * fraction and then placed anywhere in the slack that leaves, so it wanders and
- * wobbles while staying inside its own lane. Jitter that could push a mark out
- * of its lane would put two runs on top of each other, and two runs on top of
- * each other is a darker patch the artist did not draw.
+ * Two reasons for cutting at all, neither of them about pencils. A streak is one
+ * contour, and the painter batches contours in the order they were opened; an
+ * unbounded streak would sit in an early batch while the graphite beside it
+ * landed in a much later one, and two fills that share an edge composite that
+ * edge twice. It also bounds the vertex count of any single contour, which keeps
+ * the cost of closing one predictable.
+ *
+ * The spread is why there are two constants. A firm stroke saturates its core,
+ * so every filament inks from the same stamp and, on a single shared limit,
+ * every filament also *cuts* on the same stamp -- which lines the gaps up across
+ * the width and paints a faint rung every dozen page units. Drawing each
+ * filament's limit from the seed scatters the cuts instead. It is the same
+ * lesson as the drift fields, one level down: anything periodic and shared
+ * across the tip becomes visible structure.
+ *
+ * The cut is taken at fixed stamps -- every filament has its own limit and its
+ * own phase, both drawn from the seed -- rather than after a fixed number of
+ * inked stamps. That is what keeps pressure a threshold on one field: a cut
+ * that depended on how long the streak happened to be would fall in different
+ * places at different pressures, and a firm stroke would open gaps that a light
+ * one did not have. Addressed rather than counted, one more time.
+ *
+ * The cut is taken at the end of a stamp rather than the start of the next, so
+ * the gap it leaves is the same gap a declined tooth leaves and cannot read as
+ * a seam.
  */
-const WIDTH_JITTER = 0.18;
+const MINIMUM_RUN_STAMPS = 13;
+const RUN_STAMP_SPREAD = 13;
 
 /**
- * The most of a tip that graphite ever covers.
+ * The tip's deposition profile, as fractions of the nominal radius.
+ *
+ * Flat at {@link TIP_PEAK} within {@link TIP_CORE}, then falling smoothly to
+ * nothing at {@link TIP_REACH}. The core is what gives a small pencil a
+ * continuous line instead of a chain of beads; the falloff is what gives every
+ * pencil an edge made of grains. Reach is past one so the outermost grains land
+ * slightly beyond the nominal rim, which is what a real tip does and what stops
+ * the silhouette from looking cut.
+ *
+ * The peak is deliberately above one: it is a multiplier on the deposition
+ * probability, not a probability itself, so the core of a firm stroke saturates
+ * and only the grain field's own clumping opens voids in it. Without that, a
+ * two-pixel pencil -- which is three filaments wide at most -- breaks wherever
+ * any one of them declines, and reads as a dashed line rather than as a line
+ * drawn with a sharp pencil.
+ */
+const TIP_PEAK = 1.36;
+const TIP_CORE = 0.46;
+const TIP_REACH = 1.08;
+
+/**
+ * How far the tip's divisions wander, as fractions of one filament's width.
+ *
+ * `DRIFT_SHIFT` slides the whole set of divisions sideways; `DRIFT_STRETCH`
+ * breathes it wider and narrower about the tip's centre. Both are read from
+ * smooth fields in the artwork's space, and both are applied to every filament
+ * of a stamp at once, which is the property that matters: an affine map of the
+ * lateral axis moves the divisions without ever reordering them, so the
+ * filaments still tile the tip exactly and still cannot overlap. Drifting each
+ * filament independently would be easier to write and would put two streaks on
+ * top of each other, which is a darker patch the artist did not draw.
+ *
+ * Without this the divisions sit at the same offsets for the whole stroke and
+ * paint parallel rails -- the single most conspicuous defect of the first
+ * Pencil, and the reason it read as a patterned brush rather than as graphite.
+ */
+const DRIFT_SHIFT = 0.85;
+const DRIFT_STRETCH = 0.22;
+const DRIFT_CELL = 4.5;
+
+/**
+ * How much graphite gathers into clumps, and over what distance.
+ *
+ * Real graphite is not white noise: it crumbs, so neighbouring patches of paper
+ * take it together and leave together. A smooth field in the artwork's space
+ * modulates the deposition probability by this fraction, which turns an even
+ * stipple into small dark clusters and small voids without moving a single
+ * grain. Kept modest on purpose -- large amplitude at this scale reads as
+ * blotches rather than as tooth.
+ *
+ * The clusters are sized against the tip rather than fixed in page units, and
+ * the reason is the small end of the range. A cluster wider than the tip gates
+ * every filament at once, so a four-pixel pencil loses its whole line wherever
+ * the field dips and comes out dashed. Held under the tip's own width, the same
+ * field instead varies *across* the mark, which is what clumping is supposed to
+ * look like. A broader, softer tip gathering larger crumbs than a sharp one is
+ * also the physically honest reading.
+ */
+const CLUMP_AMOUNT = 0.46;
+const CLUMP_TIP_FACTOR = 0.45;
+const CLUMP_CELL_FLOOR = 1.1;
+const CLUMP_CELL_CEILING = 7;
+
+/**
+ * The most of a tip's core that graphite ever covers.
  *
  * Below one so even a hard press leaves tooth showing, which is what stops a
- * pressed pencil from resolving into the same solid line a pen draws.
+ * pressed pencil from resolving into the same solid line a pen draws. It is
+ * read together with {@link TIP_PEAK}: the product is what the core of a firm
+ * stroke actually deposits at, and it sits just above one so that the voids
+ * left in a pressed core are the ones the clump field opens rather than an even
+ * scatter of misses.
+ *
+ * Just above one, and not far above it. A core that saturates completely has no
+ * tooth left in it, and -- less obviously -- its filaments then ink without a
+ * break for the whole length of the stroke, so each one shares a long unbroken
+ * edge with the filament beside it. Those edges are correct geometry and still
+ * paint badly: a boundary pixel that two contours each half cover is composited
+ * twice when they fall in different fills, and comes out lighter than either, so
+ * a faint thread appears along the boundary. Keeping the clump field able to
+ * open the core is what keeps those edges short, and it is the same fix as
+ * giving a pressed pencil visible paper.
  */
-const FULL_COVERAGE = 0.92;
+const FULL_COVERAGE = 0.82;
 
 /**
  * Independent hash channels. Adding one must not perturb the others.
  *
- * Ink is addressed per lane as well as per cell, because the tooth lattice is
- * coarser than the distance between two lanes: without the lane, a wide tip
- * would ink or decline across its whole width at once and the grain would come
- * out as rungs. The channels sit in separate ranges so the two lattices cannot
- * collide on a cell that happens to carry the same coordinates in both.
+ * The ink channel is addressed by the patch of paper alone, with no filament
+ * index in it: the tooth is a property of the sheet, so two filaments crossing
+ * one patch must agree about it, and a pass that comes back over its own mark
+ * must find the paper it already found. Putting the filament in this channel is
+ * what made the first Pencil's grain a property of the brush's internals rather
+ * than of the artwork.
  */
-const CHANNEL_INK = 0x100;
-const CHANNEL_LATERAL = 1;
-const CHANNEL_WIDTH = 2;
+const CHANNEL_INK = 1;
+const CHANNEL_CLUMP = 2;
+const CHANNEL_SHIFT = 3;
+const CHANNEL_STRETCH = 4;
+const CHANNEL_RUN_LIMIT = 5;
+const CHANNEL_RUN_PHASE = 6;
 
 interface EvaluatedSample {
   readonly x: number;
   readonly y: number;
   /** Page-space radius, already divided by the rendered scale. */
   readonly radius: number;
-  /** Fraction of the tip that inks at this sample, 0..1. */
+  /** Fraction of the tip's core that inks at this sample, 0..1. */
   readonly coverage: number;
 }
 
-/**
- * Where stamp emission may resume without recomputing anything settled.
- *
- * Restoring it is four assignments, which is what keeps a frame's cost
- * independent of how long the stroke already is.
- */
 interface MutableRibbon {
   readonly left: number[];
   readonly right: number[];
 }
 
-/** Where one grain lane's open run stood, so it can be reopened exactly. */
+/** Where one filament's open streak stood, so it can be reopened exactly. */
 interface LaneCheckpoint {
-  /** Index into the ribbon list, or -1 when the lane has no run open. */
+  /** Index into the ribbon list, or -1 when the filament has no streak open. */
   readonly ribbon: number;
   readonly leftLength: number;
   readonly rightLength: number;
 }
 
+/**
+ * Where stamp emission may resume without recomputing anything settled.
+ *
+ * Restoring it is a handful of assignments, which is what keeps a frame's cost
+ * independent of how long the stroke already is.
+ */
 interface EmissionCheckpoint {
   readonly previous: EvaluatedSample | null;
   /** Distance still to travel before the next stamp lands. */
@@ -217,16 +341,21 @@ export class PencilEvaluator implements LiveBrushEvaluator {
   readonly #lookaheadSamples: number;
   readonly #spacing: number;
   readonly #toothCell: number;
-  readonly #fleckCell: number;
+  readonly #clumpCell: number;
+  readonly #driftCell: number;
   readonly #lanes: number;
-  readonly #laneOffsets: readonly number[];
-  readonly #laneHalfWidth: number;
+  readonly #laneSpan: number;
   readonly #runEnd: number;
   readonly #alpha: number;
   readonly #stamps: BrushStamp[] = [];
   readonly #ribbons: MutableRibbon[] = [];
-  /** Which ribbon each lane is currently extending, or -1 for none. */
+  /** Which streak each filament is currently extending, or -1 for none. */
   readonly #openRibbons: number[];
+  /** Which stamps cut each filament's streak: every `limit`, offset by `phase`. */
+  readonly #runLimits: readonly number[];
+  readonly #runPhases: readonly number[];
+  /** Scratch for one stamp's division offsets, reused to allocate nothing. */
+  readonly #divisions: number[];
   readonly #settledExtent: Extent = emptyExtent();
   #markCount = 0;
   #provisionalExtent: Extent = emptyExtent();
@@ -262,20 +391,28 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     this.#spacing =
       clamp(brush.size * SPACING_WIDTH_FACTOR, MINIMUM_SPACING_FLOOR, MINIMUM_SPACING_CEILING) /
       renderedScale;
-    const nominalRadius = brush.size / 2;
     this.#lanes = Math.min(
-      MAXIMUM_LANES,
-      Math.max(MINIMUM_LANES, Math.round(nominalRadius / GRAIN_LANE_SPAN)),
+      MAXIMUM_FILAMENTS,
+      Math.max(MINIMUM_FILAMENTS, Math.round(brush.size / FILAMENT_SPAN)),
     );
+    this.#laneSpan = 2 / this.#lanes;
     this.#toothCell = GRAIN_TOOTH / renderedScale;
-    this.#fleckCell = GRAIN_FLECK / renderedScale;
-    this.#laneOffsets = Object.freeze(
-      Array.from({ length: this.#lanes }, (_, lane) => (2 * (lane + 0.5)) / this.#lanes - 1),
-    );
-    this.#laneHalfWidth = 1 / this.#lanes;
+    this.#clumpCell =
+      clamp(brush.size * CLUMP_TIP_FACTOR, CLUMP_CELL_FLOOR, CLUMP_CELL_CEILING) / renderedScale;
+    this.#driftCell = DRIFT_CELL / renderedScale;
     this.#runEnd = (this.#spacing * RUN_END_FACTOR) / 2;
     this.#alpha = clamp(brush.opacity, 0, 1);
     this.#openRibbons = Array.from({ length: this.#lanes }, () => -1);
+    const limits = Array.from(
+      { length: this.#lanes },
+      (_, lane) =>
+        MINIMUM_RUN_STAMPS + (brushHash(this.#seed, lane, 0, CHANNEL_RUN_LIMIT) % RUN_STAMP_SPREAD),
+    );
+    this.#runLimits = Object.freeze(limits);
+    this.#runPhases = Object.freeze(
+      limits.map((limit, lane) => brushHash(this.#seed, lane, 0, CHANNEL_RUN_PHASE) % limit),
+    );
+    this.#divisions = Array.from({ length: this.#lanes + 1 }, () => 0);
     this.#checkpoint = Object.freeze({
       previous: null,
       residual: 0,
@@ -325,8 +462,8 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     );
     const reopen = this.#openRibbons.slice();
     this.#closeOpenLanes();
-    // Reopening is what lets the next frame continue a run rather than start a
-    // new one; the far end it just wrote is discarded by the rewind first.
+    // Reopening is what lets the next frame continue a streak rather than start
+    // a new one; the far end it just wrote is discarded by the rewind first.
     for (let lane = 0; lane < this.#lanes; lane += 1) {
       this.#openRibbons[lane] = reopen[lane] ?? -1;
     }
@@ -368,8 +505,10 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     const previous = this.#previous;
     // A press that never travelled far enough to place a stamp is still a mark:
     // the tip touched the paper, so it leaves the tip.
+    // Folded at exactly the tip's radius, because a tap is painted as exactly
+    // that disc: the grain never ran, so nothing of it can have reached past it.
     const resting = stamps.length === 0 ? previous : null;
-    if (resting !== null) foldDisc(extent, resting);
+    if (resting !== null) foldDisc(extent, resting.x, resting.y, resting.radius);
     // One array, read as both the stamp stream and the hit geometry. Copying it
     // twice would be two things that can disagree as well as twice the memory.
     const stream = frozen ? Object.freeze([...stamps]) : stamps;
@@ -397,10 +536,10 @@ export class PencilEvaluator implements LiveBrushEvaluator {
   /**
    * Rewinds to the last settled moment.
    *
-   * Every lane is put back to the run it was extending and the length that run
-   * had, so a frame throws away only what the open tail produced. A run opened
-   * during the tail simply ceases to exist when the ribbon list is truncated,
-   * and its lane is recorded as closed.
+   * Every filament is put back to the streak it was extending and the length
+   * that streak had, so a frame throws away only what the open tail produced. A
+   * streak opened during the tail simply ceases to exist when the ribbon list is
+   * truncated, and its filament is recorded as closed.
    */
   #restoreCheckpoint(): void {
     const checkpoint = this.#checkpoint;
@@ -495,15 +634,19 @@ export class PencilEvaluator implements LiveBrushEvaluator {
   /**
    * Lays one tip's worth of graphite.
    *
-   * Each lane asks the grain field whether this patch of paper takes ink at this
-   * coverage. Because the answer is hashed from the cell rather than from the
-   * stamp's position in the stream, two stamps overlapping the same tooth agree
-   * about it -- so the gaps survive the stroke's own overlap instead of filling
-   * in, and raising coverage only ever *adds* marks rather than moving them.
+   * The tip is divided into filaments by a set of divisions that drift in the
+   * artwork's space, each filament asks the grain field whether its patch of
+   * paper takes graphite at the local deposition probability, and each answer
+   * either extends a streak or ends one.
    *
-   * A lane that inks extends the run it already has open, by appending one
-   * vertex pair and nothing else. A lane that declines closes its run, which is
-   * where the run's far end is appended. Nothing already written is ever
+   * Because the answer is hashed from the patch rather than from the stamp's
+   * position in the stream, two stamps overlapping the same paper agree about
+   * it -- so the gaps survive the stroke's own overlap instead of filling in,
+   * and raising the probability only ever *adds* graphite rather than moving it.
+   *
+   * A filament that inks extends the streak it already has open by appending one
+   * vertex pair and nothing else. One that declines closes its streak, which is
+   * where the streak's point is appended. Nothing already written is ever
    * revised, so a rewind is a truncation.
    */
   #emitStamp(
@@ -517,56 +660,74 @@ export class PencilEvaluator implements LiveBrushEvaluator {
   ): void {
     const seed = this.#seed;
     const tooth = this.#toothCell;
-    const fleck = this.#fleckCell;
     const normalX = -tangentY;
     const normalY = tangentX;
     const extent = settled ? this.#settledExtent : this.#provisionalExtent;
+    const divisions = this.#divisions;
+    const stampIndex = this.#stamps.length;
+    // One affine map of the lateral axis, shared by every filament of this
+    // stamp. Order is preserved, so the filaments still tile the tip exactly.
+    const shift =
+      (smoothField(seed, x / this.#driftCell, y / this.#driftCell, CHANNEL_SHIFT) - 0.5) *
+      2 *
+      DRIFT_SHIFT *
+      this.#laneSpan;
+    const stretch =
+      1 +
+      (smoothField(seed, x / this.#driftCell, y / this.#driftCell, CHANNEL_STRETCH) - 0.5) *
+        2 *
+        DRIFT_STRETCH;
+    for (let division = 0; division <= this.#lanes; division += 1) {
+      divisions[division] = (division * this.#laneSpan - 1) * stretch + shift;
+    }
     let markCount = 0;
     for (let lane = 0; lane < this.#lanes; lane += 1) {
-      // Both lattices are asked about where this lane's graphite would actually
-      // land, not about where the tip's centre is. Addressing the mark's own
-      // patch of paper is what makes the grain two-dimensional and what keeps
-      // it attached to the artwork rather than to a position in a stream.
-      const laneOffset = requireOffset(this.#laneOffsets, lane) * radius;
-      const markX = x + normalX * laneOffset;
-      const markY = y + normalY * laneOffset;
+      const near = requireOffset(divisions, lane);
+      const far = requireOffset(divisions, lane + 1);
+      const middle = (near + far) / 2;
+      const markX = x + normalX * middle * radius;
+      const markY = y + normalY * middle * radius;
+      // Both fields are asked about where this filament's graphite would
+      // actually land, not about where the tip's centre is. Addressing the
+      // mark's own patch of paper is what makes the grain two-dimensional and
+      // what keeps it attached to the artwork rather than to a position in a
+      // stream.
+      const clump =
+        1 +
+        (smoothField(seed, markX / this.#clumpCell, markY / this.#clumpCell, CHANNEL_CLUMP) - 0.5) *
+          2 *
+          CLUMP_AMOUNT;
+      const deposit = coverage * tipProfile(middle) * clump;
       const threshold = unitFromHash(
-        brushHash(seed, Math.floor(markX / tooth), Math.floor(markY / tooth), CHANNEL_INK + lane),
+        brushHash(seed, Math.floor(markX / tooth), Math.floor(markY / tooth), CHANNEL_INK),
       );
-      if (threshold >= coverage) {
+      if (threshold >= deposit) {
         this.#closeLane(lane, extent);
         continue;
       }
-      const fleckX = Math.floor(markX / fleck);
-      const fleckY = Math.floor(markY / fleck);
-      const lateral = unitFromHash(brushHash(seed, fleckX, fleckY, CHANNEL_LATERAL)) * 2 - 1;
-      const widthNoise = unitFromHash(brushHash(seed, fleckX, fleckY, CHANNEL_WIDTH));
-      const laneHalf = this.#laneHalfWidth * radius;
-      const halfWidth = laneHalf * (1 - WIDTH_JITTER * widthNoise);
-      // Narrowed first, then moved within exactly the slack that leaves, so the
-      // mark can never reach into the lane beside it.
-      const offset = laneOffset + lateral * (laneHalf - halfWidth);
+      const halfWidth = ((far - near) / 2) * radius;
       const acrossX = normalX * halfWidth;
       const acrossY = normalY * halfWidth;
-      const leftX = x + normalX * offset + acrossX;
-      const leftY = y + normalY * offset + acrossY;
-      const rightX = x + normalX * offset - acrossX;
-      const rightY = y + normalY * offset - acrossY;
+      const leftX = markX + acrossX;
+      const leftY = markY + acrossY;
+      const rightX = markX - acrossX;
+      const rightY = markY - acrossY;
       // Left forward then right backward is one winding whichever way the
       // stroke travels, because `(tangent, normal)` is always the same handed
-      // pair. A non-zero fill therefore unions overlapping runs instead of
+      // pair. A non-zero fill therefore unions overlapping streaks instead of
       // cancelling them into holes.
       const open = this.#openRibbons[lane] ?? -1;
       if (open < 0) {
-        const behindX = tangentX * this.#runEnd;
-        const behindY = tangentY * this.#runEnd;
+        // A streak starts at a point, not at a squared end: the flat ends of
+        // the first Pencil's runs are what made its graphite read as brickwork.
+        const behindX = markX - tangentX * this.#runEnd;
+        const behindY = markY - tangentY * this.#runEnd;
         this.#openRibbons[lane] = this.#ribbons.length;
         this.#ribbons.push({
-          left: [leftX - behindX, leftY - behindY, leftX, leftY],
-          right: [rightX - behindX, rightY - behindY, rightX, rightY],
+          left: [behindX, behindY, leftX, leftY],
+          right: [behindX, behindY, rightX, rightY],
         });
-        foldPoint(extent, leftX - behindX, leftY - behindY);
-        foldPoint(extent, rightX - behindX, rightY - behindY);
+        foldPoint(extent, behindX, behindY);
       } else {
         const ribbon = requireRibbon(this.#ribbons, open);
         ribbon.left.push(leftX, leftY);
@@ -574,25 +735,35 @@ export class PencilEvaluator implements LiveBrushEvaluator {
       }
       foldPoint(extent, leftX, leftY);
       foldPoint(extent, rightX, rightY);
+      // Checked whether or not this stamp opened the streak, so that the cut
+      // falls at the same stamps however long the streak happens to be. Cutting
+      // only streaks that were already open would let a firm stroke cut where a
+      // light one had just started, and the firm mark would have a gap the light
+      // one did not.
+      const limit = requireOffset(this.#runLimits, lane);
+      if ((stampIndex + requireOffset(this.#runPhases, lane)) % limit === 0) {
+        this.#closeLane(lane, extent);
+      }
       markCount += 1;
     }
     this.#markCount += markCount;
     this.#stamps.push(
       Object.freeze({ index: this.#stamps.length, x, y, radius, coverage, markCount }),
     );
-    // The nominal tip is folded whether or not the grain inked it, so the bound
-    // always contains the hit geometry a selection frame and the eraser read.
-    foldDisc(extent, { x, y, radius, coverage });
+    // The reach of the tip is folded whether or not the grain inked it, so the
+    // bound always contains both the hit geometry a selection frame and the
+    // eraser read and the furthest a grain of this stamp could have landed.
+    foldDisc(extent, x, y, radius * (TIP_REACH + DRIFT_SHIFT * this.#laneSpan));
   }
 
   /**
-   * Ends one lane's run of graphite.
+   * Ends one filament's streak of graphite.
    *
-   * The far end is extrapolated from the run's own last two vertices rather
-   * than remembered from the stamp that wrote them. That is deliberate: a
-   * remembered value would be state outside the arrays, and rewinding the
-   * arrays would leave it pointing at a stamp the rewind had just discarded.
-   * Derived from what the run contains, it cannot go stale.
+   * The point is extrapolated from the streak's own last two cross-sections
+   * rather than remembered from the stamp that wrote them. That is deliberate: a
+   * remembered value would be state outside the arrays, and rewinding the arrays
+   * would leave it pointing at a stamp the rewind had just discarded. Derived
+   * from what the streak contains, it cannot go stale.
    */
   #closeLane(lane: number, extent: Extent): void {
     const open = this.#openRibbons[lane] ?? -1;
@@ -600,22 +771,25 @@ export class PencilEvaluator implements LiveBrushEvaluator {
     this.#openRibbons[lane] = -1;
     const ribbon = this.#ribbons[open];
     if (ribbon === undefined) return;
-    extendRunEnd(ribbon.left, this.#runEnd, extent);
-    extendRunEnd(ribbon.right, this.#runEnd, extent);
+    const point = runEndPoint(ribbon, this.#runEnd);
+    if (point === null) return;
+    ribbon.left.push(point.x, point.y);
+    ribbon.right.push(point.x, point.y);
+    foldPoint(extent, point.x, point.y);
   }
 
   /**
-   * Ends every run the tail left open.
+   * Ends every streak the tail left open.
    *
    * These vertices are provisional in exactly the way the tail is: the next
    * frame rewinds past them, and the frame after re-derives them from wherever
-   * the run has got to. At the terminal sample they are simply the last thing
+   * the streak has got to. At the terminal sample they are simply the last thing
    * written, which is why lifting the pencil moves nothing.
    */
   #closeOpenLanes(): void {
     for (let lane = 0; lane < this.#lanes; lane += 1) {
       this.#closeLane(lane, this.#provisionalExtent);
-      // The lane stays logically open across frames; only its far end is
+      // The filament stays logically open across frames; only its point is
       // provisional, so the checkpoint's own record of it is what reopens it.
     }
   }
@@ -700,6 +874,50 @@ export function createPencilGeometry(
   return evaluator.frozenGeometry();
 }
 
+/**
+ * How certain deposition is at one lateral position on the tip, in units of the
+ * nominal radius.
+ *
+ * Flat through the core and smoothstepped to nothing at the reach. Smoothstep
+ * rather than a straight ramp because a linear falloff leaves a visible corner
+ * where it meets the core, and the corner is exactly the kind of geometric
+ * signature this model exists to hide.
+ */
+function tipProfile(offset: number): number {
+  const distance = Math.abs(offset);
+  if (distance <= TIP_CORE) return TIP_PEAK;
+  if (distance >= TIP_REACH) return 0;
+  const t = (distance - TIP_CORE) / (TIP_REACH - TIP_CORE);
+  const eased = t * t * (3 - 2 * t);
+  return TIP_PEAK * (1 - eased);
+}
+
+/**
+ * One smooth deterministic field over the artwork's space, in `[0, 1]`.
+ *
+ * Value noise: the four lattice corners around the sample, blended by a
+ * smoothstep so the result has no seams at cell boundaries. Coordinates arrive
+ * already divided by the field's own cell size, so one implementation serves
+ * fields of different scales. Four hashes a sample is the price of a field with
+ * no visible lattice, and it is the reason the drift fields are sampled once per
+ * stamp rather than once per filament.
+ */
+function smoothField(seed: number, x: number, y: number, channel: number): number {
+  const cellX = Math.floor(x);
+  const cellY = Math.floor(y);
+  const fractionX = x - cellX;
+  const fractionY = y - cellY;
+  const easedX = fractionX * fractionX * (3 - 2 * fractionX);
+  const easedY = fractionY * fractionY * (3 - 2 * fractionY);
+  const topLeft = unitFromHash(brushHash(seed, cellX, cellY, channel));
+  const topRight = unitFromHash(brushHash(seed, cellX + 1, cellY, channel));
+  const bottomLeft = unitFromHash(brushHash(seed, cellX, cellY + 1, channel));
+  const bottomRight = unitFromHash(brushHash(seed, cellX + 1, cellY + 1, channel));
+  const top = topLeft + (topRight - topLeft) * easedX;
+  const bottom = bottomLeft + (bottomRight - bottomLeft) * easedX;
+  return top + (bottom - top) * easedY;
+}
+
 function emptyExtent(): Extent {
   return {
     minimumX: Number.POSITIVE_INFINITY,
@@ -720,24 +938,24 @@ function unionExtent(target: Extent, other: Extent): void {
   target.maximumY = Math.max(target.maximumY, other.maximumY);
 }
 
-/** Appends the far end of a run, extrapolated from the two vertices before it. */
-function extendRunEnd(side: number[], reach: number, extent: Extent): void {
-  const length = side.length;
-  const x = side[length - 2];
-  const y = side[length - 1];
-  const previousX = side[length - 4];
-  const previousY = side[length - 3];
-  if (x === undefined || y === undefined || previousX === undefined || previousY === undefined) {
-    return;
-  }
+/**
+ * The point a streak closes at: its last cross-section's centre, carried
+ * forward along the direction the streak was travelling.
+ */
+function runEndPoint(ribbon: MutableRibbon, reach: number): { x: number; y: number } | null {
+  const left = ribbon.left;
+  const right = ribbon.right;
+  const length = left.length;
+  if (length < 4 || right.length !== length) return null;
+  const x = ((left[length - 2] as number) + (right[length - 2] as number)) / 2;
+  const y = ((left[length - 1] as number) + (right[length - 1] as number)) / 2;
+  const previousX = ((left[length - 4] as number) + (right[length - 4] as number)) / 2;
+  const previousY = ((left[length - 3] as number) + (right[length - 3] as number)) / 2;
   const deltaX = x - previousX;
   const deltaY = y - previousY;
   const span = Math.hypot(deltaX, deltaY);
-  if (span <= EPSILON) return;
-  const endX = x + (deltaX / span) * reach;
-  const endY = y + (deltaY / span) * reach;
-  side.push(endX, endY);
-  foldPoint(extent, endX, endY);
+  if (span <= EPSILON) return null;
+  return { x: x + (deltaX / span) * reach, y: y + (deltaY / span) * reach };
 }
 
 function foldPoint(extent: Extent, x: number, y: number): void {
@@ -760,11 +978,11 @@ function requireRibbon(ribbons: readonly MutableRibbon[], index: number): Mutabl
   return ribbon;
 }
 
-function foldDisc(extent: Extent, sample: EvaluatedSample): void {
-  extent.minimumX = Math.min(extent.minimumX, sample.x - sample.radius);
-  extent.minimumY = Math.min(extent.minimumY, sample.y - sample.radius);
-  extent.maximumX = Math.max(extent.maximumX, sample.x + sample.radius);
-  extent.maximumY = Math.max(extent.maximumY, sample.y + sample.radius);
+function foldDisc(extent: Extent, x: number, y: number, radius: number): void {
+  extent.minimumX = Math.min(extent.minimumX, x - radius);
+  extent.minimumY = Math.min(extent.minimumY, y - radius);
+  extent.maximumX = Math.max(extent.maximumX, x + radius);
+  extent.maximumY = Math.max(extent.maximumY, y + radius);
 }
 
 function extentRect(extent: Extent): Rect {
@@ -785,9 +1003,9 @@ function requirePoint(points: readonly StrokePoint[], index: number): StrokePoin
   return point;
 }
 
-function requireOffset(offsets: readonly number[], lane: number): number {
-  const offset = offsets[lane];
-  if (offset === undefined) throw new RangeError(`Missing Pencil lane offset at index ${lane}.`);
+function requireOffset(offsets: readonly number[], index: number): number {
+  const offset = offsets[index];
+  if (offset === undefined) throw new RangeError(`Missing Pencil division at index ${index}.`);
   return offset;
 }
 

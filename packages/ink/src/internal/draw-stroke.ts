@@ -122,11 +122,26 @@ export function drawFilledPath(
  * doing so is quadratic in how many there are: measured on a twenty-thousand
  * sample stroke, six thousand contours in a single fill took 155 ms a frame,
  * while the same contours in batches take single digits. Batching is safe here
- * only because a Pencil's runs are laid out never to overlap -- see `pencil.ts`
- * -- so splitting the path cannot composite anything twice.
+ * only because a Pencil's streaks are laid out never to overlap -- see
+ * `pencil.ts` -- so splitting the path cannot composite anything twice.
  *
- * Forty-eight is the balance: large enough that the per-call overhead is a
- * small share of the work, small enough that the quadratic term never matters.
+ * Disjoint is not the same as distant. Two streaks that share an edge are
+ * resolved correctly within one fill and still *look* wrong across two, because
+ * a boundary pixel each of them half covers is composited twice and comes out
+ * lighter than either. Streaks reach the painter in the order they were opened,
+ * so neighbours share a fill as long as a batch outlasts a streak -- which makes
+ * this number and the length of a Pencil streak two ends of one decision.
+ *
+ * E4.1 settled it at the geometry end rather than here. Raising the batch buys
+ * locality at the quadratic term's expense -- measured at about a millisecond and
+ * a half a frame on the heaviest workload for a doubling, against a per-contour
+ * term of three and a half -- and it only ever made the artefact rarer. Keeping
+ * the grain field able to open a pressed core removed it instead, by making the
+ * shared edges short in the first place, and that change improves the picture
+ * rather than merely hiding a flaw in it.
+ *
+ * Forty-eight is the balance: large enough that the per-call overhead is a small
+ * share of the work, small enough that the quadratic term never matters.
  */
 const STAMP_FILL_BATCH = 48;
 
