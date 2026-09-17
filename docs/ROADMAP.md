@@ -112,6 +112,12 @@ they measured is [`performance/technical-pen-e2.md`](performance/technical-pen-e
 frozen compatibility strategies. Three presets have moved: `pen-technical`, `pen-brush` and
 `pencil-hb`.
 
+Pencil's deposition model was then rebuilt once, in E4.1, because the first one read as a
+patterned brush rather than as graphite while satisfying every contract it was written
+against — see [`performance/pencil-e4-1.md`](performance/pencil-e4-1.md) and D-032. The
+architecture was not what changed; `pencil@1`'s appearance was re-pinned before the
+strategy had reached a release, which is the only time that is allowed.
+
 Remaining:
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no

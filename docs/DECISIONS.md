@@ -494,12 +494,19 @@ stamped medium's placements overlap by construction, and the naive form — one 
 placement, all in one `fill()` — is not merely slow but quadratic: Canvas 2D resolves a
 path's contours against one another, and six thousand of them in one fill measured 155 ms a
 frame where the same contours in batches of forty-eight measure 8.4 ms, at an equal vertex
-count. So consecutive placements in one grain lane become one contour, and the geometry
-then earns the right to be split: a mark is narrowed before it is moved so it cannot leave
-its lane, and a run stops short of where the next run in that lane begins. Disjoint
-contours can be batched; overlapping ones cannot. A stroke that crosses itself still
-darkens where it crosses, exactly as `pressure-pen@1` does between bands, and for graphite
-that is the right answer rather than a concession.
+count. So consecutive placements in one filament of the tip become one contour, and the
+geometry then earns the right to be split: the filaments tile the tip and are moved by one
+affine map of the lateral axis shared by all of them, so their order is preserved and none
+can reach into its neighbour, and a streak stops short of where the next streak in that
+filament begins. Disjoint contours can be batched; overlapping ones cannot. A stroke that
+crosses itself still darkens where it crosses, exactly as `pressure-pen@1` does between
+bands, and for graphite that is the right answer rather than a concession.
+
+*(E4.1 replaced the first half of that mechanism. Disjointness was originally earned by
+narrowing each mark before moving it, which left a sliver of paper between every pair of
+filaments at every stamp — and a sliver present at every stamp is a continuous line down
+the length of the stroke. Same guarantee, obtained from monotonicity instead of from a gap.
+See D-032.)*
 
 **Deterministic variation is addressed by place, not by index.** The seed is
 `fnv1a32(stroke.id)` — already unique, already durable, already round-tripping, and the
@@ -530,3 +537,46 @@ yet, and a durable field with nothing behind it is the mistake `pressureOpacity`
 `brushTextureId` each made once already. The phase that ships per-hardness pencils is the
 phase that should add them. Tilt is ignored deliberately: a pencil that reads tilt is
 `pencil@2`.
+
+
+## D-032 — A stamped medium's structure must not be periodic, fixed, or shared across the tip
+
+**Status:** accepted
+
+`pencil@1` shipped correct and unusable to look at. It satisfied every contract in D-028
+through D-031 — deterministic, prefix-stable, anchored in the artwork's space, coverage-
+driven — and still read as a patterned brush rather than as graphite: a broad stroke came
+out as a handful of parallel tracks of rectangular dashes, with a clean geometric edge
+around a noisy interior. The architecture was not the problem. Every visible defect was a
+regularity in the implementation that the eye could find.
+
+**The rule: any structure a stamped strategy imposes across its tip must vary in the
+artwork's space, and any limit it imposes along the stroke must be addressed rather than
+counted.** Three corollaries, each of which was a defect first:
+
+- **Divisions at fixed offsets paint rails.** A tip divided into filaments at constant
+  lateral offsets repeats those offsets at every stamp, and anything repeated at every
+  stamp is a line down the whole stroke — including the *gaps* between filaments, which is
+  how the original earned its disjointness. Filament positions now come from two smooth
+  fields in the artwork's space, applied as one affine map of the lateral axis shared by
+  every filament of a stamp. Shared is what keeps them disjoint: an affine map moves the
+  divisions without reordering them, so tiling survives and no gap is needed.
+- **A shared limit puts a rung across the stroke.** A firm stroke saturates its core, so
+  every filament inks from the same stamp; with one streak-length limit they also all *cut*
+  on the same stamp, and the aligned gaps painted a faint rung every dozen page units. Each
+  filament draws its own limit and its own phase from the seed.
+- **A limit counted from a streak's own length is not a threshold on a field.** Cutting
+  after N inked stamps makes the cut depend on how much graphite happened to land, so a
+  firm stroke opens gaps a light one does not have — which silently breaks D-031's
+  guarantee that pressure only ever reveals more of the same field. Cutting at addressed
+  stamp positions restores it exactly: the covered area at a lighter pressure is now a
+  strict subset of the area at a firmer one, and there is a test that samples the paper to
+  prove it.
+
+**Consequence.** The visual gate is not implied by the correctness gates, and the only way
+to find these was to render and look. `pencil@1`'s freeze digests were therefore re-pinned
+once, in E4.1, before the strategy had ever reached a release — the single circumstance in
+which a shipped-looking identity may change what it draws, because no saved artwork could
+yet be looking at it. After a release the same refinement is `pencil@2`, without exception.
+
+Marker divides a wider tip into more of it, and will meet all three corollaries sooner.

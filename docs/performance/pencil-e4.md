@@ -6,6 +6,13 @@ replace [`desktop-baseline.md`](desktop-baseline.md), which remains the referenc
 machine, the method and the limits on what these numbers can support, nor
 [`technical-pen-e2.md`](technical-pen-e2.md) or [`pressure-pen-e3.md`](pressure-pen-e3.md).
 
+**Superseded in part.** Every number below was measured against a deposition model that was
+replaced in E4.1, before `pencil@1` had reached a release, because it did not look like
+graphite. The current figures are in [`pencil-e4-1.md`](pencil-e4-1.md). What this document
+records that has not been superseded is section 2 — the discovery that Canvas 2D's contour
+cost is quadratic within one fill — which is still the constraint every stamped strategy is
+designed around.
+
 ## 1. Method
 
 Same harness, same machine, same measurement boundaries as Phase D. The harness gained

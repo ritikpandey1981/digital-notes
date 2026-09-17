@@ -504,6 +504,17 @@ Two things the design sketched and the implementation had to settle differently:
   index stays the ordering authority and is never renumbered; it is simply not an input to
   appearance.
 
+**Added in E4.1: some variation has to be *smooth*, and that is still addressed.** A hash
+per cell gives white noise, which is the right shape for "does this patch of paper catch
+graphite" and the wrong shape for everything that varies over a distance -- how graphite
+clumps, and where the tip's own internal divisions sit. Those read a value-noise field
+instead: the four lattice corners around the sample, blended by a smoothstep. It is still a
+pure function of `(seed, painted position)` with no state and no sequence, so every
+guarantee above survives; it costs four hashes a sample rather than one, which is why the
+fields that can be sampled once per stamp are, and only the clump field is sampled per
+mark. Anything that varies smoothly in space belongs in this form; anything that varies
+independently per patch belongs in the other.
+
 ## 13. Live and committed convergence
 
 ### The contract
@@ -619,9 +630,11 @@ created rather than asked for per frame: a scale supplied per frame would mean d
 everything settled the moment the canvas zoomed.
 
 **As implemented for `pencil@1`.** `stamps` carries an ordered `BrushStamp[]` -- position,
-radius, coverage, and how many marks the stamp emitted -- plus the marks themselves in one
-flat number array, four corners each. A long stroke holds tens of thousands of marks, so
-they are coordinates in a flat sequence rather than objects in a graph.
+radius, coverage, and how many marks the stamp emitted -- plus the painted geometry as
+*streaks*: for each, two flat number arrays of `x, y` pairs, one down each side, closed by
+the painter into a shape that is pointed at both ends. A long stroke holds thousands of
+streaks and tens of thousands of vertices, so they are coordinates in a flat sequence
+rather than objects in a graph.
 
 The row in the table above proposed `{x, y, width, height, rotation, alpha, grainPhase}`
 per stamp. Three of those turned out to belong somewhere else:
@@ -636,9 +649,15 @@ per stamp. Three of those turned out to belong somewhere else:
   the local tangent, so its orientation is in its corners. A chisel tip that needs an
   independent angle can still carry one; nothing here prevents it.
 
-Marks are quadrilaterals rather than discs because a pencil at Folio's sizes is one to
+Marks are straight-sided rather than discs because a pencil at Folio's sizes is one to
 three page units across, where a sub-pixel disc costs four cubics and a quad costs four
 line segments. That difference is paid on every repaint of the stroke, not once.
+
+E4.1 changed the *ends*. A streak used to be squared off, and a squared end at this scale
+is a rectangle the eye can see -- across a broad tip the result read as brickwork. Each
+streak now converges to a point at both ends, derived from its own last two cross-sections
+so that nothing outside the arrays has to be remembered and a rewind stays a truncation.
+Two extra vertices per contour, and the mark stops looking built.
 
 ### Contours are the cost, and they are quadratic
 
@@ -665,10 +684,18 @@ Two rules follow, and Marker will need both:
    many. This is a property of the geometry, not an optimization of the painter: the
    evaluator must produce runs.
 2. **Then batch, which requires disjointness.** Splitting the path is only safe if no two
-   contours overlap, so the geometry has to guarantee that — Pencil narrows a mark before
-   moving it so it cannot leave its lane, and stops a run short of the next run in the same
-   lane. Earn disjointness and the painter can bound contours per fill; skip it and the
-   only safe arrangement is the quadratic one.
+   contours overlap, so the geometry has to guarantee that — Pencil divides its tip into
+   filaments that *tile* it exactly and drift as one set rather than independently, so no
+   filament can reach into the one beside it, and stops a streak short of the next streak
+   in the same filament. Earn disjointness and the painter can bound contours per fill;
+   skip it and the only safe arrangement is the quadratic one.
+
+   E4.1 replaced the first half of that mechanism and the reason is worth keeping. The
+   original earned disjointness by narrowing each mark before moving it, which left a
+   sliver of paper between every pair of filaments — and a sliver that is present at every
+   stamp is a continuous line down the whole stroke. The tiling form gives up the sliver
+   and earns the same guarantee from monotonicity instead: an affine map of the lateral
+   axis, shared by every filament of a stamp, moves the divisions without reordering them.
 
 A stroke that crosses *itself* still darkens where it crosses, as `pressure-pen@1` already
 does between bands. That is the one overlap the layout cannot remove, and for graphite it
@@ -1129,6 +1156,45 @@ pencils:
 
 Measured in [`../performance/pencil-e4.md`](../performance/pencil-e4.md).
 
+### E4.1 — Pencil fidelity
+
+The architecture above survived contact with the artwork. The picture did not.
+
+E4's Pencil satisfied every contract in this document and still read as a patterned brush
+rather than as graphite: at a broad size it painted a small number of parallel tracks of
+rectangular dashes, with a mathematically clean edge around an artificially noisy interior.
+Every one of those defects was the implementation showing through, and the phase was opened
+to remove them without touching anything that already worked.
+
+Nothing durable changed, no strategy was added, and `technical-pen@1` and `pressure-pen@1`
+kept byte-identical digests. `pencil@1` itself was re-pinned, which is allowed exactly once
+and only here: it had never shipped in a release, so no saved artwork could be looking at
+the old appearance. A second refinement after a release is `pencil@2`.
+
+What changed, and why each one is a rule rather than a tweak:
+
+- **The tip's divisions drift.** Filaments at fixed offsets paint rails. Two smooth fields
+  in the artwork's space — one sliding the whole set sideways, one breathing it wider and
+  narrower — wander them while preserving their order, which is what keeps them disjoint.
+- **The divisions tile the tip.** The gap that used to earn disjointness was itself a line.
+- **The tip has a profile.** Deposition is certain through a boosted core and fades to
+  nothing past the rim, so the edge is made of grains rather than of a boundary, and a
+  two-pixel pencil still draws a continuous line.
+- **Graphite clumps.** One smooth field modulates deposition, sized against the tip rather
+  than fixed in page units — a cluster wider than the tip gates every filament at once and
+  a small pencil comes out dashed.
+- **Streaks are pointed, and cut at addressed stamps.** Squared ends read as brickwork; a
+  cut that depended on how long a streak happened to be moved the gaps when pressure
+  changed, which broke the one property §12 exists to protect.
+
+The last of those is the phase's general lesson, and it is the same lesson as the drift
+fields one level down: **anything periodic and shared across the tip becomes visible
+structure.** A single shared streak limit put a faint rung across the stroke every dozen
+page units. Per-filament limits and phases, drawn from the seed, scattered them. Marker will
+divide a wider tip and will meet this sooner.
+
+Measured in [`../performance/pencil-e4-1.md`](../performance/pencil-e4-1.md).
+
 ### Later — Marker
 
 Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,
@@ -1251,6 +1317,15 @@ over a self-crossing loop; that a mouse resolves to one width and one coverage r
 to the middle of a curve; and that a stroke carrying the dead `brushTextureId` renders
 identically to one without it, so the field cannot quietly have become the texture
 mechanism.
+
+**E4.1 added four**, three of them defending the refined deposition model rather than the
+architecture: that graphite present at a light pressure is still present, in the same
+place, at a firm one — checked by sampling the paper, which is where it matters, and which
+is the strongest statement of "pressure is a threshold on one fixed field" the code can
+make; that on a straight stroke the painted vertices do *not* pile up on the tip's nominal
+division grid, which is the anti-rail regression test and the one that would have caught
+E4's central defect; that changing colour or opacity moves no vertex; and that neither
+`pencil.ts` nor `brush-random.ts` reaches for a clock, a global generator or `crypto`.
 
 Unit tests for everything that is a pure function — which, by design, is nearly all of it.
 Electron end-to-end tests only for pointer capture, cancellation and foreground-dependent
