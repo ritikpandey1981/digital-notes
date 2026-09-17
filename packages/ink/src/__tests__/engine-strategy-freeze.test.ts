@@ -190,13 +190,19 @@ describe("frozen engine brush strategies", () => {
 
     // Regenerating these to make a failing run pass would defeat the gate. A
     // change here means artwork already saved would look different than it did.
+    //
+    // The Pencil pair was re-pinned once, in E4.1, when its deposition model was
+    // replaced before the strategy had ever shipped in a release. That is the
+    // only circumstance in which one of these moves without a new version: no
+    // saved artwork could yet be looking at the old digest. The two pens have
+    // shipped, and theirs have never moved.
     expect(digests).toEqual([
       "technical-pen@0:x1q4l0",
       "technical-pen@0.3:a2i6kf",
       "pressure-pen@0:6bm694",
       "pressure-pen@0.18:92y0oo",
-      "pencil@0:196qqho",
-      "pencil@0.2:1jmtiqj",
+      "pencil@0:1barveo",
+      "pencil@0.2:5vo5gb",
     ]);
   });
 
@@ -220,7 +226,7 @@ describe("frozen engine brush strategies", () => {
     const digests = [0.5, 2.5].map(
       (scale) => `${scale}:${hash(digest(resolveStrokeRenderGeometry(stroke, scale)))}`,
     );
-    expect(digests).toEqual(["0.5:1ti933o", "2.5:52rt1y"]);
+    expect(digests).toEqual(["0.5:uhqjjm", "2.5:1j2io0c"]);
   });
 });
 

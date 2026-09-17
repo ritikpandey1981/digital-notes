@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   createResolvedBrushSnapshot,
@@ -262,6 +263,16 @@ function recordingContext() {
   return { context, calls };
 }
 
+/**
+ * The advance {@link pencil}'s two-unit tip places stamps at, in page units.
+ *
+ * Named rather than repeated so the two tests that read it say what they are
+ * checking -- that the advance is a property of the brush and the arc length,
+ * not of the sample rate or the object's scale -- rather than pinning a
+ * constant whose value is the strategy's business.
+ */
+const PAINTED_ADVANCE = 1;
+
 describe("Pencil strategy", () => {
   it("is registered as its own durable identity and emits the stamps primitive", () => {
     const brush = pencil();
@@ -302,8 +313,8 @@ describe("Pencil strategy", () => {
       // sampled polyline, so a stamp straddling a corner sits marginally closer
       // in a straight line than the arc it was placed along -- never further.
       for (const advance of advances.slice(0, -1)) {
-        expect(advance).toBeLessThanOrEqual(1.6 + 1e-9);
-        expect(advance).toBeGreaterThan(1.6 * 0.99);
+        expect(advance).toBeLessThanOrEqual(PAINTED_ADVANCE + 1e-9);
+        expect(advance).toBeGreaterThan(PAINTED_ADVANCE * 0.99);
       }
     }
   });
@@ -327,8 +338,8 @@ describe("Pencil strategy", () => {
         .slice(0, -1)
         .map((advance) => advance * scale);
       for (const advance of painted) {
-        expect(advance).toBeLessThanOrEqual(1.6 + 1e-9);
-        expect(advance).toBeGreaterThan(1.6 * 0.99);
+        expect(advance).toBeLessThanOrEqual(PAINTED_ADVANCE + 1e-9);
+        expect(advance).toBeGreaterThan(PAINTED_ADVANCE * 0.99);
       }
     }
   });
@@ -400,6 +411,108 @@ describe("Pencil strategy", () => {
       );
       expect(geometry.markCount).toBeGreaterThanOrEqual(previous);
       previous = geometry.markCount;
+    }
+  });
+
+  it("reveals more of the same paper under pressure, rather than dealing a new pattern", () => {
+    // The rule E4.1 exists to make true: pressure is a threshold on one fixed
+    // field, so graphite present at a lighter touch is still present at a
+    // firmer one, in the same place. Width is held still for the comparison --
+    // a wider tip would move the filaments and prove nothing about the field.
+    const brush = pencil({ size: 9, pressureSize: OFF });
+    const light = evaluate(
+      brush,
+      curveSamples(140, () => 0.2),
+      1,
+      "reveal",
+    );
+    const firm = evaluate(
+      brush,
+      curveSamples(140, () => 0.9),
+      1,
+      "reveal",
+    );
+    const lightPolygons = light.ribbons.map(ribbonPolygon);
+    const firmPolygons = firm.ribbons.map(ribbonPolygon);
+    const { bounds } = firm;
+    let inLight = 0;
+    let lost = 0;
+    for (let step = 0; step < 6_000; step += 1) {
+      const point = {
+        x: bounds.x + ((step * 7919) % 971) * (bounds.width / 971),
+        y: bounds.y + ((step * 104_729) % 89) * (bounds.height / 89),
+      };
+      if (!lightPolygons.some((polygon) => containsPoint(polygon, point))) continue;
+      inLight += 1;
+      if (!firmPolygons.some((polygon) => containsPoint(polygon, point))) lost += 1;
+    }
+    expect(inLight).toBeGreaterThan(200);
+    expect(lost).toBe(0);
+  });
+
+  it("spreads graphite across the tip instead of settling it into lanes", () => {
+    // The defect this phase was opened to fix. The tip is divided into
+    // filaments, and if those divisions sat at fixed offsets they would paint
+    // parallel rails down the stroke. They are carried by fields in the
+    // artwork's space instead, so on a straight stroke the painted vertices
+    // must *not* pile up on the nominal division grid.
+    const brush = pencil({ size: 20, pressureSize: OFF });
+    const inputs = Array.from({ length: 260 }, (_, index) =>
+      sample(40 + index * 1.6, 120, index, 0.75),
+    );
+    const geometry = evaluate(brush, inputs, 1, "lanes");
+    const radius = geometry.stamps[0]?.radius ?? 0;
+    expect(radius).toBeCloseTo(10, 9);
+    const filaments = Math.round(20 / 1.3);
+    const laneWidth = (2 * radius) / filaments;
+    const grid = Array.from(
+      { length: filaments + 1 },
+      (_, index) => 120 + ((index * 2) / filaments - 1) * radius,
+    );
+    const offsets = ribbonVertices(geometry)
+      .map((vertex) => Math.min(...grid.map((line) => Math.abs(vertex.y - line))))
+      .filter((distance) => Number.isFinite(distance));
+    expect(offsets.length).toBeGreaterThan(500);
+    const mean = offsets.reduce((total, value) => total + value, 0) / offsets.length;
+    // Fixed divisions would put every vertex on a grid line. A quarter of a
+    // filament's width away on average is a set of divisions that has moved.
+    expect(mean).toBeGreaterThan(laneWidth * 0.18);
+    expect(Math.max(...offsets)).toBeGreaterThan(laneWidth * 0.5);
+  });
+
+  it("keeps one grain through a change of colour or opacity", () => {
+    // Neither reaches deposition: colour is the painter's, opacity is one alpha
+    // over the whole stroke. A grain that moved when either changed would mean
+    // the field was reading something it has no business reading.
+    const base = evaluate(pencil({ size: 7 }), curveSamples(90), 1, "stable");
+    for (const variant of [
+      pencil({ size: 7, color: "#0b7285" }),
+      pencil({ size: 7, opacity: 0.31 }),
+      pencil({ size: 7, color: "#991b1b", opacity: 1 }),
+    ]) {
+      const other = evaluate(variant, curveSamples(90), 1, "stable");
+      expect(other.markCount).toBe(base.markCount);
+      expect(other.ribbons.length).toBe(base.ribbons.length);
+      expect(
+        other.ribbons.map((ribbon) => ribbon.left.map((value) => value.toFixed(9)).join(",")),
+      ).toEqual(
+        base.ribbons.map((ribbon) => ribbon.left.map((value) => value.toFixed(9)).join(",")),
+      );
+    }
+  });
+
+  it("builds its variation from addressed hashes and nothing else", () => {
+    // Cheap to write, and it catches the one change that would quietly destroy
+    // every determinism guarantee above: reaching for a clock or a global
+    // generator because it was convenient in the moment.
+    const sources = ["../internal/pencil.ts", "../internal/brush-random.ts"].map((relative) =>
+      readFileSync(new URL(relative, import.meta.url), "utf8"),
+    );
+    for (const source of sources) {
+      expect(source).not.toMatch(/Math\.random\s*\(/);
+      expect(source).not.toMatch(/Date\.now\s*\(/);
+      expect(source).not.toMatch(/performance\.now\s*\(/);
+      expect(source).not.toMatch(/crypto\.\w/);
     }
   });
 
