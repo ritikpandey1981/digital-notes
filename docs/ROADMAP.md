@@ -118,7 +118,22 @@ against — see [`performance/pencil-e4-1.md`](performance/pencil-e4-1.md) and D
 architecture was not what changed; `pencil@1`'s appearance was re-pinned before the
 strategy had reached a release, which is the only time that is allowed.
 
+E4.1 also reached the ceiling of a geometry model: one alpha a stroke is all a Canvas 2D
+painter can apply without compositing an overlap twice, and a pencil's tone is how much
+graphite a patch of paper holds. E4.2 replaces the model with a deposited one. The
+production foundation is in — built-in nib and paper resources, the hybrid deposition
+equation, material tiles, a packed tile-to-dab index, deterministic single-tile
+reconstruction and the runtime that owns the cache — recorded in
+[`design/pencil-material-e4-2.md`](design/pencil-material-e4-2.md) with D-033 and D-034.
+`pencil@1` keeps its identity, the format did not move, and the editor still draws through
+the geometry model.
+
 Remaining:
+
+- E4.2B: connect the material. The cooperative scheduler and cancellation, global material
+  and index budgets, cross-stroke fairness, viewport reconstruction, local dirty-region
+  repaint, the live editor path, and transform integration. None of it changes a pixel;
+  all of it decides when one appears.
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a

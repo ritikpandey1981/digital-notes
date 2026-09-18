@@ -1195,6 +1195,49 @@ divide a wider tip and will meet this sooner.
 
 Measured in [`../performance/pencil-e4-1.md`](../performance/pencil-e4-1.md).
 
+### E4.2A — Pencil hybrid material foundation
+
+One alpha a stroke is the ceiling of a geometry model, and E4.1 reached it. A pencil's tone
+is *how much graphite a patch of paper holds*, which varies continuously and builds where a
+stroke crosses itself; past the approximation E4.1 makes, the medium has to be deposited
+into a raster the strategy owns rather than drawn as contours.
+
+E4.2A lands that model in production and connects none of it. The editor still draws Pencil
+through the geometry model; the material sits beside it, and E4.2B wires it in.
+
+In: built-in generated nib and paper resources with versioned identities and one shared
+decode; the hybrid deposition equation and its passage accumulation; page-space field
+addressing; distance placement with a settled prefix; the material tile lattice; compact
+committed tiles; the packed tile-to-dab index; deterministic single-tile reconstruction; and
+the runtime that owns the cache.
+
+Out, and E4.2B's: the cooperative scheduler, cancellation, global budgets and eviction,
+cross-stroke fairness, viewport reconstruction, local repaint, the live editor path, and
+transform integration.
+
+Four decisions carry it, and the first is the one that made the phase cheap:
+
+- **The strategy version is the durable resource identity.** A stroke names `pencil@1`;
+  `pencil@1` names its nib and its sheet. No field was added to the format, no
+  `formatVersion` moved, and `StrokeStyle.brushTextureId` was not repurposed — see §30 and
+  [D-033](../DECISIONS.md).
+- **`pencil@1` keeps its identity.** A version exists so that saved artwork keeps looking
+  the way it looked, and nothing is looking at this one yet. Creating `pencil@2` now would
+  freeze a pre-release appearance nobody approved. After the release that ships Pencil, the
+  same refinement is `pencil@2` — the E4.1 rule, unchanged.
+- **The nib moves with the dab; the sheet does not.** Deposition happens in page space at a
+  fixed material resolution with no rendered scale in it, which is what lets a finished mark
+  move with its object under §16 rather than resampling a different patch of paper.
+- **One equation serves live and cold.** A medium with a drawing algorithm and a separate
+  redraw algorithm changes under the artist the first time a cache is dropped.
+
+The cache boundary is the load-bearing one, and it is narrower than it looks: material is a
+**derived cache owned by the runtime**, and the moment a tile is reachable from `Stroke`,
+History, a document or the codec, dropping it stops being free, undo has pixels in it, and a
+save has a cache in it.
+
+Recorded in [`pencil-material-e4-2.md`](pencil-material-e4-2.md).
+
 ### Later — Marker
 
 Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,
@@ -1338,7 +1381,12 @@ timing, and rerun a suspected focus failure alone before treating it as a regres
 - `ResolvedBrushSnapshot` stays the **sole** durable authority for reproducing a stroke.
 - Randomness is persisted as a **seed or a derivation rule**, never as generated values.
 - Texture identity is a **stable versioned resource id or embedded project data**, never an
-  absolute path and never `StrokeStyle.brushTextureId`.
+  absolute path and never `StrokeStyle.brushTextureId`. As shipped in E4.2A the id is named
+  by the **strategy version** rather than stored per stroke, so durable artwork gained no
+  field at all — the strongest available form of this rule.
+- Deposited material is a **derived cache owned by the renderer/project runtime**. It is
+  never reachable from `Stroke`, a document, History or the codec, and destroying all of it
+  must leave the artwork authoritative and exactly reconstructable.
 - A shipped `(strategyId, strategyVersion)` **never changes what it draws**.
 - No strategy stores derived geometry in the document.
 - No live per-frame step is **O(total stroke length)**.

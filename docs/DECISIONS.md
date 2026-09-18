@@ -580,3 +580,68 @@ which a shipped-looking identity may change what it draws, because no saved artw
 yet be looking at it. After a release the same refinement is `pencil@2`, without exception.
 
 Marker divides a wider tip into more of it, and will meet all three corollaries sooner.
+
+
+## D-033 — A strategy version names its own built-in material resources
+
+**Status:** accepted
+
+A textured medium is made of resources — a nib, a sheet of paper — and a stroke has to name
+them across a save. The obvious design puts a resource id in `ResolvedBrushSnapshot`. E4.2A
+did not, and the reason generalises past Pencil.
+
+**The rule: built-in material resources are named by the `(strategyId, strategyVersion)`
+that reads them, not by a durable field of their own.** A stroke names `pencil@1`;
+`pencil@1` names `folio.graphite.hb-tip.v1` and `folio.paper.graphite-tooth.v1`. The
+binding is a function in the engine, and it is the entire durable contract.
+
+Three things follow, and each was a cost avoided rather than a benefit invented:
+
+- **No format change.** `.folio` `formatVersion` and snapshot `schemaVersion` both stay at
+  1. The renderer field that already round-trips *is* the resource identity, so a whole
+  class of material work needs no migration and no compatibility window.
+- **No durable promise with nothing behind it.** A per-stroke resource id would be a field
+  artwork could vary before any preset can vary it — the mistake `pressureOpacity` and
+  `brushTextureId` each made once already. When an artist can genuinely choose a paper,
+  that is the phase that should add the field, and it will add it knowing what it means.
+- **A version is still the only way it moves.** A Pencil wanting a different nib is
+  `pencil@2` naming different ids. That is what a strategy version is for, and it keeps
+  resource identity under the same freeze rule as everything else a strategy draws.
+
+**Consequences.** A resource is generated from pinned primitives rather than loaded, so a
+build carries it; it is decoded once and shared, because a per-stroke copy of a sheet is as
+many copies as there are marks on the page; and an unknown id **fails loudly**. Substituting
+a nearby resource would open a project while silently drawing somebody's artwork
+differently, which is worse than not opening it. `StrokeStyle.brushTextureId` remains dead
+and must not be promoted into this contract: it is an arbitrary legacy string with no
+resolver behind it, and giving it semantics now would make old artwork mean something new.
+
+
+## D-034 — Deposited material is a derived cache the runtime owns
+
+**Status:** accepted
+
+A raster medium produces a great deal that is not artwork: dabs, a tile-to-dab index, field
+tiles, deposited alpha. E4.2A settles where all of it lives, and the answer is a boundary
+rather than a location.
+
+**The rule: generated material is owned by the renderer/project runtime, and is reachable
+from nothing else.** Not `Stroke`, not `PageDocument`, not `SketchbookDocument`, not
+History, not `ResolvedBrushSnapshot`, and not the codec. Durable authority stays exactly
+what it was: the source samples, the resolved snapshot, and the strategy identity in it.
+
+This is not tidiness. The moment a tile is reachable from any of those, dropping it stops
+being free, undo has pixels in it, a save has a cache in it, and a duplicated object shares
+mutable state with its original. Every guarantee the material model makes — bounded memory,
+free eviction, transient pixels — is a consequence of this one boundary, which is why it is
+recorded as a decision rather than left as an implementation detail.
+
+What makes the boundary affordable is **exact independent reconstruction**: one tile
+rebuilds alone, in any order, from the index and the snapshot, byte-identical to a full
+build, and the live and cold paths run the same equation rather than two that agree by
+inspection. A medium with a drawing algorithm and a separate redraw algorithm changes under
+the artist the first time a cache is dropped.
+
+**Consequence.** Budgets, eviction, scheduling and cancellation are free to be as aggressive
+as they like, because none of them can change a pixel — they change only when one appears.
+Marker will deposit into the same lattice and inherits this rule whole.
