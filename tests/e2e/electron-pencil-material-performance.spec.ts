@@ -30,16 +30,34 @@ interface FrameProbe {
   readonly p95GapMs: number;
   readonly medianGapMs: number;
   readonly elapsedMs: number;
+  /** Where the longest gap started, measured from the probe's own start. */
+  readonly longestGapAtMs: number;
+  /**
+   * The longest main-thread task, which is what actually blocks the UI.
+   *
+   * A frame gap and a long task are different measurements and the difference
+   * matters: rAF is driven by the compositor, so a gap can open because the GPU
+   * process is busy while the main thread sits idle. Only a long task means
+   * JavaScript held the thread.
+   */
+  readonly longestTaskMs: number;
+  readonly longTasks: number;
 }
 
 /** Records the gaps between animation frames while `body` runs. */
 async function withFrameProbe<T>(window: Page, body: () => Promise<T>): Promise<[T, FrameProbe]> {
   await window.evaluate(() => {
-    const probe = { gaps: [] as number[], last: performance.now(), started: performance.now() };
+    const probe = {
+      gaps: [] as number[],
+      at: [] as number[],
+      last: performance.now(),
+      started: performance.now(),
+    };
     (window as unknown as { __folioFrameProbe: typeof probe }).__folioFrameProbe = probe;
     const tick = (): void => {
       const now = performance.now();
       probe.gaps.push(now - probe.last);
+      probe.at.push(probe.last - probe.started);
       probe.last = now;
       if ((window as unknown as { __folioProbing?: boolean }).__folioProbing === true) {
         requestAnimationFrame(tick);
@@ -47,12 +65,32 @@ async function withFrameProbe<T>(window: Page, body: () => Promise<T>): Promise<
     };
     (window as unknown as { __folioProbing: boolean }).__folioProbing = true;
     requestAnimationFrame(tick);
+    const tasks = { longest: 0, count: 0 };
+    (window as unknown as { __folioTasks: typeof tasks }).__folioTasks = tasks;
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        tasks.count += 1;
+        if (entry.duration > tasks.longest) tasks.longest = entry.duration;
+      }
+    });
+    try {
+      observer.observe({ entryTypes: ["longtask"] });
+      (window as unknown as { __folioTaskObserver: PerformanceObserver }).__folioTaskObserver =
+        observer;
+    } catch {
+      // Long-task timing is unavailable; the frame gaps still record.
+    }
   });
   const value = await body();
   const probe = await window.evaluate(() => {
     (window as unknown as { __folioProbing: boolean }).__folioProbing = false;
-    const state = (window as unknown as { __folioFrameProbe: { gaps: number[]; started: number } })
-      .__folioFrameProbe;
+    const state = (
+      window as unknown as { __folioFrameProbe: { gaps: number[]; at: number[]; started: number } }
+    ).__folioFrameProbe;
+    let longestIndex = 1;
+    for (let index = 1; index < state.gaps.length; index += 1) {
+      if ((state.gaps[index] ?? 0) > (state.gaps[longestIndex] ?? 0)) longestIndex = index;
+    }
     const gaps = [...state.gaps].slice(1).sort((a, b) => a - b);
     const at = (fraction: number): number =>
       gaps.length === 0
@@ -64,7 +102,20 @@ async function withFrameProbe<T>(window: Page, body: () => Promise<T>): Promise<
       p95GapMs: at(0.95),
       medianGapMs: at(0.5),
       elapsedMs: performance.now() - state.started,
+      longestGapAtMs: state.at[longestIndex] ?? 0,
+      longestTaskMs: Number(
+        (
+          (window as unknown as { __folioTasks?: { longest: number } }).__folioTasks?.longest ?? 0
+        ).toFixed(1),
+      ),
+      longTasks:
+        (window as unknown as { __folioTasks?: { count: number } }).__folioTasks?.count ?? 0,
     };
+  });
+  await window.evaluate(() => {
+    (
+      window as unknown as { __folioTaskObserver?: PerformanceObserver }
+    ).__folioTaskObserver?.disconnect();
   });
   return [value, probe];
 }
@@ -80,6 +131,13 @@ interface MaterialDiagnostics {
   readonly longestSliceMs: number;
   readonly published: number;
   readonly cancelled: number;
+  readonly presentations: number;
+  readonly presentationMs: number;
+  readonly longestPresentationMs: number;
+  readonly geometryBuilds: number;
+  readonly geometryDabs: number;
+  readonly geometryMs: number;
+  readonly longestGeometryMs: number;
 }
 
 async function materialDiagnostics(window: Page): Promise<MaterialDiagnostics> {
@@ -97,6 +155,13 @@ async function materialDiagnostics(window: Page): Promise<MaterialDiagnostics> {
       longestSliceMs: read("materialLongestSlice"),
       published: read("materialPublished"),
       cancelled: read("materialCancelled"),
+      presentations: read("materialPresentations"),
+      presentationMs: read("materialPresentationMs"),
+      longestPresentationMs: read("materialLongestPresentation"),
+      geometryBuilds: read("materialGeometryBuilds"),
+      geometryDabs: read("materialGeometryDabs"),
+      geometryMs: read("materialGeometryMs"),
+      longestGeometryMs: read("materialLongestGeometry"),
     };
   });
 }
@@ -183,12 +248,36 @@ test("measures mounted hybrid Pencil", async () => {
         }, workload.size);
       }
       const origin = { x: bounds.x + 260, y: bounds.y + 260 + runs.length * 60 };
+      const before = await materialDiagnostics(window);
+      let pointerUpAtMs = 0;
       const [, probe] = await withFrameProbe(window, async () => {
         await drawDense(window, origin, workload.samples);
+        pointerUpAtMs = await window.evaluate(() => {
+          const state = (window as unknown as { __folioFrameProbe: { started: number } })
+            .__folioFrameProbe;
+          return performance.now() - state.started;
+        });
+        // Let the commit frame and anything it queued actually run.
+        await window.waitForTimeout(1500);
       });
       objects += 1;
       await expect(surface).toHaveAttribute("data-document-object-count", String(objects));
-      runs.push({ workload: workload.name, samples: workload.samples, ...probe });
+      const after = await materialDiagnostics(window);
+      runs.push({
+        workload: workload.name,
+        samples: workload.samples,
+        ...probe,
+        pointerUpAtMs: Number(pointerUpAtMs.toFixed(1)),
+        presentationsBuilt: after.presentations - before.presentations,
+        presentationMs: Number((after.presentationMs - before.presentationMs).toFixed(2)),
+        longestPresentationMs: after.longestPresentationMs,
+        geometryBuilds: after.geometryBuilds - before.geometryBuilds,
+        geometryDabs: after.geometryDabs - before.geometryDabs,
+        geometryMs: Number((after.geometryMs - before.geometryMs).toFixed(2)),
+        longestGeometryMs: after.longestGeometryMs,
+        residentTiles: after.residentTiles,
+        materialBytes: after.materialBytes,
+      });
     }
 
     // Hot: everything just drawn is resident, so a forced repaint reconstructs

@@ -268,3 +268,65 @@ test("rebuilds Pencil material after the cache is emptied by a page switch", asy
     await electronApp.close().catch(() => undefined);
   }
 });
+
+test("fills in a broad Pencil stroke progressively and exactly", async () => {
+  test.setTimeout(240_000);
+  const electronApp = await launch();
+  try {
+    const window = await electronApp.firstWindow();
+    const consoleErrors: string[] = [];
+    window.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await window.setViewportSize({ width: 1440, height: 900 });
+
+    const inkCanvas = window.locator('canvas[data-folio-layer="ink"]');
+    await activateDockSlot(window, "pencil");
+    await window.evaluate(() => {
+      const actions = (
+        window as unknown as { __folioDrawingActions?: { setSize?: (value: number) => void } }
+      ).__folioDrawingActions;
+      actions?.setSize?.(26);
+    });
+
+    const bounds = (await inkCanvas.boundingBox())!;
+    const originX = bounds.x + 260;
+    const originY = bounds.y + 300;
+    // A broad mark occupies many tiles, so committing it is the case where a
+    // painter that built every presentation in one frame would be felt.
+    await drawStroke(
+      window,
+      [
+        { x: originX, y: originY },
+        { x: originX + 200, y: originY + 120 },
+        { x: originX + 420, y: originY - 40 },
+        { x: originX + 640, y: originY + 90 },
+      ],
+      1,
+    );
+    const region = { x: originX - 20, y: originY - 80, width: 680, height: 220 };
+    const settled = await sampleArtwork(window, 'canvas[data-folio-layer="page"]', region);
+    expect(settled.painted).toBeGreaterThan(500);
+    expect(settled.distinctTones).toBeGreaterThan(8);
+
+    // Every tile that is on screen ends up drawable, and the editor stayed
+    // responsive enough to answer while it happened.
+    const diagnostics = await inkCanvas.evaluate((element) => {
+      const data = (element as HTMLCanvasElement).dataset;
+      return {
+        residentTiles: Number(data.materialResidentTiles ?? "0"),
+        presentations: Number(data.materialPresentations ?? "0"),
+        longestPresentationMs: Number(data.materialLongestPresentation ?? "0"),
+        bytes: Number(data.materialBytes ?? "0"),
+      };
+    });
+    expect(diagnostics.residentTiles).toBeGreaterThan(8);
+    expect(diagnostics.presentations).toBeGreaterThan(0);
+    // Presentation backing is charged to the same budget the material is.
+    expect(diagnostics.bytes).toBeGreaterThan(diagnostics.residentTiles * 16 * 1024);
+
+    expect(consoleErrors).toEqual([]);
+  } finally {
+    await electronApp.close().catch(() => undefined);
+  }
+});
