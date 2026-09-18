@@ -1,8 +1,10 @@
 import {
+  PencilMaterialRuntime,
   Stroke,
   StrokeBuilder,
   StrokeSmoother,
   createBrushPreset,
+  materialTileKey,
   resolveBrushPreset,
 } from "@folio/ink";
 import { describe, expect, it } from "vitest";
@@ -139,6 +141,38 @@ describe("Pencil material persistence", () => {
     // where it is.
     expect(CURRENT_NOTEBOOK_FORMAT_VERSION).toBe(1);
     expect(encodeStroke(pencilStroke(), "$.stroke", budget()).brush.schemaVersion).toBe(1);
+  });
+
+  it("reproduces the same material bytes after a save and a reopen", () => {
+    // The durable authority is the samples, the snapshot and the strategy
+    // identity inside it. If that is enough, a reopened project rebuilds
+    // graphite that is identical rather than similar.
+    const original = pencilStroke();
+    const reopened = decodeStroke(
+      JSON.parse(JSON.stringify(encodeStroke(original, "$.stroke", budget()))),
+      "$.stroke",
+      budget(),
+    );
+
+    const before = new PencilMaterialRuntime();
+    const after = new PencilMaterialRuntime();
+    const index = before.index(original.id, original.points, original.brush);
+    const keys = index.tileKeys();
+    expect(keys.length).toBeGreaterThan(0);
+    let compared = 0;
+    for (const key of keys) {
+      const source = before.tileNow(original.id, key, original.points, original.brush);
+      const restored = after.tileNow(reopened.id, key, reopened.points, reopened.brush);
+      expect([...(restored?.alpha ?? [])]).toEqual([...(source?.alpha ?? [])]);
+      if (source !== null) compared += 1;
+    }
+    expect(compared).toBeGreaterThan(0);
+    // And a tile the mark never reached is still nothing on both sides.
+    expect(
+      after.tileNow(reopened.id, materialTileKey(90, 90), reopened.points, reopened.brush),
+    ).toBe(null);
+    before.destroy();
+    after.destroy();
   });
 
   it("puts no material on the Stroke either", () => {
