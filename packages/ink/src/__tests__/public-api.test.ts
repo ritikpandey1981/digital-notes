@@ -17,6 +17,7 @@ describe("@folio/ink public API", () => {
       "StrokeRenderer",
       "StrokeSmoother",
       "createBrushPreset",
+      "createPencilMaterialRuntime",
       "createResolvedBrushSnapshot",
       "createStrokeVisual",
       "evaluatePressureResponse",
@@ -27,6 +28,8 @@ describe("@folio/ink public API", () => {
       "isSupportedBrushStrategy",
       "materialTileKey",
       "materialTileRect",
+      "pencilGeometryDiagnostics",
+      "pencilMaterialCacheId",
       "resolveBrushPreset",
       "supportedBrushStrategies",
     ]);

@@ -107,11 +107,13 @@ export interface BrushStamp extends BrushHitSample {
  * A stroke in progress owns its own accumulator, whose tiles are complete every
  * frame because it is synchronous. A finished stroke's tiles live in the
  * runtime cache, which may not hold them yet -- so the painter is given the
- * identity it needs to ask, rather than the pixels it cannot have.
+ * identity it needs to ask, rather than the pixels it cannot have. That
+ * identity is the stroke's id *and* its resolved appearance, because a restyled
+ * stroke keeps the former and changes the latter.
  */
 export type MaterialTileSupply =
   | Readonly<{ kind: "live"; tiles: ReadonlyMap<string, Uint8Array> }>
-  | Readonly<{ kind: "cached"; strokeId: string; points: readonly StrokePoint[] }>;
+  | Readonly<{ kind: "cached"; cacheId: string; points: readonly StrokePoint[] }>;
 
 /**
  * A stroke painted as deposited material rather than as contours.

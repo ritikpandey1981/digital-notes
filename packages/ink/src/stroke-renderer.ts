@@ -8,7 +8,11 @@ import {
   type BrushRenderGeometry,
 } from "./internal/brush-render-strategy";
 import type { LiveBrushEvaluator, LiveEvaluationSnapshot } from "./internal/brush-geometry";
-import { PencilMaterialEvaluator, materialTileRect } from "./internal/pencil-material-strategy";
+import {
+  PencilMaterialEvaluator,
+  materialTileRect,
+  pencilMaterialCacheId,
+} from "./internal/pencil-material-strategy";
 import { drawStrokePoints } from "./internal/draw-stroke";
 import { freezeRect, unionRects } from "./internal/geometry";
 import { getStrokeRenderedBounds } from "./rendered-stroke-bounds";
@@ -172,7 +176,10 @@ export class StrokeRenderer {
       live.evaluator instanceof PencilMaterialEvaluator
     ) {
       live.evaluator.append(stroke.points, true);
-      this.onMaterialCommitted?.(stroke.id, live.evaluator.commit());
+      this.onMaterialCommitted?.(
+        pencilMaterialCacheId(stroke.id, stroke.brush),
+        live.evaluator.commit(),
+      );
     }
     const geometry = this.resolveGeometry(stroke, 1);
     const finalized = createFinalizedStrokeState(

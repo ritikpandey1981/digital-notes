@@ -7,6 +7,48 @@ import { pencilMaterialResources } from "./resources";
 import { MATERIAL_RESOLUTION } from "./tiles";
 
 /**
+ * Everything one stroke's material depends on that is not a dab, and the key
+ * that says which stroke's material it is.
+ */
+
+/**
+ * What a stroke's material depends on, as one comparable string.
+ *
+ * A restyled stroke keeps its identity -- `applyInkStyle` builds a new `Stroke`
+ * with the same id and a different width, opacity or colour -- so a cache keyed
+ * by identity alone would hand back the graphite of a mark that no longer
+ * exists. Everything the deposition reads is folded in here: width and the
+ * pressure responses set the radius, opacity is inside the deposited bytes,
+ * smoothing moves the placement, and the strategy version names the resources.
+ *
+ * Colour is deliberately absent. Material is colour-neutral and the tint is
+ * applied when a tile is painted, so recolouring a mark must not throw away the
+ * graphite -- only the presentation built from it.
+ */
+export function materialAppearanceKey(brush: ResolvedBrushSnapshot): string {
+  const size = brush.dynamics.pressureSize;
+  const coverage = brush.dynamics.pressureOpacity;
+  return [
+    brush.renderer.kind,
+    brush.renderer.version,
+    brush.size,
+    brush.opacity,
+    brush.smoothing.mode,
+    brush.smoothing.amount,
+    size.enabled ? 1 : 0,
+    size.minimumFactor,
+    size.maximumFactor,
+    size.curve.kind,
+    size.curve.exponent,
+    coverage.enabled ? 1 : 0,
+    coverage.minimumFactor,
+    coverage.maximumFactor,
+    coverage.curve.kind,
+    coverage.curve.exponent,
+  ].join(":");
+}
+
+/**
  * Everything one stroke's material depends on that is not a dab.
  *
  * Resolved once, from the resolved snapshot alone. The point of gathering it

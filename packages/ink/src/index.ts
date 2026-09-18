@@ -33,7 +33,12 @@ export {
   type PencilMaterialRuntimeOptions,
   type PencilMaterialRuntimeStats,
 } from "./internal/pencil-material";
-export { materialTileRect } from "./internal/pencil-material-strategy";
+export {
+  createPencilMaterialRuntime,
+  materialTileRect,
+  pencilGeometryDiagnostics,
+  pencilMaterialCacheId,
+} from "./internal/pencil-material-strategy";
 export { PointerInputController } from "./pointer-input-controller";
 export {
   getStrokeLocalRenderBounds,

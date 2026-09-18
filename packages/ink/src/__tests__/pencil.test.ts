@@ -624,6 +624,6 @@ function warm(
 ): void {
   if (geometry.supply.kind !== "cached") throw new Error("Only cached material can be warmed.");
   for (const key of geometry.tileKeys) {
-    runtime.tileNow(geometry.supply.strokeId, key, geometry.supply.points, brush);
+    runtime.tileNow(geometry.supply.cacheId, key, geometry.supply.points, brush);
   }
 }

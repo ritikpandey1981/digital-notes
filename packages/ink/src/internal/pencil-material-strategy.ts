@@ -17,6 +17,7 @@ import {
   TILE_PAGE_UNITS,
   collectDabTiles,
   createPencilMaterialProgram,
+  materialAppearanceKey,
   materialTileKey,
   placePencilDabs,
   resolveMaterialResource,
@@ -24,6 +25,7 @@ import {
   type MaterialDab,
   type MaterialDisplayHandle,
   type MaterialTileKey,
+  type PencilMaterialRuntimeOptions,
 } from "./pencil-material";
 
 /**
@@ -178,14 +180,47 @@ function materialGeometry(
   });
 }
 
+/**
+ * What building committed Pencil geometry has cost, for the diagnostics.
+ *
+ * A deposited stroke's geometry is its dab stream, and placing it is the one
+ * step whose cost is proportional to the whole mark rather than to the tail --
+ * so it is the first thing to look at when a frame is long.
+ */
+const geometryDiagnostics = { builds: 0, dabs: 0, millisecondsTotal: 0, longestMilliseconds: 0 };
+
+export function pencilGeometryDiagnostics(): Readonly<{
+  builds: number;
+  dabs: number;
+  millisecondsTotal: number;
+  longestMilliseconds: number;
+}> {
+  return Object.freeze({ ...geometryDiagnostics });
+}
+
 /** Geometry for one finished stroke, whose material the runtime supplies. */
 export function createPencilMaterialGeometry(
   points: readonly StrokePoint[],
   brush: ResolvedBrushSnapshot,
   strokeId: string,
 ): MaterialRenderGeometry {
+  const started = performance.now();
   const dabs = placePencilDabs(points, brush);
-  return materialGeometry(dabs, brush, { kind: "cached", strokeId, points }, points.length);
+  const geometry = materialGeometry(
+    dabs,
+    brush,
+    { kind: "cached", cacheId: pencilMaterialCacheId(strokeId, brush), points },
+    points.length,
+  );
+  const elapsed = performance.now() - started;
+  geometryDiagnostics.builds += 1;
+  geometryDiagnostics.dabs += dabs.length;
+  geometryDiagnostics.millisecondsTotal += elapsed;
+  geometryDiagnostics.longestMilliseconds = Math.max(
+    geometryDiagnostics.longestMilliseconds,
+    elapsed,
+  );
+  return geometry;
 }
 
 /**
@@ -350,28 +385,60 @@ function paintTileCanvas(alpha: Uint8Array, color: string): HTMLCanvasElement {
   return canvas;
 }
 
-/** One scratch canvas for live tiles, whose bytes change every frame anyway. */
-let liveScratch: HTMLCanvasElement | null = null;
+/**
+ * The scratch a live tile is tinted through, allocated once for the process.
+ *
+ * A live frame repaints one or two tiles, and it repaints them again on the
+ * next frame, so everything here is reused rather than made: one canvas, one
+ * context, one `ImageData`. That last one is the point. `createImageData` hands
+ * back 64 KiB, and a frame that made one per dirty tile produced megabytes of
+ * garbage a second at a hundred and twenty frames -- which does not show up as
+ * a slow function but as an occasional two-hundred-millisecond pause while the
+ * collector catches up. It was the largest single allocator in the live path.
+ *
+ * Reusing the buffer is safe because every alpha byte is written on every use
+ * and the colour channels are never written at all: they stay zero, which is
+ * exactly what `source-in` needs.
+ */
+interface TileScratch {
+  readonly canvas: HTMLCanvasElement;
+  readonly context: CanvasRenderingContext2D;
+  readonly image: ImageData;
+}
 
-function scratchTileCanvas(alpha: Uint8Array, color: string): HTMLCanvasElement {
-  const canvas = liveScratch ?? paintTileCanvas(alpha, color);
-  if (liveScratch === null) {
-    liveScratch = canvas;
-    return canvas;
-  }
+let liveScratch: TileScratch | null = null;
+
+function tileScratch(): TileScratch {
+  if (liveScratch !== null) return liveScratch;
+  const canvas = document.createElement("canvas");
+  canvas.width = TILE_CELLS;
+  canvas.height = TILE_CELLS;
   const context = canvas.getContext("2d");
   if (context === null) throw new Error("A material tile needs a 2D context.");
-  context.globalCompositeOperation = "source-over";
-  context.clearRect(0, 0, TILE_CELLS, TILE_CELLS);
-  const image = context.createImageData(TILE_CELLS, TILE_CELLS);
-  const data = image.data;
+  liveScratch = { canvas, context, image: context.createImageData(TILE_CELLS, TILE_CELLS) };
+  return liveScratch;
+}
+
+function scratchTileCanvas(alpha: Uint8Array, color: string): HTMLCanvasElement {
+  const scratch = tileScratch();
+  const context = scratch.context;
+  const data = scratch.image.data;
   for (let cell = 0; cell < alpha.length; cell += 1) data[cell * 4 + 3] = alpha[cell] ?? 0;
-  context.putImageData(image, 0, 0);
+  // Writes every pixel, so the canvas needs no clearing first.
+  context.globalCompositeOperation = "source-over";
+  context.putImageData(scratch.image, 0, 0);
   context.globalCompositeOperation = "source-in";
   context.fillStyle = color;
   context.fillRect(0, 0, TILE_CELLS, TILE_CELLS);
   context.globalCompositeOperation = "source-over";
-  return canvas;
+  return scratch.canvas;
+}
+
+/** Drops the shared scratch, so a test can prove it is shared rather than made. */
+export function releaseTileScratch(): void {
+  if (liveScratch === null) return;
+  liveScratch.canvas.width = 0;
+  liveScratch = null;
 }
 
 /**
@@ -387,11 +454,28 @@ const PREVIEW_MATERIAL_BUDGET_BYTES = 8 * 1024 * 1024;
 let previewRuntime: PencilMaterialRuntime | null = null;
 
 export function previewMaterialRuntime(): PencilMaterialRuntime {
-  previewRuntime ??= new PencilMaterialRuntime({
+  previewRuntime ??= createPencilMaterialRuntime({
     materialBudgetBytes: PREVIEW_MATERIAL_BUDGET_BYTES,
     indexBudgetBytes: PREVIEW_MATERIAL_BUDGET_BYTES,
   });
   return previewRuntime;
+}
+
+/**
+ * A material runtime that knows how to present what it holds.
+ *
+ * The one place the painter and the cache are introduced to each other. The
+ * material model stays free of Canvas; the runtime pays for the presentation,
+ * owns its lifetime and schedules its creation, and still never learns what it
+ * is made of.
+ */
+export function createPencilMaterialRuntime(
+  options: Omit<PencilMaterialRuntimeOptions, "presentation"> = {},
+): PencilMaterialRuntime {
+  return new PencilMaterialRuntime({
+    ...options,
+    presentation: (tile, color) => createTileDisplay(tile.alpha, color),
+  });
 }
 
 export function releasePreviewMaterialRuntime(): void {
@@ -408,6 +492,7 @@ function createTileDisplay(alpha: Uint8Array, color: string): TileDisplay {
   const canvas = paintTileCanvas(alpha, color);
   return {
     canvas,
+    color,
     bytes: TILE_CELLS * TILE_CELLS * 4,
     release: () => {
       canvas.width = 0;
@@ -415,6 +500,34 @@ function createTileDisplay(alpha: Uint8Array, color: string): TileDisplay {
     },
   };
 }
+
+/**
+ * The identity one stroke's material is cached under.
+ *
+ * Not the stroke id alone. A restyled stroke keeps its id and changes its
+ * width, opacity or colour, so identity alone would serve the graphite of a
+ * mark that no longer exists -- and width and opacity are both inside the
+ * deposited bytes.
+ */
+export function pencilMaterialCacheId(strokeId: string, brush: ResolvedBrushSnapshot): string {
+  return `${strokeId}#${materialAppearanceKey(brush)}`;
+}
+
+/**
+ * Presentations a single paint may build before handing the rest to the
+ * scheduler.
+ *
+ * Measured at about 0.2 ms each in the mounted editor, so eight is under two
+ * milliseconds -- comfortably inside a frame, and more than an ordinary stroke
+ * occupies. Sending those few through a task hop would cost a blank frame to
+ * save nothing.
+ *
+ * The limit is what stops that reasoning from scaling badly. A cold viewport of
+ * a large project wants hundreds of tiles at once, and hundreds of them is tens
+ * of milliseconds in one frame; past the limit they are requested instead and
+ * arrive progressively, exactly as reconstructed material does.
+ */
+const PRESENTATION_INLINE_LIMIT = 8;
 
 /** What a material paint actually managed to draw, for the renderer's diagnostics. */
 export interface MaterialPaintResult {
@@ -440,6 +553,7 @@ export function drawPencilMaterial(
   const supply = geometry.supply;
   const missing: MaterialTileKey[] = [];
   let painted = 0;
+  let built = 0;
   const smoothing = context.imageSmoothingEnabled;
   context.imageSmoothingEnabled = true;
   for (const key of geometry.tileKeys) {
@@ -458,17 +572,29 @@ export function drawPencilMaterial(
     const cache = runtime ?? previewMaterialRuntime();
     const tile =
       runtime === null
-        ? cache.tileNow(supply.strokeId, key, supply.points, brush)
-        : cache.tile(supply.strokeId, key);
+        ? cache.tileNow(supply.cacheId, key, supply.points, brush)
+        : cache.tile(supply.cacheId, key);
     if (tile === null) {
       missing.push(key);
       continue;
     }
-    let display = cache.display(supply.strokeId, key) as TileDisplay | null;
+    let display = cache.display(supply.cacheId, key) as TileDisplay | null;
+    // A presentation tinted with a colour the brush no longer has is stale.
+    // Only the tint is rebuilt; the graphite underneath it is untouched.
+    if (display !== null && display.color !== brush.color) display = null;
     if (display === null) {
+      if (runtime !== null && built >= PRESENTATION_INLINE_LIMIT) {
+        // Past the fast path this frame. Ask for it and leave the tile bare
+        // rather than spending the rest of the frame tinting.
+        missing.push(key);
+        continue;
+      }
+      const started = performance.now();
       display = createTileDisplay(tile.alpha, brush.color);
-      cache.attachDisplay(supply.strokeId, key, display);
-      display = (cache.display(supply.strokeId, key) as TileDisplay | null) ?? display;
+      cache.notePresentationBuild(performance.now() - started);
+      cache.attachDisplay(supply.cacheId, key, display);
+      display = (cache.display(supply.cacheId, key) as TileDisplay | null) ?? display;
+      built += 1;
     }
     if (display.canvas.width === 0) {
       missing.push(key);
