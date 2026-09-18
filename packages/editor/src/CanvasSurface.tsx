@@ -23,6 +23,8 @@ import {
   getStrokeRenderedBounds,
   getStrokeTransformPivot,
   getStrokeVisualLocalBounds,
+  materialTileRect,
+  PencilMaterialRuntime,
   PointerInputController,
   StrokeRenderer,
   type ResolvedBrushSnapshot,
@@ -715,6 +717,21 @@ export function CanvasSurface({
     // One resolver owns every Layer eligibility rule for this editor instance.
     const effective = createEffectiveObjectState(() => documentSession.page);
     let synchronizeViewportLayers: (snapshot: CanvasControllerSnapshot) => void = () => undefined;
+    /**
+     * The project runtime's Pencil material cache.
+     *
+     * Owned here and nowhere else: it lives exactly as long as this editor
+     * runtime, is guarded by the same activation every other outward effect is,
+     * and is destroyed with it. A reconstruction slice that finishes after the
+     * project has been replaced finds `activation.active` false and publishes
+     * nothing, which is what stops a retired runtime from painting into its
+     * successor.
+     */
+    let requestMaterialRepaint: (keys: readonly string[]) => void = () => undefined;
+    const materialRuntime = new PencilMaterialRuntime({
+      isActive: () => activation.active,
+      onMaterialPublished: (_strokeId, keys) => requestMaterialRepaint(keys),
+    });
     let controller: CanvasController;
     try {
       controller = new CanvasController({
@@ -726,6 +743,7 @@ export function CanvasSurface({
               host.dataset.renderedObjectOrder = JSON.stringify(objectIds);
             },
             effective,
+            materialRuntime,
           ),
         ],
         onViewportChange: (snapshot) => synchronizeViewportLayers(snapshot),
@@ -831,6 +849,35 @@ export function CanvasSurface({
 
     try {
       controller.mount(host);
+      // Reconstruction publishes exact tiles as they finish, so a cold viewport
+      // fills in progressively instead of arriving all at once or not at all.
+      // Only the tiles that appeared are invalidated.
+      const publishMaterialDiagnostics = (): void => {
+        const canvas = inkLayer?.canvas;
+        if (canvas === undefined) return;
+        const stats = materialRuntime.stats();
+        canvas.dataset.materialResidentTiles = String(stats.residentTiles);
+        canvas.dataset.materialBytes = String(stats.residentMaterialBytes);
+        canvas.dataset.materialIndexBytes = String(stats.residentIndexBytes);
+        canvas.dataset.materialHits = String(stats.materialHits);
+        canvas.dataset.materialMisses = String(stats.materialMisses);
+        canvas.dataset.materialEvictions = String(stats.materialEvictions);
+        canvas.dataset.materialSlices = String(stats.scheduler.slices);
+        canvas.dataset.materialLongestSlice = stats.scheduler.longestSliceMilliseconds.toFixed(3);
+        canvas.dataset.materialPublished = String(stats.scheduler.tilesPublished);
+        canvas.dataset.materialCancelled = String(stats.scheduler.jobsCancelled);
+      };
+      requestMaterialRepaint = (keys) => {
+        if (!activation.active) return;
+        for (const key of keys) {
+          controller.requestRender({
+            kind: "rect",
+            rect: materialTileRect(key),
+            coordinateSpace: "page",
+          });
+        }
+        publishMaterialDiagnostics();
+      };
       const viewport = controller.viewport;
       const coordinateConverter = controller.coordinateConverter;
       const pageCanvas = controller.canvas;
@@ -876,6 +923,10 @@ export function CanvasSurface({
         canvas: inkLayer.canvas,
         viewport,
         finalizedPresentation: "external",
+        onMaterialCommitted: (strokeId, committed) => {
+          materialRuntime.adopt(strokeId, committed);
+          publishMaterialDiagnostics();
+        },
       });
       const activeStrokeRenderer = strokeRenderer;
       // Hidden Layers are removed at the injected source, so @folio/selection
@@ -2002,6 +2053,11 @@ export function CanvasSurface({
         if (documentSession.sketchbook.page(pageId) === undefined) return false;
         rememberActiveViewport();
         releaseTransientInteractions();
+        // Reconstruction still running for the page being left is work whose
+        // answer nobody will look at. Cancelling is the safe default: material
+        // already resident survives, so coming straight back is still warm,
+        // and nothing is spent finishing tiles for a page that is now behind.
+        materialRuntime.scheduler.cancelAll();
         if (!documentSession.setActivePageId(pageId)) return false;
         applyActivePageToViewport(restoreMemory);
         return true;
@@ -4038,6 +4094,7 @@ export function CanvasSurface({
       transformPreviewRenderer?.destroy();
       shapePreviewRenderer?.destroy();
       strokeRenderer?.destroy();
+      materialRuntime.destroy();
       selectionLayer?.destroy();
       vectorInteractionLayer?.destroy();
       manipulationLayer?.destroy();

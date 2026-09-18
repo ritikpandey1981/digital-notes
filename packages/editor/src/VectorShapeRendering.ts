@@ -11,7 +11,16 @@ import {
   type VectorObjectType,
   type VectorPageObject,
 } from "@folio/document";
-import { createStrokeVisual, type Stroke, type StrokeVisual } from "@folio/ink";
+import {
+  MaterialPriority,
+  createStrokeVisual,
+  materialTileRect,
+  type MaterialPriorityValue,
+  type MaterialTileRequest,
+  type PencilMaterialRuntime,
+  type Stroke,
+  type StrokeVisual,
+} from "@folio/ink";
 import type { OverlayRenderHook, TransformPreviewVisual } from "@folio/rendering";
 import type { VectorShapeDraft } from "./VectorShapeCreation";
 
@@ -75,11 +84,17 @@ export function createPageObjectRenderHook(
   getObjects: () => readonly PageObject[],
   onRenderOrder?: (objectIds: readonly string[]) => void,
   presentation?: ObjectPresentationResolver,
+  materialRuntime?: PencilMaterialRuntime | null,
 ): OverlayRenderHook {
   const strokeVisuals = new WeakMap<Stroke, Map<number, StrokeVisual>>();
   return (context, input) => {
     const objects = getObjects();
     if (objects.length === 0) return;
+    // Material a compositor could not paint is collected across the whole frame
+    // and asked for once, because the request describes "what is on screen now"
+    // and two answers to that cannot both be true.
+    const wanted: MaterialTileRequest[] = [];
+    const focus = materialRuntime == null ? null : viewportFocus(input);
     context.save();
     context.beginPath();
     context.rect(
@@ -104,7 +119,9 @@ export function createPageObjectRenderHook(
         context.globalAlpha *= layerOpacity;
       }
       if (object instanceof InkObject) {
-        drawInkObject(context, object, resolveStrokeVisual(strokeVisuals, object));
+        const visual = resolveStrokeVisual(strokeVisuals, object, materialRuntime ?? null);
+        drawInkObject(context, object, visual);
+        collectMaterialRequest(wanted, object, visual, focus, materialRuntime ?? null);
         renderedObjectIds.push(object.id);
       } else if (isVectorObject(object)) {
         drawVectorObject(context, object);
@@ -114,12 +131,82 @@ export function createPageObjectRenderHook(
     }
     onRenderOrder?.(Object.freeze(renderedObjectIds));
     context.restore();
+    materialRuntime?.requestVisible(wanted);
   };
+}
+
+/**
+ * The page rectangle the camera is actually looking at, and its middle.
+ *
+ * Used only to rank reconstruction: material in the middle of what the artist
+ * is looking at is finished before material at the edge, which is what makes a
+ * viewport fill in from where the eye already is.
+ */
+function viewportFocus(
+  input: unknown,
+): Readonly<{ x: number; y: number; halfWidth: number; halfHeight: number }> | null {
+  const view = (
+    input as {
+      viewport?: {
+        size?: { width: number; height: number };
+        camera?: { position?: { x: number; y: number }; zoom?: number };
+      };
+    }
+  ).viewport;
+  const page = (input as { page?: { rect?: { x: number; y: number } } }).page;
+  const camera = view?.camera;
+  if (view?.size === undefined || camera?.position === undefined) return null;
+  const zoom = Math.max(camera.zoom ?? 1, 0.0001);
+  return Object.freeze({
+    x: camera.position.x - (page?.rect?.x ?? 0),
+    y: camera.position.y - (page?.rect?.y ?? 0),
+    halfWidth: view.size.width / (2 * zoom),
+    halfHeight: view.size.height / (2 * zoom),
+  });
+}
+
+function collectMaterialRequest(
+  into: MaterialTileRequest[],
+  object: InkObject,
+  visual: StrokeVisual,
+  focus: Readonly<{ x: number; y: number; halfWidth: number; halfHeight: number }> | null,
+  runtime: PencilMaterialRuntime | null,
+): void {
+  if (runtime === null) return;
+  const missing = visual.missingMaterial;
+  if (missing.length === 0) return;
+  let priority: MaterialPriorityValue = MaterialPriority.VisiblePeripheral;
+  if (focus !== null) {
+    for (const key of missing) {
+      const rect = materialTileRect(key);
+      // Tiles in the middle half of the view are what the eye is on, so they
+      // are reconstructed before the ones at the edge of it.
+      const centerX = object.transform.translation.x + rect.x + rect.width / 2;
+      const centerY = object.transform.translation.y + rect.y + rect.height / 2;
+      if (
+        Math.abs(centerX - focus.x) < focus.halfWidth / 2 &&
+        Math.abs(centerY - focus.y) < focus.halfHeight / 2
+      ) {
+        priority = MaterialPriority.VisibleCenter;
+        break;
+      }
+    }
+  }
+  into.push(
+    runtime.createRequest(
+      object.stroke.id,
+      object.stroke.points,
+      object.stroke.brush,
+      missing,
+      priority,
+    ),
+  );
 }
 
 function resolveStrokeVisual(
   visuals: WeakMap<Stroke, Map<number, StrokeVisual>>,
   object: InkObject,
+  materialRuntime: PencilMaterialRuntime | null = null,
 ): StrokeVisual {
   let byScale = visuals.get(object.stroke);
   if (byScale === undefined) {
@@ -128,7 +215,7 @@ function resolveStrokeVisual(
   }
   let visual = byScale.get(object.transform.scale);
   if (visual === undefined) {
-    visual = createStrokeVisual(object.stroke, object.transform.scale);
+    visual = createStrokeVisual(object.stroke, object.transform.scale, materialRuntime);
     if (byScale.size >= MAX_STROKE_VISUAL_SCALE_CACHE_ENTRIES) {
       const oldestScale = byScale.keys().next().value as number | undefined;
       if (oldestScale !== undefined) byScale.delete(oldestScale);
