@@ -307,7 +307,7 @@ describe("Pencil material runtime ownership", () => {
     const index = runtime.index("stroke-a", points, brush);
     const before = new Map<MaterialTileKey, CommittedMaterialTile>();
     for (const key of index.tileKeys()) {
-      const tile = runtime.tile("stroke-a", key, points, brush);
+      const tile = runtime.tileNow("stroke-a", key, points, brush);
       if (tile !== null) before.set(key, tile);
     }
     expect(runtime.stats().residentTiles).toBe(before.size);
@@ -317,7 +317,7 @@ describe("Pencil material runtime ownership", () => {
 
     const after = new Map<MaterialTileKey, CommittedMaterialTile>();
     for (const key of runtime.index("stroke-a", points, brush).tileKeys()) {
-      const tile = runtime.tile("stroke-a", key, points, brush);
+      const tile = runtime.tileNow("stroke-a", key, points, brush);
       if (tile !== null) after.set(key, tile);
     }
     expectSameMaterial(after, before);
@@ -351,7 +351,7 @@ describe("Pencil material runtime ownership", () => {
     const runtime = new PencilMaterialRuntime();
     const material = new Map<MaterialTileKey, CommittedMaterialTile>();
     for (const key of runtime.index(stroke.id, stroke.points, stroke.brush).tileKeys()) {
-      const tile = runtime.tile(stroke.id, key, stroke.points, stroke.brush);
+      const tile = runtime.tileNow(stroke.id, key, stroke.points, stroke.brush);
       if (tile !== null) material.set(key, tile);
     }
     expect(material.size).toBeGreaterThan(0);
@@ -363,7 +363,7 @@ describe("Pencil material runtime ownership", () => {
 
     const rebuilt = new Map<MaterialTileKey, CommittedMaterialTile>();
     for (const key of runtime.index(stroke.id, stroke.points, stroke.brush).tileKeys()) {
-      const tile = runtime.tile(stroke.id, key, stroke.points, stroke.brush);
+      const tile = runtime.tileNow(stroke.id, key, stroke.points, stroke.brush);
       if (tile !== null) rebuilt.set(key, tile);
     }
     expectSameMaterial(rebuilt, material);
@@ -377,7 +377,7 @@ describe("Pencil material runtime ownership", () => {
     runtime.adopt("stroke-live", committed);
     expect(runtime.stats().reconstructedTiles).toBe(0);
     for (const [key, tile] of committed.tiles) {
-      expect([...(runtime.tile("stroke-live", key, points, brush)?.alpha ?? [])]).toEqual([
+      expect([...(runtime.tileNow("stroke-live", key, points, brush)?.alpha ?? [])]).toEqual([
         ...tile.alpha,
       ]);
     }
@@ -390,7 +390,7 @@ describe("Pencil material runtime ownership", () => {
     for (let index = 0; index < 40; index += 1) {
       const points = straight(0.6, 60, 100 + index * 3);
       for (const key of runtime.index(`stroke-${String(index)}`, points, brush).tileKeys()) {
-        runtime.tile(`stroke-${String(index)}`, key, points, brush);
+        runtime.tileNow(`stroke-${String(index)}`, key, points, brush);
       }
     }
     const stats = runtime.stats();
@@ -406,7 +406,7 @@ describe("Pencil material runtime ownership", () => {
     const brush = pencilBrush();
     const runtime = new PencilMaterialRuntime();
     for (const key of runtime.index("stroke-a", points, brush).tileKeys()) {
-      runtime.tile("stroke-a", key, points, brush);
+      runtime.tileNow("stroke-a", key, points, brush);
     }
     const stats = runtime.stats();
     expect(stats.residentMaterialBytes).toBe(stats.residentTiles * COMMITTED_TILE_BYTES);

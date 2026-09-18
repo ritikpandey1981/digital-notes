@@ -58,7 +58,25 @@ export {
   type MaterialResourceId,
   type PencilMaterialResources,
 } from "./resources";
-export { PencilMaterialRuntime, type PencilMaterialRuntimeStats } from "./runtime";
+export {
+  DEFAULT_INDEX_BUDGET_BYTES,
+  DEFAULT_MATERIAL_BUDGET_BYTES,
+  PencilMaterialRuntime,
+  type MaterialDisplayHandle,
+  type PencilMaterialRuntimeOptions,
+  type PencilMaterialRuntimeStats,
+} from "./runtime";
+export {
+  INLINE_INDEX_SAMPLE_LIMIT,
+  MAXIMUM_CONCURRENT_JOBS,
+  MaterialPriority,
+  PencilReconstructionScheduler,
+  SLICE_BUDGET_MS,
+  type MaterialPriorityValue,
+  type MaterialSchedulerHost,
+  type MaterialSchedulerStats,
+  type MaterialTileRequest,
+} from "./scheduler";
 export {
   ACTIVE_TILE_BYTES,
   COMMITTED_TILE_BYTES,

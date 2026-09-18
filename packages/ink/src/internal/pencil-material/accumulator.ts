@@ -75,6 +75,9 @@ export class PencilMaterialAccumulator {
   readonly #pool: RegionBackup[] = [];
   readonly #scratch: number[] = [];
   #tailKeys: Set<MaterialTileKey> = new Set();
+  /** Settled dabs, then this frame's provisional tail. Truncated on rewind. */
+  #dabs: MaterialDab[] = [];
+  #settledDabs = 0;
   #finalized = false;
 
   constructor(brush: ResolvedBrushSnapshot, fields: MaterialFieldCache) {
@@ -93,6 +96,29 @@ export class PencilMaterialAccumulator {
 
   get residentTileCount(): number {
     return this.#tiles.size;
+  }
+
+  /**
+   * Every dab placed so far, settled and provisional.
+   *
+   * The dab stream is also the stroke's hit geometry and the source of its
+   * bounds, so a caller that wants either reads it here rather than placing the
+   * samples a second time and hoping the two agree.
+   */
+  get dabs(): readonly MaterialDab[] {
+    return this.#dabs;
+  }
+
+  get settledDabCount(): number {
+    return this.#settledDabs;
+  }
+
+  get settledSampleCount(): number {
+    return this.#placement.settledSampleCount;
+  }
+
+  get lookaheadSamples(): number {
+    return this.#placement.lookaheadSamples;
   }
 
   get finalized(): boolean {
@@ -114,9 +140,15 @@ export class PencilMaterialAccumulator {
     const { settled, tail } = this.#placement.append(points, final);
     for (const dab of settled) this.#deposit(dab, dirty);
     this.#index.append(settled);
+    // The provisional tail is rewound the same way the material is: truncate,
+    // then re-append. Nothing settled is ever rewritten.
+    this.#dabs.length = this.#settledDabs;
+    for (const dab of settled) this.#dabs.push(dab);
+    this.#settledDabs = this.#dabs.length;
 
     this.#tailKeys = this.#saveTail(tail);
     for (const dab of tail) this.#deposit(dab, dirty);
+    for (const dab of tail) this.#dabs.push(dab);
 
     if (final) {
       this.#finalized = true;
