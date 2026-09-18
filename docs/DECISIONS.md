@@ -645,3 +645,62 @@ the artist the first time a cache is dropped.
 **Consequence.** Budgets, eviction, scheduling and cancellation are free to be as aggressive
 as they like, because none of them can change a pixel — they change only when one appears.
 Marker will deposit into the same lattice and inherits this rule whole.
+
+
+## D-035 — A deposited medium repaints its tail, not its stroke
+
+**Status:** accepted
+
+Every strategy before Pencil evaluates incrementally and then repaints everything. That is
+affordable because what they repaint is contours, which are cheap to re-emit; the live
+dirty rectangle grows monotonically and each frame redraws the whole mark clipped to it.
+E4.2B found that exact code path in front of the material and it would have made a long
+Pencil stroke cost more the longer the artist drew.
+
+**The rule: a strategy whose output is pixels must report which of them changed, and a
+frame must repaint only those.** The Pencil accumulator returns the tiles its last append
+touched — the settled dabs it added, plus the provisional tail it rolled back — and the
+renderer clears and redraws exactly those.
+
+Two corollaries, both of which were needed to make it true rather than approximately true:
+
+- **The cumulative rectangle and the frame rectangle are different things.** They were one
+  variable, which is what made the repaint grow. Cancelling a stroke still needs the
+  cumulative one, so both are kept and neither is used for the other's job.
+- **The provisional tail is undone by region, not by rebuild.** The cells the tail will
+  touch are copied out before it is deposited and copied back on the next frame: seven
+  bytes per touched cell, for the area the tail covers rather than for every tile it lands
+  in. Re-depositing the settled prefix instead would be work proportional to the stroke,
+  which is the thing being avoided.
+
+**Consequence.** Every live measurement in the prototype evidence assumes this, so without
+it none of those numbers describe the shipped editor. Marker will emit pixels too and
+inherits the rule whole.
+
+
+## D-036 — Deposited material belongs to the artwork, so scale scales it
+
+**Status:** accepted
+
+Folio's Ink transform is scale-compensated: a strategy divides its lengths by the rendered
+scale and the compositor multiplies them back, so an enlarged stroke is a longer mark of
+the same painted width. That is the right reading for a mark described as geometry, where
+width is a property of the instrument.
+
+A deposited medium cannot honour it without giving up something more important. The sheet
+is addressed in page space — that is what makes pressure reveal *the same* paper and a
+retrace find its own mark — so redepositing at a new scale resamples the sheet, and an
+object that was only resized comes back a different drawing.
+
+**The rule: material is deposited once, in the frame the artist drew it in, and an object
+transform is applied to the finished material when it is painted.** Translation and
+rotation move the marks that were made. Uniform scale scales them, the way scaling a
+photograph of a drawing does.
+
+**Consequences.** `pencil@1` ignores `renderedScale` entirely, so its committed geometry is
+cached once per stroke rather than once per zoom level, and its freeze digest is the same
+at every scale — which is now itself the thing the freeze test pins. Selection frames and
+bounds follow automatically, because local bounds are unscaled and the transform is applied
+outside them. Pencil and the pens therefore disagree about what scaling an object means,
+and that disagreement is deliberate: it is the difference between an instrument and a
+material, and the alternative is a medium that changes when it is moved.

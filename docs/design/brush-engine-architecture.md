@@ -1202,8 +1202,9 @@ is *how much graphite a patch of paper holds*, which varies continuously and bui
 stroke crosses itself; past the approximation E4.1 makes, the medium has to be deposited
 into a raster the strategy owns rather than drawn as contours.
 
-E4.2A lands that model in production and connects none of it. The editor still draws Pencil
-through the geometry model; the material sits beside it, and E4.2B wires it in.
+E4.2A landed that model in production and connected none of it; E4.2B connected it and
+retired the geometry model. The two are recorded separately because the first is about what
+a mark is made of and the second is about when it appears.
 
 In: built-in generated nib and paper resources with versioned identities and one shared
 decode; the hybrid deposition equation and its passage accumulation; page-space field
@@ -1235,6 +1236,43 @@ The cache boundary is the load-bearing one, and it is narrower than it looks: ma
 **derived cache owned by the runtime**, and the moment a tile is reachable from `Stroke`,
 History, a document or the codec, dropping it stops being free, undo has pixels in it, and a
 save has a cache in it.
+
+Recorded in [`pencil-material-e4-2.md`](pencil-material-e4-2.md).
+
+### E4.2B — Pencil runtime, cache and the editor switch
+
+The foundation was exact and unreachable. E4.2B connected it, and the editor now draws
+`pencil@1` as deposited material.
+
+In: the project-runtime-owned material cache with hard 64 MiB material and separate 16 MiB
+index budgets; the cooperative 4 ms scheduler with rotate fairness, a 16-job scratch cap,
+generation ownership and cancellation; visible-first reconstruction with progressive
+publication of exact tiles; hot-cache bypass; local active painting; the transform policy;
+and the removal of the geometry model it replaced.
+
+Out, and deliberately: GPU, Marker, background prefetch, predictive page loading, per-pixel
+erasing, and any material awareness in selection or the eraser — both read the dab stream
+exactly as they read the stamp stream before.
+
+Four things carry it, and three of them are about *when* rather than *what*:
+
+- **The runtime owns the cache, guarded by `RuntimeActivation`.** A slice that began
+  legitimately and finishes after its project has been replaced finds ownership gone and
+  publishes nothing. That one check is what makes New, Open and window handoff safe.
+- **A frame repaints its tail, not its stroke.** The renderer had an incremental evaluator
+  in front of a full repaint, which for a medium made of pixels would cost more the longer
+  the artist drew. See [D-035](../DECISIONS.md).
+- **Nothing approximate is ever drawn.** An approximation of a texture is a different
+  texture, so a tile that is not resident is left bare until its exact bytes arrive.
+- **Scale scales the graphite.** Material is deposited once in the artwork's frame and
+  transformed when painted, which is the only reading under which moving or resizing an
+  object does not resample the sheet. Pencil and the pens now disagree about scale on
+  purpose — see [D-036](../DECISIONS.md).
+
+The geometry model, `drawStamps` and the `stamps` primitive were removed once nothing
+reached them, so bounds, hit geometry and the material share one placement implementation
+and one `FULL_COVERAGE`. `pencil@1`'s freeze digests were re-pinned for the second and last
+time before release.
 
 Recorded in [`pencil-material-e4-2.md`](pencil-material-e4-2.md).
 

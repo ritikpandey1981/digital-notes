@@ -128,12 +128,19 @@ reconstruction and the runtime that owns the cache — recorded in
 `pencil@1` keeps its identity, the format did not move, and the editor still draws through
 the geometry model.
 
+E4.2B then connected it and retired the geometry model. The editor draws Pencil as
+deposited material: a project-runtime-owned cache under hard 64 MiB material and separate
+16 MiB index budgets, a cooperative 4 ms scheduler that rotates between strokes and cancels
+obsolete work, visible-first reconstruction that publishes only exact tiles, and a live path
+that repaints the tail rather than the stroke. See D-035 and D-036.
+
 Remaining:
 
-- E4.2B: connect the material. The cooperative scheduler and cancellation, global material
-  and index budgets, cross-stroke fairness, viewport reconstruction, local dirty-region
-  repaint, the live editor path, and transform integration. None of it changes a pixel;
-  all of it decides when one appears.
+- Visual approval of the hybrid Pencil. `pencil@1` is deliberately not frozen yet: until
+  the picture is signed off, a refinement is a re-pin rather than a `pencil@2`.
+- E4.2C: slice the presentation build. Painting a finished stroke for the first time builds
+  a presentation canvas for every tile it occupies in one frame, measured at 212 ms for a
+  seventy-tile mark. Measured in [`performance/pencil-e4-2.md`](performance/pencil-e4-2.md).
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a

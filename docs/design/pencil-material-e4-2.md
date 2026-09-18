@@ -1,13 +1,14 @@
-# Pencil hybrid material — E4.2A foundation
+# Pencil hybrid material
 
-This records the production material foundation landed in E4.2A: what exists, what it
-guarantees, and what E4.2B still has to connect. It is an integration note, not a
-prototype report — the evidence behind every choice here is the B2/B3/B4A/B4B experiment
-sequence, which lives outside the repository and is summarised rather than restated.
+This records the hybrid textured Pencil: the material model landed in E4.2A, and the
+runtime, cache, scheduler and editor switch landed in E4.2B. It is an integration note,
+not a prototype report — the evidence behind every choice here is the B2/B3/B4A/B4B
+experiment sequence, which lives outside the repository and is summarised rather than
+restated.
 
-The phase replaced nothing that ships. The editor still draws Pencil through the geometry
-model in [`pencil.ts`](../../packages/ink/src/internal/pencil.ts); the material lives
-beside it, fully tested, and is wired in by E4.2B.
+**As of E4.2B the editor draws Pencil through this model.** The geometry model it replaced
+is gone. §11 onwards records the runtime that made that possible; §1–10 record the material
+it draws.
 
 ## 1. Why a material at all
 
@@ -198,30 +199,149 @@ time and nothing else.**
 Nothing generated is persisted. Durable authority remains the source samples, the resolved
 snapshot, and the strategy identity inside it.
 
-## 9. What E4.2B still has to do
+## 9. Runtime ownership
 
-Deliberately absent here, and none of it changes a pixel — which is exactly why it can be
-added on top of a foundation that is already exact.
+`PencilMaterialRuntime` is created by `CanvasSurface` alongside the project runtime it
+belongs to, and destroyed with it. It is guarded by the same `RuntimeActivation` every
+other outward effect is, so `isActive()` is false the moment the project is replaced — and
+a reconstruction slice that began legitimately and finishes afterwards publishes nothing.
+That is the whole mechanism by which a retired runtime cannot paint into its successor.
 
-| Item | Prototype recommendation |
+Everything the runtime owns has the same lifetime: committed material per stroke, one index
+per stroke, one field cache per sheet, and the scheduler.
+
+## 10. Budgets
+
+Two, accounted separately, because material is pixels measured in tens of megabytes and an
+index is coordinates measured in single ones. Sharing a cap would let a pan evict indexes it
+is about to rebuild, which is the most expensive possible thing to forget.
+
+| Cache | Budget | Evidence |
+| --- | --- | --- |
+| Material | 64 MiB | 80% hit on a 1000-stroke navigation; 128 MiB removes eviction but needs 91 MiB resident to save work already spread across frames |
+| Index | 16 MiB | Measured peak under 2.5 MiB with no eviction at any tested size; headroom rather than a constraint |
+
+The material cap is **hard**. A visible working set larger than the budget thrashes rather
+than overruns, because a cache that quietly exceeded its budget is not a budget. Eviction
+prefers offscreen material and falls back to least-recently-used; a displayed tile is charged
+for its presentation as well as its alpha, because 80 KiB and 16 KiB differ by a factor of
+five and a budget that ignored the difference would be wrong by that much.
+
+Nothing evicted is lost. That is what lets eviction be this blunt.
+
+## 11. The scheduler
+
+Four rules, each of which exists because leaving it out breaks something visible.
+
+- **Slices, not tasks.** 4 ms, then yield through a `MessageChannel`. A frame that wants the
+  main thread gets it.
+- **Whole tiles only.** A half-deposited tile is not a lighter version of the finished one,
+  it is a different picture. Scratch stays private until its last dab lands.
+- **Rotate between strokes.** One quantum — 48 dabs — per job, in turn, within the highest
+  priority class that has work. A viewport where one stroke finishes and the rest are blank
+  reads as broken in a way that one filling in evenly does not.
+- **Ownership checked at publication.** A job whose generation, request or runtime has moved
+  on publishes nothing, so cancellation is a number change rather than an unwind.
+
+At most **16 jobs** hold scratch at once: one active tile each, 1.75 MiB bounded. The
+prototype found 16 and 32 indistinguishable on throughput, so this takes the smaller.
+
+### Priority
+
+`Active`, `VisibleCenter`, `VisiblePeripheral`, `Background`. A class never yields to a
+higher number while it has work, so visible material cannot be delayed by anything
+speculative. The compositor classifies a miss as centre when its tile falls in the middle
+half of the view and peripheral otherwise. **Nothing requests `Background` today** — there is
+no prefetch, deliberately — and the class exists so that when something does, it cannot be
+confused with visible work.
+
+### Index build policy
+
+At or under **2000 samples** an index is built inline inside a slice: the build is a fraction
+of one tile's reconstruction and splitting it would cost more bookkeeping than work. Above it
+the build is chunked at 512 samples a quantum, cancellable, and restartable to the same bytes
+— an ordinary stroke never reaches this, and the ones that do are exactly the ones that would
+stall a frame.
+
+## 12. Hot, warm, cold
+
+| State | What happens |
 | --- | --- |
-| Cooperative reconstruction scheduler | 4 ms work budget, `MessageChannel` |
-| Cancellation and generation ownership | Cancel on viewport churn and page switch |
-| Cross-stroke fairness | Rotate, one quantum per active job |
-| Global material budget with visible-last eviction | 64 MiB desktop |
-| Separate index budget and lifetime | 16 MiB desktop |
-| Scheduled index builds | Chunk above ~2000 samples |
-| Local active painting | Dirty-region repaint, never full-prefix |
-| Live editor path switched to the material | Replaces the geometry model |
-| Transform integration | Reconstruct in the deposition frame, then transform |
+| Hot — material resident | Painted immediately. No scheduler, no index, no task hop. |
+| Warm — index resident, material not | Only the requested visible tiles are scheduled. The rest of the stroke is not rebuilt. |
+| Cold — neither resident | The index is built under the size rule, then only the requested visible tiles. Offscreen material is never eagerly rebuilt. |
 
-Canvas 2D is sufficient and GPU is not required; the prototype evidence settles both.
+### During a miss
 
-Two of these are load-bearing rather than incremental: **local active painting**, because
-every live measurement assumes dirty-region repaint, and **cache ownership**, which this
-phase has already established and which E4.2B must not widen.
+**Nothing approximate is ever drawn.** An approximation of a texture is a different texture.
+A tile that is not resident is left bare and requested; exact tiles are published
+progressively as they finish, each one invalidating only its own page rectangle.
 
-## 10. What this phase did not touch
+## 13. Local active painting
 
-No frozen strategy, no format version, no schema, no codec vocabulary, no document model,
-no History, no preset catalogue, no editor path, and no Marker.
+The load-bearing part, and the one that makes every live measurement mean anything.
+
+Before E4.2B the renderer had an incremental *evaluator* in front of a full *repaint*: the
+live dirty rectangle grew monotonically, so every frame cleared and redrew the whole mark.
+For a medium made of contours that is affordable. For one made of pixels it would cost more
+the longer the artist drew.
+
+Now the accumulator reports exactly which tiles its last append touched — the settled dabs it
+added, plus the provisional tail it rolled back — and the renderer clears and redraws those
+and nothing else. A frame's repaint is bounded by the tail rather than by the stroke. The
+cumulative rectangle is still tracked, because cancelling a stroke has to erase all of it at
+once.
+
+The provisional tail is a **region rollback**: the cells it will touch are copied out before
+it is deposited and copied back on the next frame. Seven bytes per touched cell, for the area
+the tail covers rather than for every tile it lands in. Smoothing is unchanged, and live
+material still converges byte-for-byte on cold reconstruction.
+
+## 14. Transforms and scale
+
+Material is deposited once in the artwork's own frame; the object transform is applied when
+it is painted. Translation and rotation therefore move the marks the artist made.
+
+**Uniform scale scales the graphite.** This is a deliberate change of behaviour for Pencil,
+and the honest consequence of the coordinate rule in §4: the alternative is redepositing at
+the new scale, which resamples the sheet, so an object that was only resized would come back
+a different drawing. Every other strategy keeps its painted width under scale; Pencil now
+behaves like a photograph of a drawing instead. See D-036.
+
+Because scale is not a material parameter, committed geometry is cached once per stroke
+rather than once per zoom level.
+
+## 15. What E4.2B did not do
+
+No GPU, no Marker, no format change, no per-pixel eraser, and no selection or eraser
+awareness of material — hit testing and the eraser read the dab stream exactly as they read
+the stamp stream before, and never learn what a tile is. No background prefetch and no
+predictive page loading: B4B showed background completion buys a free return and spends
+substantial extra work and memory for it, so leaving a page **cancels** its reconstruction
+and coming back uses whatever survived in the cache.
+
+## 16. The geometry model is gone
+
+`internal/pencil.ts` — the E4.1 stamp-and-ribbon model — was removed, along with `drawStamps`
+and the `stamps` geometry primitive, once nothing reached them. Bounds and hit geometry come
+from the material's own dab placement, so there is exactly one placement implementation and
+exactly one `FULL_COVERAGE`. `pencil@1`'s freeze digests were re-pinned for the second and
+last time before release.
+
+## 17. What remains
+
+Canvas 2D is sufficient and GPU is not required; the prototype evidence and the mounted
+measurement in [`../performance/pencil-e4-2.md`](../performance/pencil-e4-2.md) agree.
+What is still open is not about the material:
+
+- **E4.2C: slice the presentation build.** The one expensive frame the mounted run found is
+  the moment a finished stroke is first painted and every tile it occupies needs a
+  presentation canvas built at once — 212 ms for a seventy-tile mark. That is exactly the
+  work the scheduler already knows how to slice, and it is recorded rather than smuggled
+  into this phase.
+
+- **Visual approval.** `pencil@1` is not frozen. The picture has not been signed off, and
+  until it is, a refinement is still a re-pin rather than a `pencil@2`.
+- **Marker**, which will deposit into the same lattice and inherits every rule here.
+- **Per-hardness Pencil parameters**, which are the phase that should make grain strength,
+  tooth and spacing durable fields.
