@@ -11,6 +11,7 @@ import {
   isBlankMaterialTile,
   materialTileKey,
   TILE_CELLS,
+  TILE_CELL_COUNT,
   type ActiveMaterialTile,
   type CommittedMaterialTile,
   type MaterialTileKey,
@@ -261,9 +262,7 @@ export class PencilMaterialAccumulator {
     }
     for (const [key, rect] of rects) {
       const tile = this.#tile(key, rect.tx, rect.ty);
-      const width = rect.x1 - rect.x0 + 1;
-      const height = rect.y1 - rect.y0 + 1;
-      const backup = this.#borrowBackup(width * height);
+      const backup = this.#borrowBackup();
       backup.key = key;
       backup.x0 = rect.x0;
       backup.y0 = rect.y0;
@@ -307,19 +306,33 @@ export class PencilMaterialAccumulator {
     this.#backups.length = 0;
   }
 
-  #borrowBackup(cells: number): RegionBackup {
+  /**
+   * A backup buffer, always at full tile capacity.
+   *
+   * Sizing these to the rectangle they hold looks thriftier and is not: the
+   * tail's union grows and shrinks from frame to frame, so a pooled buffer was
+   * repeatedly found too small, discarded, and replaced by a larger one. That
+   * is around a hundred kilobytes of garbage per touched tile per frame, which
+   * does not appear as a slow function but as an occasional long pause while
+   * the collector catches up.
+   *
+   * At full capacity every buffer fits every rectangle, so the pool settles
+   * after the first few frames and allocates nothing afterwards. Only the
+   * rectangle is ever copied, so the spare capacity costs nothing to use.
+   */
+  #borrowBackup(): RegionBackup {
     const reused = this.#pool.pop();
-    if (reused !== undefined && reused.alpha.length >= cells) return reused;
+    if (reused !== undefined) return reused;
     return {
       key: "",
       x0: 0,
       y0: 0,
       x1: 0,
       y1: 0,
-      alpha: new Uint8Array(cells),
-      base: new Uint8Array(cells),
-      peak: new Uint8Array(cells),
-      last: new Float32Array(cells),
+      alpha: new Uint8Array(TILE_CELL_COUNT),
+      base: new Uint8Array(TILE_CELL_COUNT),
+      peak: new Uint8Array(TILE_CELL_COUNT),
+      last: new Float32Array(TILE_CELL_COUNT),
     };
   }
 }
