@@ -41,7 +41,11 @@ export {
   placePencilDabs,
   type PlacedDabs,
 } from "./placement";
-export { createPencilMaterialProgram, type PencilMaterialProgram } from "./program";
+export {
+  createPencilMaterialProgram,
+  materialAppearanceKey,
+  type PencilMaterialProgram,
+} from "./program";
 export {
   createReconstructionScratch,
   materialTileCoordinate,

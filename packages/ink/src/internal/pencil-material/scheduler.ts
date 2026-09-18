@@ -103,6 +103,8 @@ export interface MaterialTileRequest {
   readonly priority: MaterialPriorityValue;
   /** Tiles wanted, in the order they should appear. */
   readonly tileKeys: readonly MaterialTileKey[];
+  /** The colour a presentation for these tiles must be tinted with. */
+  readonly color: string;
 }
 
 /** What the scheduler needs from its owner, and everything it is allowed to touch. */
@@ -115,8 +117,18 @@ export interface MaterialSchedulerHost {
   adoptIndex(strokeId: string, index: PencilDabIndex): void;
   /** Accepts one finished tile. Called only for complete, owned, current work. */
   publish(strokeId: string, tile: CommittedMaterialTile): void;
-  /** A resident tile, so the scheduler never rebuilds what the cache already has. */
+  /**
+   * True when a tile is drawable right now, so the scheduler never repeats work
+   * the cache already holds.
+   */
+  ready(strokeId: string, key: MaterialTileKey, color: string): boolean;
+  /** True when a tile's material is deposited, whether or not it can be drawn. */
   resident(strokeId: string, key: MaterialTileKey): boolean;
+  /**
+   * Turns one finished tile into something drawable. Returns whether it did any
+   * work, so a quantum is spent on a presentation and no more.
+   */
+  prepare(strokeId: string, key: MaterialTileKey, color: string): boolean;
   /** Called after a slice that published anything, so the compositor can repaint. */
   onPublished(strokeId: string, keys: readonly MaterialTileKey[]): void;
 }
@@ -142,6 +154,8 @@ interface MaterialJob {
   index: PencilDabIndex | null;
   indexBuild: IndexBuild | null;
   tile: TileBuild | null;
+  /** A tile whose material is ready and whose presentation is the next quantum. */
+  present: MaterialTileKey | null;
   published: MaterialTileKey[];
 }
 
@@ -246,7 +260,7 @@ export class PencilReconstructionScheduler {
       // them, which is what makes a pan cheap rather than a restart.
       const keep = new Set(replacement.tileKeys);
       job.pending = replacement.tileKeys.filter(
-        (key) => keep.has(key) && !this.#host.resident(replacement.strokeId, key),
+        (key) => keep.has(key) && !this.#host.ready(replacement.strokeId, key, replacement.color),
       );
       if (job.tile !== null && !keep.has(job.tile.key)) {
         job.tile = null;
@@ -257,7 +271,9 @@ export class PencilReconstructionScheduler {
     }
 
     for (const request of wanted.values()) {
-      const pending = request.tileKeys.filter((key) => !this.#host.resident(request.strokeId, key));
+      const pending = request.tileKeys.filter(
+        (key) => !this.#host.ready(request.strokeId, key, request.color),
+      );
       if (pending.length === 0) continue;
       this.#jobs.push({
         request,
@@ -266,6 +282,7 @@ export class PencilReconstructionScheduler {
         index: this.#host.index(request.strokeId),
         indexBuild: null,
         tile: null,
+        present: null,
         published: [],
       });
     }
@@ -438,15 +455,29 @@ export class PencilReconstructionScheduler {
       return null;
     }
 
+    // A presentation is its own quantum, so a burst of them cannot run away
+    // with a slice any more than a burst of deposition can.
+    if (job.present !== null) {
+      const key = job.present;
+      job.present = null;
+      if (!this.#host.isActive() || job.generation !== this.#generation) return null;
+      return this.#host.prepare(job.request.strokeId, key, job.request.color) ? key : null;
+    }
+
     const index = job.index;
     if (index === null) return null;
     if (job.tile === null) {
       while (job.pending.length > 0) {
         const key = job.pending.shift();
         if (key === undefined) break;
-        if (this.#host.resident(job.request.strokeId, key)) continue;
+        if (this.#host.ready(job.request.strokeId, key, job.request.color)) continue;
         const membership = index.membership(key);
         if (membership === null) continue;
+        if (this.#host.resident(job.request.strokeId, key)) {
+          // Deposited already; only the drawable form is missing.
+          job.present = key;
+          return null;
+        }
         job.tile = {
           key,
           ids: membership.ids,
@@ -493,6 +524,8 @@ export class PencilReconstructionScheduler {
     this.#host.publish(job.request.strokeId, commitMaterialTile(build.tile));
     this.#published += 1;
     job.published.push(build.key);
+    // Deposited, not yet drawable. Its presentation is the next quantum.
+    job.present = build.key;
     return build.key;
   }
 
@@ -500,7 +533,12 @@ export class PencilReconstructionScheduler {
     for (let index = this.#jobs.length - 1; index >= 0; index -= 1) {
       const job = this.#jobs[index];
       if (job === undefined) continue;
-      if (job.pending.length === 0 && job.tile === null && job.indexBuild === null) {
+      if (
+        job.pending.length === 0 &&
+        job.tile === null &&
+        job.indexBuild === null &&
+        job.present === null
+      ) {
         this.#jobs.splice(index, 1);
       }
     }

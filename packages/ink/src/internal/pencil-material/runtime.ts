@@ -69,6 +69,15 @@ export const DEFAULT_INDEX_BUDGET_BYTES = 16 * 1024 * 1024;
  */
 export interface MaterialDisplayHandle {
   readonly bytes: number;
+  /**
+   * The colour this presentation was tinted with.
+   *
+   * Material is colour-neutral, so recolouring a mark must not throw away its
+   * graphite -- only the tint built from it. Recording the colour here is what
+   * lets the painter tell a usable presentation from a stale one without the
+   * material cache having to know what a colour is.
+   */
+  readonly color: string;
   release(): void;
 }
 
@@ -92,6 +101,14 @@ export interface PencilMaterialRuntimeOptions {
   /** Called when reconstruction finishes tiles, so the compositor can repaint them. */
   readonly onMaterialPublished?: (strokeId: string, keys: readonly MaterialTileKey[]) => void;
   readonly scheduler?: (host: MaterialSchedulerHost) => PencilReconstructionScheduler;
+  /**
+   * How a painter turns one finished tile into something drawable.
+   *
+   * Injected rather than imported, because a presentation is a Canvas and the
+   * material model is deliberately free of them. The runtime pays for it, owns
+   * its lifetime and schedules its creation; it never learns what it is.
+   */
+  readonly presentation?: (tile: CommittedMaterialTile, color: string) => MaterialDisplayHandle;
 }
 
 export interface PencilMaterialRuntimeStats {
@@ -109,6 +126,10 @@ export interface PencilMaterialRuntimeStats {
   readonly fieldTiles: number;
   readonly fieldBytes: number;
   readonly reconstructedTiles: number;
+  /** How many tile presentations the painter has built, and what they cost. */
+  readonly presentationsBuilt: number;
+  readonly presentationMillisecondsTotal: number;
+  readonly longestPresentationMilliseconds: number;
   readonly scheduler: MaterialSchedulerStats;
 }
 
@@ -125,6 +146,8 @@ export class PencilMaterialRuntime {
   readonly #indexBudget: number;
   readonly #onPublished: ((strokeId: string, keys: readonly MaterialTileKey[]) => void) | undefined;
   readonly #scheduler: PencilReconstructionScheduler;
+  readonly #presentation:
+    ((tile: CommittedMaterialTile, color: string) => MaterialDisplayHandle) | undefined;
   #materialBytes = 0;
   #indexBytes = 0;
   #materialEvictions = 0;
@@ -132,6 +155,9 @@ export class PencilMaterialRuntime {
   #hits = 0;
   #misses = 0;
   #reconstructed = 0;
+  #presentationsBuilt = 0;
+  #presentationMillisecondsTotal = 0;
+  #longestPresentationMilliseconds = 0;
   #retired = false;
 
   constructor(options: PencilMaterialRuntimeOptions = {}) {
@@ -139,13 +165,19 @@ export class PencilMaterialRuntime {
     this.#materialBudget = options.materialBudgetBytes ?? DEFAULT_MATERIAL_BUDGET_BYTES;
     this.#indexBudget = options.indexBudgetBytes ?? DEFAULT_INDEX_BUDGET_BYTES;
     this.#onPublished = options.onMaterialPublished;
+    this.#presentation = options.presentation;
     const host: MaterialSchedulerHost = {
       isActive: () => this.active,
       fieldsFor: (program) => this.fieldsFor(program),
       index: (strokeId) => this.#indexes.get(strokeId)?.index ?? null,
       adoptIndex: (strokeId, index) => this.#storeIndex(strokeId, index),
       publish: (strokeId, tile) => this.#store(strokeId, tile, true),
+      // "Ready" means drawable, not merely deposited: a tile whose material is
+      // resident but whose presentation is missing still has work to do, and a
+      // painter that met one would have to build it inside a frame.
+      ready: (strokeId, key, color) => this.ready(strokeId, key, color),
       resident: (strokeId, key) => this.#material.get(strokeId)?.has(key) === true,
+      prepare: (strokeId, key, color) => this.prepare(strokeId, key, color),
       onPublished: (strokeId, keys) => this.#onPublished?.(strokeId, keys),
     };
     this.#scheduler = options.scheduler?.(host) ?? new PencilReconstructionScheduler(host);
@@ -176,9 +208,52 @@ export class PencilMaterialRuntime {
     return entry.tile;
   }
 
+  /** True when this tile can be drawn right now, tint and all. */
+  ready(strokeId: string, key: MaterialTileKey, color: string): boolean {
+    const entry = this.#material.get(strokeId)?.get(key);
+    if (entry === undefined) return false;
+    if (this.#presentation === undefined) return true;
+    return entry.display !== null && entry.display.color === color;
+  }
+
+  /**
+   * Builds this tile's presentation if it has none, or a stale one.
+   *
+   * Returns whether it did any work, so the scheduler can spend a quantum on it
+   * and no more. A tile with no material yet is not an error here -- it simply
+   * has nothing to present, and the reconstruction phase will come back to it.
+   */
+  prepare(strokeId: string, key: MaterialTileKey, color: string): boolean {
+    const factory = this.#presentation;
+    if (factory === undefined) return false;
+    const entry = this.#material.get(strokeId)?.get(key);
+    if (entry === undefined) return false;
+    if (entry.display !== null && entry.display.color === color) return false;
+    const started = now();
+    const handle = factory(entry.tile, color);
+    this.notePresentationBuild(now() - started);
+    this.attachDisplay(strokeId, key, handle);
+    return true;
+  }
+
   /** A resident tile's cached presentation, if the painter has made one. */
   display(strokeId: string, key: MaterialTileKey): MaterialDisplayHandle | null {
     return this.#touch(strokeId, key)?.display ?? null;
+  }
+
+  /**
+   * Records what one presentation build cost, for the diagnostics.
+   *
+   * Kept separate from `attachDisplay` because the interesting question is how
+   * long the *build* took, and only the painter knows when it started.
+   */
+  notePresentationBuild(milliseconds: number): void {
+    this.#presentationsBuilt += 1;
+    this.#presentationMillisecondsTotal += milliseconds;
+    this.#longestPresentationMilliseconds = Math.max(
+      this.#longestPresentationMilliseconds,
+      milliseconds,
+    );
   }
 
   /** Attaches a painter's presentation to a resident tile, and charges for it. */
@@ -234,6 +309,7 @@ export class PencilMaterialRuntime {
       program: createPencilMaterialProgram(brush),
       priority,
       tileKeys,
+      color: brush.color,
     };
   }
 
@@ -389,6 +465,9 @@ export class PencilMaterialRuntime {
       fieldTiles,
       fieldBytes,
       reconstructedTiles: this.#reconstructed,
+      presentationsBuilt: this.#presentationsBuilt,
+      presentationMillisecondsTotal: this.#presentationMillisecondsTotal,
+      longestPresentationMilliseconds: this.#longestPresentationMilliseconds,
       scheduler: this.#scheduler.stats(),
     });
   }
@@ -470,6 +549,10 @@ export class PencilMaterialRuntime {
       this.#indexEvictions += 1;
     }
   }
+}
+
+function now(): number {
+  return typeof performance === "object" ? performance.now() : Date.now();
 }
 
 function orderKey(strokeId: string, key: MaterialTileKey): string {
