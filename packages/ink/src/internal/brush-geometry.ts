@@ -102,47 +102,36 @@ export interface BrushStamp extends BrushHitSample {
 }
 
 /**
- * One unbroken run of medium in one grain lane.
+ * Where the tiles a deposited material names are to be found.
  *
- * A ribbon is a closed shape: `left` forward, across the far end, `right`
- * backward. It exists because the unit a stamped medium *paints* is not the
- * unit it is *evaluated* in. Consecutive stamps in one lane overlap by
- * construction, so emitting a separate contour for each would hand the
- * rasterizer tens of thousands of disjoint shapes to resolve against one
- * another -- which is superlinear, and measurably ruinous -- for a picture
- * identical to the one their union already describes. Merging a run into a
- * single contour is therefore not an optimization applied to the geometry; it
- * *is* the geometry.
- *
- * Both sides are flat `x, y` pairs rather than points, because a long stroke
- * holds tens of thousands of vertices and the painter wants a tight loop.
+ * A stroke in progress owns its own accumulator, whose tiles are complete every
+ * frame because it is synchronous. A finished stroke's tiles live in the
+ * runtime cache, which may not hold them yet -- so the painter is given the
+ * identity it needs to ask, rather than the pixels it cannot have.
  */
-export interface StampRibbon {
-  readonly left: readonly number[];
-  readonly right: readonly number[];
-}
+export type MaterialTileSupply =
+  | Readonly<{ kind: "live"; tiles: ReadonlyMap<string, Uint8Array> }>
+  | Readonly<{ kind: "cached"; strokeId: string; points: readonly StrokePoint[] }>;
 
 /**
- * A stream of tip placements, painted as the runs of medium they leave.
+ * A stroke painted as deposited material rather than as contours.
  *
- * There is exactly one `alpha`: variation within a stroke is carried by which
- * ribbons exist and where they break, which is the only tonal variation Canvas
- * 2D can paint without compositing an overlap twice. Ribbons are laid out never
- * to overlap one another, which is what frees the painter to draw them in
- * batches rather than in one path -- see `drawStamps`, and the measurement
- * behind it.
+ * The primitive a dry medium emits once it stops describing where marks are and
+ * starts describing what the paper holds. There is no `renderedScale` in the
+ * material itself: it is deposited once in the artwork's own frame, and an
+ * object transform is applied to the finished tiles when they are painted.
  */
-export interface StampsRenderGeometry {
-  readonly kind: "stamps";
+export interface MaterialRenderGeometry {
+  readonly kind: "material";
+  readonly supply: MaterialTileSupply;
+  /** Every tile the stroke's material occupies, in the order it reached them. */
+  readonly tileKeys: readonly string[];
+  /** The tip placements, which are also the hit geometry. */
   readonly stamps: readonly BrushStamp[];
-  readonly ribbons: readonly StampRibbon[];
-  /** Lane placements that received medium: how much the stroke laid down. */
   readonly markCount: number;
-  /** Resolved page alpha, base opacity already included, applied exactly once. */
+  /** Base opacity, already inside the material bytes. Never applied again. */
   readonly alpha: number;
-  /** A press that never moved: the whole mark is one disc. */
   readonly dot: Readonly<{ center: Point; radius: number }> | null;
-  /** The variable-radius centerline, for hit testing and the eraser. */
   readonly hitGeometry: readonly BrushHitSample[];
   readonly renderedScale: number;
   readonly bounds: Rect;
@@ -152,7 +141,7 @@ export interface StampsRenderGeometry {
 
 /** Geometry an incremental evaluator can produce. */
 export type LiveRenderGeometry =
-  StrokedPathRenderGeometry | FilledPathRenderGeometry | StampsRenderGeometry;
+  StrokedPathRenderGeometry | FilledPathRenderGeometry | MaterialRenderGeometry;
 
 /**
  * Structural evidence that live evaluation reuses settled work rather than

@@ -146,15 +146,16 @@ function digest(geometry: BrushRenderGeometry): string {
       for (const vertex of band.right) parts.push(point(vertex));
     }
   }
-  if (geometry.kind === "stamps") {
-    // Everything a painter reads, plus the stamp stream the bounds, the hit
-    // geometry and the eraser read. A grain that moved would show up here even
-    // if the marks happened to cover the same paper.
+  if (geometry.kind === "material") {
+    // A deposited medium's pixels are not in its geometry, so what is pinned
+    // here is everything that decides them: the dab stream, and which tiles it
+    // reaches. The bytes themselves are pinned by the material suites, against
+    // the resources and the equation that produce them.
     parts.push(
       round(geometry.alpha),
       String(geometry.markCount),
       String(geometry.stamps.length),
-      String(geometry.ribbons.length),
+      String(geometry.tileKeys.length),
     );
     parts.push(
       geometry.dot === null
@@ -164,10 +165,7 @@ function digest(geometry: BrushRenderGeometry): string {
     for (const stamp of geometry.stamps) {
       parts.push(point(stamp), round(stamp.radius), round(stamp.coverage), String(stamp.markCount));
     }
-    for (const ribbon of geometry.ribbons) {
-      for (const value of ribbon.left) parts.push(round(value));
-      for (const value of ribbon.right) parts.push(round(value));
-    }
+    for (const key of geometry.tileKeys) parts.push(key);
   }
   return parts.join("|");
 }
@@ -191,18 +189,20 @@ describe("frozen engine brush strategies", () => {
     // Regenerating these to make a failing run pass would defeat the gate. A
     // change here means artwork already saved would look different than it did.
     //
-    // The Pencil pair was re-pinned once, in E4.1, when its deposition model was
-    // replaced before the strategy had ever shipped in a release. That is the
-    // only circumstance in which one of these moves without a new version: no
-    // saved artwork could yet be looking at the old digest. The two pens have
-    // shipped, and theirs have never moved.
+    // The Pencil pair has been re-pinned twice, in E4.1 and again in E4.2 when
+    // the strategy stopped drawing contours and started depositing material.
+    // Both were before the strategy had shipped in a release, which is the only
+    // circumstance in which one of these moves without a new version: no saved
+    // artwork could yet be looking at the old digest. After the release that
+    // ships Pencil the same refinement is `pencil@2`, without exception. The two
+    // pens have shipped, and theirs have never moved.
     expect(digests).toEqual([
       "technical-pen@0:x1q4l0",
       "technical-pen@0.3:a2i6kf",
       "pressure-pen@0:6bm694",
       "pressure-pen@0.18:92y0oo",
-      "pencil@0:1barveo",
-      "pencil@0.2:5vo5gb",
+      "pencil@0:4w2vy8",
+      "pencil@0.2:1gzmcdl",
     ]);
   });
 
@@ -217,16 +217,18 @@ describe("frozen engine brush strategies", () => {
     expect(digests).toEqual(["0.5:58sh20", "2.5:1drflrf"]);
   });
 
-  it("pins Pencil at a non-unit rendered scale, where its grain resamples", () => {
-    // A scaled pencil is a longer mark of the same painted width, so it places
-    // proportionally more stamps and samples the grain field at more places.
-    // The field itself does not move, and this is what proves the rule did not.
+  it("gives Pencil one deposit whatever the object's scale", () => {
+    // Material is deposited once in the artwork's own frame and the object
+    // transform is applied when it is painted, so scale cannot reach the
+    // deposit. A digest that moved with scale would mean a resized object was
+    // resampling the sheet -- and coming back a different drawing.
     const brush = engineBrush("pencil", Object.freeze({ mode: "average", amount: 0.2 }));
     const stroke = frozenStroke(brush, "frozen-pencil-scaled");
-    const digests = [0.5, 2.5].map(
-      (scale) => `${scale}:${hash(digest(resolveStrokeRenderGeometry(stroke, scale)))}`,
+    const digests = [0.5, 1, 2.5].map((scale) =>
+      hash(digest(resolveStrokeRenderGeometry(stroke, scale))),
     );
-    expect(digests).toEqual(["0.5:uhqjjm", "2.5:1j2io0c"]);
+    expect(new Set(digests).size).toBe(1);
+    expect(digests[0]).toBe("1gzmcdl");
   });
 });
 

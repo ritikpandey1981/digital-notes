@@ -146,18 +146,13 @@ export function runModels(
       // evaluation, generation and painting dominates is not answerable from
       // one timing, and a stamped strategy is the first where painting might.
       const geometry = createBrushRenderGeometry(stroke.points, stroke.brush, 1, stroke.id);
-      if (geometry.kind === "stamps") {
+      if (geometry.kind === "material") {
+        // A deposited medium has no contours at all. What a repaint costs it is
+        // the tiles it has to put on screen, and what a rebuild costs is the
+        // dabs behind them.
         results.push(summarize(`${group}/${size}/${kind}/stamps`, [geometry.stamps.length]));
         results.push(summarize(`${group}/${size}/${kind}/marks`, [geometry.markCount]));
-        results.push(summarize(`${group}/${size}/${kind}/contours`, [geometry.ribbons.length]));
-        results.push(
-          summarize(`${group}/${size}/${kind}/path-vertices`, [
-            geometry.ribbons.reduce(
-              (total, ribbon) => total + (ribbon.left.length + ribbon.right.length) / 2,
-              0,
-            ),
-          ]),
-        );
+        results.push(summarize(`${group}/${size}/${kind}/tiles`, [geometry.tileKeys.length]));
       }
       if (geometry.kind === "filled-path") {
         results.push(summarize(`${group}/${size}/${kind}/fills`, [geometry.bands.length]));

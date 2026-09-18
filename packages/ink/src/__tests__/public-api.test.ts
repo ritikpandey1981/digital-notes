@@ -4,9 +4,14 @@ import * as ink from "../index";
 describe("@folio/ink public API", () => {
   it("exposes only the documented runtime entry points", () => {
     expect(Object.keys(ink).sort()).toEqual([
+      "DEFAULT_INDEX_BUDGET_BYTES",
+      "DEFAULT_MATERIAL_BUDGET_BYTES",
       "DEFAULT_STROKE_STYLE",
       "InkError",
+      "MaterialPriority",
+      "PencilMaterialRuntime",
       "PointerInputController",
+      "SLICE_BUDGET_MS",
       "Stroke",
       "StrokeBuilder",
       "StrokeRenderer",
@@ -20,6 +25,8 @@ describe("@folio/ink public API", () => {
       "getStrokeTransformPivot",
       "getStrokeVisualLocalBounds",
       "isSupportedBrushStrategy",
+      "materialTileKey",
+      "materialTileRect",
       "resolveBrushPreset",
       "supportedBrushStrategies",
     ]);

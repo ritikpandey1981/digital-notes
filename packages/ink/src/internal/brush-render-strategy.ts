@@ -6,14 +6,14 @@ import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
 import type { LiveBrushEvaluator, LiveRenderGeometry } from "./brush-geometry";
 import { brushSeed } from "./brush-random";
-import {
-  drawFilledPath,
-  drawSmoothStrokeSegments,
-  drawStamps,
-  drawStrokedPath,
-} from "./draw-stroke";
+import { drawFilledPath, drawSmoothStrokeSegments, drawStrokedPath } from "./draw-stroke";
 import { createOutlineStrokeGeometry, type OutlineStrokeGeometry } from "./outline-geometry";
-import { PencilEvaluator, createPencilGeometry } from "./pencil";
+import type { PencilMaterialRuntime } from "./pencil-material";
+import {
+  PencilMaterialEvaluator,
+  createPencilMaterialGeometry,
+  drawPencilMaterial,
+} from "./pencil-material-strategy";
 import { PressurePenEvaluator, createPressurePenGeometry } from "./pressure-pen";
 import { createProfessionalInkPath, type ProfessionalInkPath } from "./professional-ink-path";
 import { TechnicalPenEvaluator, createTechnicalPenGeometry } from "./technical-pen";
@@ -35,6 +35,21 @@ export interface OutlineRenderGeometry {
 
 export type BrushRenderGeometry =
   CenterlineRenderGeometry | OutlineRenderGeometry | LiveRenderGeometry;
+
+/**
+ * What a painter needs beyond the geometry itself.
+ *
+ * Only a deposited medium has one: its pixels live in a runtime cache rather
+ * than in the geometry, so the painter has to be told which cache. Everything
+ * else describes itself completely and ignores this.
+ */
+export interface BrushPaintContext {
+  readonly materialRuntime: PencilMaterialRuntime | null;
+  /** Restricts the paint to these material tiles, for a local repaint. */
+  readonly tiles?: ReadonlySet<string>;
+  /** Told which tiles the cache did not have, so the caller can ask for them. */
+  readonly onMissing?: (keys: readonly string[]) => void;
+}
 
 interface StrokeRenderCache {
   readonly path: ProfessionalInkPath;
@@ -71,6 +86,7 @@ interface BrushRenderStrategy {
     brush: ResolvedBrushSnapshot,
     renderedScale: number,
     seed: number,
+    strokeId: string,
   ) => BrushRenderGeometry;
   /** Geometry for one finalized stroke, cached by immutable Stroke identity and scale. */
   readonly resolveGeometry: (stroke: Stroke, renderedScale: number) => BrushRenderGeometry;
@@ -78,6 +94,7 @@ interface BrushRenderStrategy {
     context: CanvasRenderingContext2D,
     geometry: BrushRenderGeometry,
     brush: ResolvedBrushSnapshot,
+    paint?: BrushPaintContext,
   ) => void;
   /**
    * An incremental evaluator, for a strategy whose live path can reuse settled
@@ -88,6 +105,7 @@ interface BrushRenderStrategy {
     brush: ResolvedBrushSnapshot,
     renderedScale: number,
     seed: number,
+    strokeId: string,
   ) => LiveBrushEvaluator;
 }
 
@@ -184,21 +202,39 @@ const PRESSURE_PEN_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStra
  * rather than a continuous shape, with pressure driving how much of each tip
  * inks rather than how dark it is.
  */
+/**
+ * `pencil@1`: graphite deposited into a material raster, not drawn as contours.
+ *
+ * The only strategy whose pixels do not come out of its geometry. Geometry here
+ * is the dab stream -- where the tip touched, how wide it was, how much it was
+ * carrying -- which is what bounds, hit testing and the eraser read; the marks
+ * themselves are deposited per cell and cached by the runtime.
+ *
+ * Scale is deliberately absent. Material is deposited once in the artwork's own
+ * frame and an object transform is applied when it is painted, so the cache key
+ * is one geometry per stroke rather than one per zoom level.
+ */
 const PENCIL_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
   id: "pencil",
   version: 1,
-  createGeometry: (points, brush, renderedScale, seed) =>
-    createPencilGeometry(points, brush, renderedScale, seed),
-  resolveGeometry: (stroke, renderedScale) =>
-    cachedEvaluatedGeometry(stroke, "pencil", renderedScale, () =>
-      createPencilGeometry(stroke.points, stroke.brush, renderedScale, brushSeed(stroke.id)),
+  createGeometry: (points, brush, _renderedScale, _seed, strokeId) =>
+    createPencilMaterialGeometry(points, brush, strokeId),
+  resolveGeometry: (stroke) =>
+    cachedEvaluatedGeometry(stroke, "pencil", 1, () =>
+      createPencilMaterialGeometry(stroke.points, stroke.brush, stroke.id),
     ),
-  draw: (context, geometry, brush) => {
-    if (geometry.kind !== "stamps") return;
-    drawStamps(context, geometry, brush);
+  draw: (context, geometry, brush, paint) => {
+    if (geometry.kind !== "material") return;
+    const result = drawPencilMaterial(
+      context,
+      geometry,
+      brush,
+      paint?.materialRuntime ?? null,
+      paint?.tiles,
+    );
+    paint?.onMissing?.(result.missing);
   },
-  createLiveEvaluator: (brush, renderedScale, seed) =>
-    new PencilEvaluator(brush, renderedScale, seed),
+  createLiveEvaluator: (brush) => new PencilMaterialEvaluator(brush),
 });
 
 const BRUSH_RENDER_STRATEGIES: ReadonlyMap<string, BrushRenderStrategy> = new Map(
@@ -257,6 +293,7 @@ export function createBrushRenderGeometry(
     brush,
     renderedScale,
     brushSeed(strokeId),
+    strokeId,
   );
 }
 
@@ -284,6 +321,7 @@ export function createLiveBrushEvaluator(
       brush,
       renderedScale,
       brushSeed(strokeId),
+      strokeId,
     ) ?? null
   );
 }
@@ -323,8 +361,9 @@ export function drawBrushRenderGeometry(
   context: CanvasRenderingContext2D,
   geometry: BrushRenderGeometry,
   brush: ResolvedBrushSnapshot,
+  paint?: BrushPaintContext,
 ): void {
-  requireBrushRenderStrategy(brush).draw(context, geometry, brush);
+  requireBrushRenderStrategy(brush).draw(context, geometry, brush, paint);
 }
 
 export function getStrokeRenderCacheSnapshot(stroke: Stroke): StrokeRenderCacheSnapshot {

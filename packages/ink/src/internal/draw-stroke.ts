@@ -2,11 +2,7 @@ import type { Point } from "@folio/rendering";
 import type { ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
-import type {
-  FilledPathRenderGeometry,
-  StampsRenderGeometry,
-  StrokedPathRenderGeometry,
-} from "./brush-geometry";
+import type { FilledPathRenderGeometry, StrokedPathRenderGeometry } from "./brush-geometry";
 import type { ProfessionalInkSegment } from "./professional-ink-path";
 
 /**
@@ -112,89 +108,6 @@ export function drawFilledPath(
     context.closePath();
     context.fill();
   }
-  context.restore();
-}
-
-/**
- * The most contours one `fill()` is given.
- *
- * Canvas 2D resolves a path's contours against one another, and the cost of
- * doing so is quadratic in how many there are: measured on a twenty-thousand
- * sample stroke, six thousand contours in a single fill took 155 ms a frame,
- * while the same contours in batches take single digits. Batching is safe here
- * only because a Pencil's streaks are laid out never to overlap -- see
- * `pencil.ts` -- so splitting the path cannot composite anything twice.
- *
- * Disjoint is not the same as distant. Two streaks that share an edge are
- * resolved correctly within one fill and still *look* wrong across two, because
- * a boundary pixel each of them half covers is composited twice and comes out
- * lighter than either. Streaks reach the painter in the order they were opened,
- * so neighbours share a fill as long as a batch outlasts a streak -- which makes
- * this number and the length of a Pencil streak two ends of one decision.
- *
- * E4.1 settled it at the geometry end rather than here. Raising the batch buys
- * locality at the quadratic term's expense -- measured at about a millisecond and
- * a half a frame on the heaviest workload for a doubling, against a per-contour
- * term of three and a half -- and it only ever made the artefact rarer. Keeping
- * the grain field able to open a pressed core removed it instead, by making the
- * shared edges short in the first place, and that change improves the picture
- * rather than merely hiding a flaw in it.
- *
- * Forty-eight is the balance: large enough that the per-call overhead is a small
- * share of the work, small enough that the quadratic term never matters.
- */
-const STAMP_FILL_BATCH = 48;
-
-/**
- * Paints one Pencil stamp stream.
- *
- * Every run is painted at one alpha, and runs do not overlap, so the deposited
- * tone is exactly the brush's own opacity wherever graphite landed and nowhere
- * darker. Where a stroke crosses *itself* the crossing does darken, which is
- * both what graphite does and what `pressure-pen@1` already does between bands.
- *
- * The inherited alpha is read rather than multiplied into, for the same reason
- * a band's is: the geometry's alpha already carries the brush's opacity, and
- * multiplying again would apply it twice.
- */
-export function drawStamps(
-  context: CanvasRenderingContext2D,
-  geometry: StampsRenderGeometry,
-  brush: ResolvedBrushSnapshot,
-): void {
-  const ribbons = geometry.ribbons;
-  const dot = geometry.dot;
-  if (ribbons.length === 0 && dot === null) return;
-  const inherited = context.globalAlpha;
-  context.save();
-  context.fillStyle = brush.color;
-  context.globalAlpha = inherited * geometry.alpha;
-  if (dot !== null) {
-    context.beginPath();
-    context.arc(dot.center.x, dot.center.y, dot.radius, 0, Math.PI * 2);
-    context.fill();
-  }
-  let batched = 0;
-  if (ribbons.length > 0) context.beginPath();
-  for (const ribbon of ribbons) {
-    const left = ribbon.left;
-    const right = ribbon.right;
-    if (left.length < 4) continue;
-    context.moveTo(left[0] as number, left[1] as number);
-    for (let index = 2; index < left.length; index += 2) {
-      context.lineTo(left[index] as number, left[index + 1] as number);
-    }
-    for (let index = right.length - 2; index >= 0; index -= 2) {
-      context.lineTo(right[index] as number, right[index + 1] as number);
-    }
-    context.closePath();
-    batched += 1;
-    if (batched < STAMP_FILL_BATCH) continue;
-    context.fill();
-    context.beginPath();
-    batched = 0;
-  }
-  if (batched > 0) context.fill();
   context.restore();
 }
 

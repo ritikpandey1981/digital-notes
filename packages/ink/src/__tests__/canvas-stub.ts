@@ -1,0 +1,154 @@
+import { vi } from "vitest";
+
+/**
+ * A canvas that records instead of rasterizing.
+ *
+ * Material painting goes through a real `HTMLCanvasElement` -- a tile's alpha is
+ * uploaded and tinted there -- so a unit test either needs a DOM or needs this.
+ * What it can settle without one is the painter's *contract*: which tiles were
+ * drawn, where they were put, which colour tinted them, and that base opacity
+ * was not applied a second time. Whether the resulting pixels look like
+ * graphite is settled by the material suites and, in the end, by the eye.
+ */
+
+export interface RecordedDraw {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface CanvasStub {
+  readonly draws: RecordedDraw[];
+  /** Colours used to tint a tile, in order. */
+  readonly fills: string[];
+  /** `globalAlpha` in force at each tint, to prove opacity is applied once. */
+  readonly fillAlphas: number[];
+  readonly created: number;
+  restore(): void;
+}
+
+interface StubContext {
+  canvas: { width: number; height: number };
+  globalAlpha: number;
+  globalCompositeOperation: string;
+  fillStyle: string;
+  imageSmoothingEnabled: boolean;
+}
+
+/**
+ * Installs a `document` whose canvases record.
+ *
+ * Restores whatever was there before, so a suite that runs in a real DOM is not
+ * left with the stub.
+ */
+export function installCanvasStub(): CanvasStub {
+  const draws: RecordedDraw[] = [];
+  const fills: string[] = [];
+  const fillAlphas: number[] = [];
+  let created = 0;
+
+  const createCanvas = (): unknown => {
+    created += 1;
+    const element = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+    };
+    const context: StubContext & Record<string, unknown> = {
+      canvas: element,
+      globalAlpha: 1,
+      globalCompositeOperation: "source-over",
+      fillStyle: "",
+      imageSmoothingEnabled: true,
+      createImageData: (width: number, height: number) => ({
+        width,
+        height,
+        data: new Uint8ClampedArray(width * height * 4),
+      }),
+      putImageData: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(() => {
+        fills.push(String(context.fillStyle));
+        fillAlphas.push(context.globalAlpha);
+      }),
+      drawImage: vi.fn((_source: unknown, x: number, y: number, width: number, height: number) => {
+        draws.push({ x, y, width, height });
+      }),
+      save: vi.fn(),
+      restore: vi.fn(),
+      beginPath: vi.fn(),
+      closePath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      arc: vi.fn(),
+      rect: vi.fn(),
+      clip: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      rotate: vi.fn(),
+      setTransform: vi.fn(),
+    };
+    return element;
+  };
+
+  const previous = (globalThis as { document?: unknown }).document;
+  (globalThis as { document?: unknown }).document = {
+    createElement: (tag: string) => {
+      if (tag !== "canvas") throw new Error(`The canvas stub only makes canvases, not '${tag}'.`);
+      return createCanvas();
+    },
+  };
+
+  return {
+    draws,
+    fills,
+    fillAlphas,
+    get created() {
+      return created;
+    },
+    restore() {
+      if (previous === undefined) delete (globalThis as { document?: unknown }).document;
+      else (globalThis as { document?: unknown }).document = previous;
+    },
+  };
+}
+
+/** A recording 2D context, for painting one stroke straight into a test. */
+export function recordingContext(): {
+  context: CanvasRenderingContext2D;
+  draws: RecordedDraw[];
+  alphas: number[];
+} {
+  const draws: RecordedDraw[] = [];
+  const alphas: number[] = [];
+  const context = {
+    globalAlpha: 1,
+    fillStyle: "",
+    imageSmoothingEnabled: false,
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    scale: vi.fn(),
+    rotate: vi.fn(),
+    beginPath: vi.fn(),
+    closePath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    arc: vi.fn(),
+    rect: vi.fn(),
+    clip: vi.fn(),
+    clearRect: vi.fn(),
+    fillRect: vi.fn(),
+    fill: vi.fn(),
+    stroke: vi.fn(),
+    setTransform: vi.fn(),
+    drawImage: vi.fn((_source: unknown, x: number, y: number, width: number, height: number) => {
+      draws.push({ x, y, width, height });
+      alphas.push((context as unknown as { globalAlpha: number }).globalAlpha);
+    }),
+  } as unknown as CanvasRenderingContext2D;
+  return { context, draws, alphas };
+}

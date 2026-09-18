@@ -20,6 +20,20 @@ export {
   type ResolvedBrushOverrides,
   type ResolvedBrushSnapshot,
 } from "./brush-model";
+export {
+  DEFAULT_INDEX_BUDGET_BYTES,
+  DEFAULT_MATERIAL_BUDGET_BYTES,
+  MaterialPriority,
+  PencilMaterialRuntime,
+  SLICE_BUDGET_MS,
+  materialTileKey,
+  type MaterialPriorityValue,
+  type MaterialTileKey,
+  type MaterialTileRequest,
+  type PencilMaterialRuntimeOptions,
+  type PencilMaterialRuntimeStats,
+} from "./internal/pencil-material";
+export { materialTileRect } from "./internal/pencil-material-strategy";
 export { PointerInputController } from "./pointer-input-controller";
 export {
   getStrokeLocalRenderBounds,
