@@ -138,9 +138,11 @@ Remaining:
 
 - Visual approval of the hybrid Pencil. `pencil@1` is deliberately not frozen yet: until
   the picture is signed off, a refinement is a re-pin rather than a `pencil@2`.
-- E4.2C: slice the presentation build. Painting a finished stroke for the first time builds
-  a presentation canvas for every tile it occupies in one frame, measured at 212 ms for a
-  seventy-tile mark. Measured in [`performance/pencil-e4-2.md`](performance/pencil-e4-2.md).
+- The long frame at twenty-six page units. E4.2C scheduled presentation building and fixed a
+  cache-identity defect, but measuring the hitch showed presentation was never its cause: it
+  is a single collection pause that no profiler reproduces. Recorded with its evidence in
+  [`performance/pencil-e4-2.md`](performance/pencil-e4-2.md); it needs a memory pass rather
+  than another scheduling one.
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a

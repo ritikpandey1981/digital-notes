@@ -1276,6 +1276,31 @@ time before release.
 
 Recorded in [`pencil-material-e4-2.md`](pencil-material-e4-2.md).
 
+### E4.2C — Presentation tiles, and a corrected diagnosis
+
+E4.2B recorded a long frame and attributed it to presentation-tile creation. E4.2C measured
+it and found that attribution wrong in every part: presentation is 0.2 ms a tile and twenty
+five tiles a workload, and the long frame happens a second and a half into drawing rather
+than at commit. What remains is a single collection pause that neither a CPU profile nor a
+timeline trace reproduces -- recorded with its evidence in
+[`../performance/pencil-e4-2.md`](../performance/pencil-e4-2.md) rather than assigned a
+cause it has not been shown to have. See [D-038](../DECISIONS.md).
+
+The presentation work was still done, on the strength of the measurement rather than the
+guess: a tile's drawable form is a second phase of the same reconstruction job, so it
+inherits the priority classes, the rotation, the concurrency cap, generation ownership and
+every cancellation path unchanged, and a paint builds at most eight of them inline before
+handing the rest over. The scheduler asks whether a tile is *ready* rather than resident,
+which is what makes a tile adopted at commit -- material complete, drawable form missing --
+a job rather than work inside a frame.
+
+Two defects were fixed on the way. The material cache was keyed by stroke id alone, and
+`applyInkStyle` keeps the id while changing width and opacity, so a restyled mark was served
+the graphite of the mark it used to be -- see [D-037](../DECISIONS.md). And a unit test
+introduced in E4.2B asserted a wall-clock slice bound, which this repository keeps behind its
+performance flag for good reason; it failed about one run in three under load and now asserts
+structure instead.
+
 ### Later — Marker
 
 Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,

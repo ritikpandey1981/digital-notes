@@ -7,8 +7,8 @@ experiment sequence, which lives outside the repository and is summarised rather
 restated.
 
 **As of E4.2B the editor draws Pencil through this model.** The geometry model it replaced
-is gone. §11 onwards records the runtime that made that possible; §1–10 record the material
-it draws.
+is gone. §1–10 record the material, §9–16 the runtime that made switching possible, and
+§17–18 the presentation layer and cache identity that E4.2C settled.
 
 ## 1. Why a material at all
 
@@ -328,7 +328,58 @@ from the material's own dab placement, so there is exactly one placement impleme
 exactly one `FULL_COVERAGE`. `pencil@1`'s freeze digests were re-pinned for the second and
 last time before release.
 
-## 17. What remains
+## 17. Presentation tiles
+
+A committed tile is alpha. A **presentation** is that alpha tinted with the stroke's colour
+and put somewhere a compositor can draw it — a canvas, for the Canvas 2D backend. It is the
+last derived thing between the artwork and the screen, and like everything else derived it
+is runtime-owned, evictable and rebuildable.
+
+It is also cheap: about **0.2 ms a tile**, measured in the mounted editor. That is why the
+answer here is a limit rather than a rewrite.
+
+- Up to **eight** presentations are built inline in a paint. Eight is under two
+  milliseconds and more than an ordinary stroke occupies, so an ordinary mark never pays a
+  task hop and never shows a blank frame to save nothing.
+- Past eight, the tiles are **requested** and the paint leaves them bare. A cold viewport
+  of a large project wants hundreds at once, and hundreds of a fifth of a millisecond is a
+  frame gone.
+
+Scheduling reuses the existing runtime rather than adding a second one. A presentation is a
+second **phase** of the same job: a tile is reconstructed if its material is missing, then
+presented if its drawable form is, and each phase costs one quantum. Everything the
+scheduler already provides — priority classes, rotation between strokes, the concurrency
+cap, generation ownership, cancellation on viewport churn, page switch and runtime
+retirement — therefore applies to presentation unchanged.
+
+The material model stays free of Canvas. The runtime is handed a factory it never looks
+inside, pays for what it returns, and schedules when it is made.
+
+### Readiness, not residence
+
+A tile whose material is deposited but which cannot yet be drawn is **not ready**. The
+scheduler asks about readiness rather than residence, so a tile adopted at commit — material
+complete, presentation missing — still becomes a job instead of being built inside a frame.
+
+### Budget
+
+Presentation backing is charged to the **same 64 MiB material budget**: 16 KiB of alpha
+becomes 80 KiB once it can be drawn, and a budget that counted only the alpha would be wrong
+by a factor of five. Eviction releases the presentation with the tile.
+
+## 18. Cache identity
+
+Material is cached under the stroke's id **and its resolved appearance**, not identity
+alone. `applyInkStyle` builds a new `Stroke` with the *same id* and a different width,
+opacity or colour, so a cache keyed by identity would serve the graphite of a mark that no
+longer exists — and width and opacity are both inside the deposited bytes. This was a live
+defect through E4.2B; E4.2C fixed it.
+
+Colour is deliberately **not** in that key. Material is colour-neutral, so recolouring must
+throw away the tint and not the graphite. The presentation records the colour it was tinted
+with, and a painter that meets a presentation in the wrong colour rebuilds only that.
+
+## 19. What remains
 
 Canvas 2D is sufficient and GPU is not required; the prototype evidence and the mounted
 measurement in [`../performance/pencil-e4-2.md`](../performance/pencil-e4-2.md) agree.

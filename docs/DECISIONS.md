@@ -704,3 +704,60 @@ bounds follow automatically, because local bounds are unscaled and the transform
 outside them. Pencil and the pens therefore disagree about what scaling an object means,
 and that disagreement is deliberate: it is the difference between an instrument and a
 material, and the alternative is a medium that changes when it is moved.
+
+
+## D-037 — A derived cache is keyed by what it was derived from
+
+**Status:** accepted
+
+`applyInkStyle` builds a new `Stroke` with the **same id** and a different width, opacity or
+colour. E4.2B keyed the Pencil material cache on the stroke id, so a restyled mark was served
+the graphite of the mark it used to be — and width and opacity are both inside the deposited
+bytes, so this was wrong material rather than merely a stale tint. It shipped undetected
+because no test restyled a Pencil stroke and looked at the pixels.
+
+**The rule: a derived cache is keyed by every input its contents depend on, not by the
+identity of the thing it belongs to.** Pencil material is keyed by the stroke id *and* a
+digest of the resolved appearance the deposition reads: width, opacity, smoothing and both
+pressure responses, plus the strategy version that names the resources.
+
+The corollary is the interesting half. **Colour is deliberately excluded.** Material is
+colour-neutral and the tint is applied when a tile is painted, so folding colour into the
+material key would throw away expensive graphite to fix a cheap tint. The presentation
+records the colour it was built with instead, and a painter that meets one in the wrong
+colour rebuilds only that. Two derived things, two keys, each holding exactly what it
+depends on.
+
+**Consequence.** Any later cache over resolved appearance — Marker's material, a cached
+export, a thumbnail — inherits the same obligation, and identity alone is never sufficient
+while `applyInkStyle` preserves it.
+
+
+## D-038 — A diagnosis is a measurement, and a frame gap is not a long task
+
+**Status:** accepted
+
+E4.2B recorded a ~212 ms frame and attributed it, by reasoning, to seventy presentation
+canvases being built in the frame that first painted a committed stroke. E4.2C was opened to
+slice that work. Instrumenting it first showed the attribution was wrong in every part: a
+whole workload builds twenty-five presentations totalling under five milliseconds, the long
+frame happens a second and a half into *drawing* rather than at commit, and committed
+geometry — the one step proportional to the whole mark — costs four milliseconds.
+
+Two rules came out of it, and the second is the one that made the first possible.
+
+**Measure before attributing.** A plausible mechanism that scales the right way with the
+right input is not evidence. The presentation hypothesis was plausible, scaled with brush
+size, and was wrong; ten minutes of counters settled what a paragraph of reasoning could
+not.
+
+**A frame gap and a long task are different measurements.** `requestAnimationFrame` is
+driven by the compositor, so a gap can open because the GPU process is busy while the main
+thread sits idle. Only a long task means JavaScript held the thread. The performance spec
+now records both, and any claim that the editor *blocked* has to cite the second.
+
+**Consequence.** The remaining ~230 ms event at twenty-six page units is a major collection:
+it registers as a long task, scales with allocation, and vanishes under both a CPU profile
+and a timeline trace. It is recorded as a memory-profile characteristic with its evidence,
+rather than assigned a cause it has not been shown to have. Removing the two largest
+per-frame allocators did not move it, and that is reported as a result rather than omitted.
