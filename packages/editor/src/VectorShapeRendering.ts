@@ -15,6 +15,7 @@ import {
   MaterialPriority,
   createStrokeVisual,
   materialTileRect,
+  pencilMaterialCacheId,
   type MaterialPriorityValue,
   type MaterialTileRequest,
   type PencilMaterialRuntime,
@@ -194,7 +195,9 @@ function collectMaterialRequest(
   }
   into.push(
     runtime.createRequest(
-      object.stroke.id,
+      // The same identity the painter looked the material up under: a restyled
+      // stroke keeps its id and is a different mark.
+      pencilMaterialCacheId(object.stroke.id, object.stroke.brush),
       object.stroke.points,
       object.stroke.brush,
       missing,

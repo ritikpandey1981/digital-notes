@@ -23,8 +23,9 @@ import {
   getStrokeRenderedBounds,
   getStrokeTransformPivot,
   getStrokeVisualLocalBounds,
+  createPencilMaterialRuntime,
   materialTileRect,
-  PencilMaterialRuntime,
+  pencilGeometryDiagnostics,
   PointerInputController,
   StrokeRenderer,
   type ResolvedBrushSnapshot,
@@ -728,7 +729,8 @@ export function CanvasSurface({
      * successor.
      */
     let requestMaterialRepaint: (keys: readonly string[]) => void = () => undefined;
-    const materialRuntime = new PencilMaterialRuntime({
+    let reportMaterialDiagnostics: () => void = () => undefined;
+    const materialRuntime = createPencilMaterialRuntime({
       isActive: () => activation.active,
       onMaterialPublished: (_strokeId, keys) => requestMaterialRepaint(keys),
     });
@@ -745,6 +747,8 @@ export function CanvasSurface({
             effective,
             materialRuntime,
           ),
+          // Trailing, so it reports what the frame that just ran actually did.
+          () => reportMaterialDiagnostics(),
         ],
         onViewportChange: (snapshot) => synchronizeViewportLayers(snapshot),
         onError: (error) => callbacks.errorRef.current?.(error),
@@ -852,10 +856,17 @@ export function CanvasSurface({
       // Reconstruction publishes exact tiles as they finish, so a cold viewport
       // fills in progressively instead of arriving all at once or not at all.
       // Only the tiles that appeared are invalidated.
+      let publishedDiagnostics = "";
       const publishMaterialDiagnostics = (): void => {
         const canvas = inkLayer?.canvas;
         if (canvas === undefined) return;
         const stats = materialRuntime.stats();
+        // Written only when something moved: this runs after every frame, and
+        // thirteen dataset writes a frame would be measurable in the very path
+        // the diagnostics exist to measure.
+        const signature = `${String(stats.residentTiles)}:${String(stats.scheduler.tilesPublished)}:${String(stats.presentationsBuilt)}:${String(stats.materialHits)}:${String(pencilGeometryDiagnostics().builds)}`;
+        if (signature === publishedDiagnostics) return;
+        publishedDiagnostics = signature;
         canvas.dataset.materialResidentTiles = String(stats.residentTiles);
         canvas.dataset.materialBytes = String(stats.residentMaterialBytes);
         canvas.dataset.materialIndexBytes = String(stats.residentIndexBytes);
@@ -866,7 +877,17 @@ export function CanvasSurface({
         canvas.dataset.materialLongestSlice = stats.scheduler.longestSliceMilliseconds.toFixed(3);
         canvas.dataset.materialPublished = String(stats.scheduler.tilesPublished);
         canvas.dataset.materialCancelled = String(stats.scheduler.jobsCancelled);
+        canvas.dataset.materialPresentations = String(stats.presentationsBuilt);
+        canvas.dataset.materialPresentationMs = stats.presentationMillisecondsTotal.toFixed(3);
+        canvas.dataset.materialLongestPresentation =
+          stats.longestPresentationMilliseconds.toFixed(3);
+        const geometry = pencilGeometryDiagnostics();
+        canvas.dataset.materialGeometryBuilds = String(geometry.builds);
+        canvas.dataset.materialGeometryDabs = String(geometry.dabs);
+        canvas.dataset.materialGeometryMs = geometry.millisecondsTotal.toFixed(3);
+        canvas.dataset.materialLongestGeometry = geometry.longestMilliseconds.toFixed(3);
       };
+      reportMaterialDiagnostics = publishMaterialDiagnostics;
       requestMaterialRepaint = (keys) => {
         if (!activation.active) return;
         for (const key of keys) {
