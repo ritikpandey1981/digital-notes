@@ -1,4 +1,5 @@
 import type { Point, Rect } from "@folio/rendering";
+import type { CommittedPencilMaterial } from "./internal/pencil-material";
 
 export type InkPointerType = "mouse" | "pen" | "touch";
 export type StrokeSmoothingMode = "none" | "average" | "catmull-rom" | "bezier";
@@ -132,6 +133,14 @@ export interface StrokeRendererOptions {
   readonly onInvalidate?: (dirtyRect: Rect) => void;
   /** Keeps finalized geometry cached while allowing an external compositor to own presentation. */
   readonly finalizedPresentation?: "retained" | "external";
+  /**
+   * Hands finished Pencil material to whatever owns the runtime cache.
+   *
+   * The live accumulator has already deposited every tile the stroke touched,
+   * so discarding them at commit only to rebuild them on the next frame would
+   * be the most expensive possible moment to have an empty cache.
+   */
+  readonly onMaterialCommitted?: (strokeId: string, material: CommittedPencilMaterial) => void;
 }
 
 /** Absolute page transform applied to one finalized immutable stroke. */

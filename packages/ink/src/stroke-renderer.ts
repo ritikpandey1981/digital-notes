@@ -8,10 +8,12 @@ import {
   type BrushRenderGeometry,
 } from "./internal/brush-render-strategy";
 import type { LiveBrushEvaluator, LiveEvaluationSnapshot } from "./internal/brush-geometry";
+import { PencilMaterialEvaluator, materialTileRect } from "./internal/pencil-material-strategy";
 import { drawStrokePoints } from "./internal/draw-stroke";
 import { freezeRect, unionRects } from "./internal/geometry";
 import { getStrokeRenderedBounds } from "./rendered-stroke-bounds";
 import type { Stroke } from "./stroke";
+import type { CommittedPencilMaterial } from "./internal/pencil-material";
 import type {
   FinalizedStrokeVisual,
   StrokePoint,
@@ -91,6 +93,8 @@ export class StrokeRenderer {
   private readonly canvas: HTMLCanvasElement | undefined;
   private readonly onInvalidate: ((dirtyRect: Rect) => void) | undefined;
   private readonly finalizedPresentation: "retained" | "external";
+  private readonly onMaterialCommitted:
+    ((strokeId: string, material: CommittedPencilMaterial) => void) | undefined;
   private readonly scheduler: RenderScheduler;
   private readonly diagnosedGeometry = new WeakSet<Stroke>();
   private readonly finalizedStrokes: FinalizedStrokeState[] = [];
@@ -112,6 +116,7 @@ export class StrokeRenderer {
     this.canvas = options.canvas;
     this.onInvalidate = options.onInvalidate;
     this.finalizedPresentation = options.finalizedPresentation ?? "retained";
+    this.onMaterialCommitted = options.onMaterialCommitted;
     this.scheduler = new RenderScheduler(
       () => this.renderIncrementalFrame(),
       options.animationFrameAdapter,
@@ -156,6 +161,18 @@ export class StrokeRenderer {
       throw new InkError("INVALID_STROKE", "A finalized stroke visual ID already exists.", {
         visualId,
       });
+    }
+    // Settle the live material against the finalized samples and hand it over
+    // before the evaluator is dropped: what the artist watched being deposited
+    // is exactly what the cache keeps.
+    const live = this.liveStroke;
+    if (
+      live !== null &&
+      live.id === stroke.id &&
+      live.evaluator instanceof PencilMaterialEvaluator
+    ) {
+      live.evaluator.append(stroke.points, true);
+      this.onMaterialCommitted?.(stroke.id, live.evaluator.commit());
     }
     const geometry = this.resolveGeometry(stroke, 1);
     const finalized = createFinalizedStrokeState(
@@ -366,6 +383,10 @@ export class StrokeRenderer {
   private renderIncrementalFrame(): void {
     if (this.destroyed || this.liveStroke === null || this.pendingDirtyRect === null) return;
     const evaluator = this.liveStroke.evaluator;
+    if (evaluator instanceof PencilMaterialEvaluator) {
+      this.renderMaterialFrame(this.liveStroke, evaluator);
+      return;
+    }
     if (evaluator !== null) {
       // Only the samples this frame added are evaluated; everything settled is
       // already in the evaluator's geometry and is never rebuilt.
@@ -402,6 +423,67 @@ export class StrokeRenderer {
     this.pendingDirtyRect = null;
     this.renderCountValue += 1;
     this.updateCanvasDiagnostics();
+  }
+
+  /**
+   * One frame of a deposited medium: repaint the tiles that changed, and no
+   * others.
+   *
+   * This is the difference between an incremental *evaluator* and an
+   * incremental *repaint*, and only the second one bounds a frame. The other
+   * strategies rebuild their geometry cheaply and repaint the whole mark, which
+   * is affordable because a contour is cheap to re-emit; a deposited medium is
+   * pixels, and repainting the whole of a long stroke every frame would cost
+   * more the longer the artist drew.
+   *
+   * The accumulator already knows exactly which tiles its last append touched --
+   * the settled dabs it added, plus the provisional tail it rolled back -- so a
+   * frame clears and redraws those and leaves the rest of the mark alone. The
+   * cumulative rectangle is still tracked, because cancelling a stroke has to
+   * erase all of it at once.
+   */
+  private renderMaterialFrame(state: LiveStrokeState, evaluator: PencilMaterialEvaluator): void {
+    evaluator.append(state.points, false);
+    const dirty = evaluator.dirtyTiles;
+    this.pendingDirtyRect = null;
+    this.renderedLivePointCount = state.points.length;
+    if (dirty.size === 0) return;
+    const geometry = evaluator.geometry();
+    let affected: Rect | null = null;
+    for (const key of dirty) affected = unionRects(affected, materialTileRect(key));
+    if (affected === null) return;
+    state.dirtyRect = unionRects(state.dirtyRect, affected);
+    this.recordInvalidation(affected);
+
+    const context = this.context;
+    const snapshot = this.viewport.snapshot();
+    context.save();
+    context.setTransform(snapshot.devicePixelRatio, 0, 0, snapshot.devicePixelRatio, 0, 0);
+    for (const key of dirty) {
+      const viewportRect = this.pageRectToViewport(materialTileRect(key));
+      context.clearRect(viewportRect.x, viewportRect.y, viewportRect.width, viewportRect.height);
+    }
+    context.restore();
+
+    this.withPageTransform(affected, () => {
+      if (this.finalizedPresentation === "retained") {
+        for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
+      }
+      // A live accumulator supplies its own tiles, so no runtime cache is
+      // consulted and nothing can be missing.
+      drawBrushRenderGeometry(this.context, geometry, state.brush, {
+        materialRuntime: null,
+        tiles: dirty,
+      });
+    });
+    this.renderCountValue += 1;
+    this.updateCanvasDiagnostics();
+  }
+
+  /** The tiles the live material changed on its last frame, for the integration tests. */
+  liveMaterialDirtyTiles(): readonly string[] {
+    const evaluator = this.liveStroke?.evaluator;
+    return evaluator instanceof PencilMaterialEvaluator ? [...evaluator.dirtyTiles] : [];
   }
 
   private clearAndRedrawRegion(
@@ -557,11 +639,11 @@ export class StrokeRenderer {
       this.finalizedSegmentCountValue += Math.max(0, geometry.keptPointCount - 1);
       return;
     }
-    if (geometry.kind === "stamps") {
+    if (geometry.kind === "material") {
       this.finalizedSourcePointCountValue += geometry.sourcePointCount;
       this.finalizedFilteredPointCountValue += geometry.keptPointCount;
-      // A stamped stroke has no curves at all. Its comparable unit of drawn
-      // work is the mark, which is what a repaint actually costs.
+      // A stamped or deposited stroke has no curves at all. Its comparable unit
+      // of drawn work is the contact, which is what a repaint actually costs.
       this.finalizedSegmentCountValue += geometry.markCount;
       return;
     }
