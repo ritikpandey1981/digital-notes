@@ -529,6 +529,26 @@ export function pencilMaterialCacheId(strokeId: string, brush: ResolvedBrushSnap
  */
 const PRESENTATION_INLINE_LIMIT = 8;
 
+/**
+ * The limit while a stroke is being handed over, which is deliberately much
+ * higher.
+ *
+ * The ordinary limit protects a cold viewport of a large project, where
+ * hundreds of tiles want presenting at once and none of them is urgent. The
+ * frame that first paints a mark the artist has just finished drawing is the
+ * opposite case in every respect: the tiles are few, their material is already
+ * in hand because it was adopted rather than rebuilt, and a tile left bare is a
+ * hole in artwork that was whole a moment ago.
+ *
+ * Measured on a 720 pixel mark at 26 page units: about 17 tiles, which at the
+ * measured 0.2 ms each is between three and four milliseconds -- inside one
+ * frame at 120 Hz. Rationing them instead paints 46% of the mark and fills the
+ * rest in over the following 20 ms, which is the flicker. The limit is kept
+ * because it still has to bound the pathological case; it is set where a mark
+ * far larger than anyone draws in one gesture still arrives whole.
+ */
+const PRESENTATION_HANDOFF_LIMIT = 96;
+
 /** What a material paint actually managed to draw, for the renderer's diagnostics. */
 export interface MaterialPaintResult {
   readonly painted: number;
@@ -563,6 +583,11 @@ export function drawPencilMaterial(
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
   }
+  // A stroke still being handed over from the live layer finishes in this
+  // frame rather than being rationed a tile at a time.
+  const handingOver =
+    supply.kind === "cached" && runtime !== null && runtime.isHandingOver(supply.cacheId);
+  const inlineLimit = handingOver ? PRESENTATION_HANDOFF_LIMIT : PRESENTATION_INLINE_LIMIT;
   for (const key of geometry.tileKeys) {
     if (only !== undefined && !only.has(key)) continue;
     if (supply.kind === "live") {
@@ -590,7 +615,7 @@ export function drawPencilMaterial(
     // Only the tint is rebuilt; the graphite underneath it is untouched.
     if (display !== null && display.color !== brush.color) display = null;
     if (display === null) {
-      if (runtime !== null && built >= PRESENTATION_INLINE_LIMIT) {
+      if (runtime !== null && built >= inlineLimit) {
         // Past the fast path this frame. Ask for it and leave the tile bare
         // rather than spending the rest of the frame tinting.
         missing.push(key);
@@ -612,6 +637,12 @@ export function drawPencilMaterial(
   }
   if (grid !== null) context.restore();
   context.imageSmoothingEnabled = smoothing;
+  // Painted whole, so it is an ordinary cached mark from here on. A local
+  // repaint of a few tiles says nothing about the rest of the mark and must
+  // not end the handover on their behalf.
+  if (handingOver && only === undefined && missing.length === 0 && supply.kind === "cached") {
+    runtime?.endHandover(supply.cacheId);
+  }
   return { painted, missing };
 }
 

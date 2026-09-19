@@ -14,6 +14,7 @@ import {
 } from "../internal/pencil-material";
 import {
   PencilMaterialEvaluator,
+  createPencilMaterialGeometry,
   createPencilMaterialRuntime,
   drawPencilMaterial,
   pencilMaterialCacheId,
@@ -346,5 +347,131 @@ describe("Pencil presentation tiles", () => {
     // One canvas for the whole run, however many tiles and frames it painted.
     expect(canvas.created - before).toBe(1);
     evaluator.dispose();
+  });
+});
+
+describe("the handover from live to cached", () => {
+  /**
+   * The frame that first paints a mark the artist has just finished.
+   *
+   * A stroke leaves the live layer the instant it is finalized and arrives on
+   * the compositor that keeps it. Between those two things the mark must never
+   * be missing, and it must never arrive in pieces -- both of which a person
+   * sees as a flicker at the moment they lift the pencil.
+   *
+   * Measured at pointer-up before this rule existed: one frame on neither
+   * surface, then a frame carrying 46% of the mark, then the rest about 20 ms
+   * later. The 46% is the ordinary inline limit doing exactly what it is for,
+   * in the one case where it is wrong.
+   */
+  function committedMaterial(brush: ResolvedBrushSnapshot, points: readonly StrokePoint[]) {
+    const accumulator = new PencilMaterialAccumulator(
+      brush,
+      new MaterialFieldCache(
+        resolveMaterialResource(createPencilMaterialProgram(brush).paperResourceId),
+      ),
+    );
+    accumulator.append(points, true);
+    return accumulator.commit();
+  }
+
+  it("paints every tile of a just-deposited mark in one frame", () => {
+    const brush = pencilBrush({ size: 22 });
+    const points = scribble(700, 0.8);
+    const committed = committedMaterial(brush, points);
+    // More tiles than the ordinary inline limit of eight, which is the whole
+    // point: rationing them is what tore the mark.
+    expect(committed.tiles.size).toBeGreaterThan(8);
+
+    const runtime = createPencilMaterialRuntime();
+    const cacheId = pencilMaterialCacheId("handover", brush);
+    runtime.adopt(cacheId, committed);
+    expect(runtime.isHandingOver(cacheId)).toBe(true);
+
+    const geometry = createPencilMaterialGeometry(points, brush, "handover");
+    const { context } = recordingContext();
+    const result = drawPencilMaterial(context, geometry, brush, runtime);
+    expect(result.missing).toEqual([]);
+    expect(result.painted).toBe(geometry.tileKeys.length);
+    // Having been painted whole, it is an ordinary cached mark from here on.
+    expect(runtime.isHandingOver(cacheId)).toBe(false);
+    runtime.destroy();
+  });
+
+  it("still rations an ordinary mark that is merely being looked at", () => {
+    // The limit exists for a cold viewport of a large project, and nothing
+    // here weakens it: a mark that was not just drawn gets the ordinary eight.
+    const brush = pencilBrush({ size: 22 });
+    const points = scribble(700, 0.8);
+    const committed = committedMaterial(brush, points);
+    const runtime = createPencilMaterialRuntime();
+    const cacheId = pencilMaterialCacheId("ordinary", brush);
+    runtime.adopt(cacheId, committed);
+    runtime.endHandover(cacheId);
+    expect(runtime.isHandingOver(cacheId)).toBe(false);
+
+    const geometry = createPencilMaterialGeometry(points, brush, "ordinary");
+    const { context } = recordingContext();
+    const result = drawPencilMaterial(context, geometry, brush, runtime);
+    expect(result.painted).toBe(8);
+    expect(result.missing.length).toBe(geometry.tileKeys.length - 8);
+    runtime.destroy();
+  });
+
+  it("does not end a handover on a repaint of part of the mark", () => {
+    // A local repaint of two tiles says nothing about the other twenty, and
+    // must not retire the handover on their behalf.
+    const brush = pencilBrush({ size: 22 });
+    const points = scribble(700, 0.8);
+    const committed = committedMaterial(brush, points);
+    const runtime = createPencilMaterialRuntime();
+    const cacheId = pencilMaterialCacheId("partial", brush);
+    runtime.adopt(cacheId, committed);
+
+    const geometry = createPencilMaterialGeometry(points, brush, "partial");
+    const { context } = recordingContext();
+    const first = geometry.tileKeys[0];
+    expect(first).toBeDefined();
+    if (first === undefined) return;
+    drawPencilMaterial(context, geometry, brush, runtime, new Set([first]));
+    expect(runtime.isHandingOver(cacheId)).toBe(true);
+    runtime.destroy();
+  });
+
+  it("forgets a handover with the stroke it belonged to", () => {
+    const brush = pencilBrush({ size: 16 });
+    const points = scribble(200);
+    const runtime = createPencilMaterialRuntime();
+    const cacheId = pencilMaterialCacheId("released", brush);
+    runtime.adopt(cacheId, committedMaterial(brush, points));
+    expect(runtime.isHandingOver(cacheId)).toBe(true);
+    runtime.releaseStroke(cacheId);
+    expect(runtime.isHandingOver(cacheId)).toBe(false);
+
+    runtime.adopt(cacheId, committedMaterial(brush, points));
+    expect(runtime.isHandingOver(cacheId)).toBe(true);
+    runtime.clear();
+    expect(runtime.isHandingOver(cacheId)).toBe(false);
+    runtime.destroy();
+  });
+
+  it("hands over the same bytes the artist watched being deposited", () => {
+    // The handover changes when tiles become drawable and nothing about what
+    // is in them: the adopted material is the material a cold rebuild makes.
+    const brush = pencilBrush({ size: 18 });
+    const points = scribble(400, 0.7);
+    const committed = committedMaterial(brush, points);
+    const rebuilt = buildMaterial(points, brush);
+    const runtime = createPencilMaterialRuntime();
+    const cacheId = pencilMaterialCacheId("equal", brush);
+    runtime.adopt(cacheId, committed);
+    for (const [key, tile] of committed.tiles) {
+      const cached = runtime.tile(cacheId, key);
+      expect(cached).not.toBeNull();
+      expect(cached?.alpha).toEqual(tile.alpha);
+      const cold = rebuilt.get(key);
+      if (cold !== undefined) expect(tile.alpha).toEqual(cold.alpha);
+    }
+    runtime.destroy();
   });
 });

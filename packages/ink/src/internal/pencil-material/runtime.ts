@@ -140,6 +140,16 @@ export class PencilMaterialRuntime {
   readonly #order = new Map<string, { strokeId: string; key: MaterialTileKey }>();
   readonly #indexes = new Map<string, IndexEntry>();
   readonly #fields = new Map<string, MaterialFieldCache>();
+  /**
+   * Strokes whose material has just been adopted and which have not yet been
+   * painted whole.
+   *
+   * A mark the artist has only this moment finished is the one case where
+   * leaving tiles bare is worse than spending the milliseconds: it is on
+   * screen, complete, and it would visibly come apart. See
+   * `PRESENTATION_HANDOFF_LIMIT`.
+   */
+  readonly #handingOver = new Set<string>();
   readonly #scratch: MaterialReconstructionScratch = createReconstructionScratch();
   readonly #isActive: () => boolean;
   readonly #materialBudget: number;
@@ -375,11 +385,29 @@ export class PencilMaterialRuntime {
   adopt(strokeId: string, committed: CommittedPencilMaterial): void {
     this.#storeIndex(strokeId, committed.index.seal());
     for (const tile of committed.tiles.values()) this.#store(strokeId, tile, true);
+    this.#handingOver.add(strokeId);
+  }
+
+  /**
+   * True while a just-deposited stroke is still being handed from the live
+   * layer to the compositor that will keep it.
+   *
+   * The painter asks so that it can finish the mark in one frame instead of
+   * rationing its tiles, which is the right trade exactly once per stroke.
+   */
+  isHandingOver(strokeId: string): boolean {
+    return this.#handingOver.has(strokeId);
+  }
+
+  /** The handoff is over: this stroke is now an ordinary cached mark. */
+  endHandover(strokeId: string): void {
+    this.#handingOver.delete(strokeId);
   }
 
   /** Forgets one stroke's material and index. The stroke itself is untouched. */
   releaseStroke(strokeId: string): void {
     this.#scheduler.cancelStroke(strokeId);
+    this.#handingOver.delete(strokeId);
     const tiles = this.#material.get(strokeId);
     if (tiles !== undefined) {
       for (const [key, entry] of tiles) {
@@ -405,6 +433,7 @@ export class PencilMaterialRuntime {
     this.#material.clear();
     this.#order.clear();
     this.#indexes.clear();
+    this.#handingOver.clear();
     for (const cache of this.#fields.values()) cache.clear();
     this.#fields.clear();
     this.#materialBytes = 0;
