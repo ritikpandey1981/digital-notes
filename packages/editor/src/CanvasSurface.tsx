@@ -3488,6 +3488,26 @@ export function CanvasSurface({
                 ? cause
                 : new Error("History stroke execution failed.", { cause });
             callbacks.errorRef.current?.(error);
+          } finally {
+            /**
+             * Hand the mark over inside this one task.
+             *
+             * Finalizing clears the live layer immediately -- the editor keeps
+             * finished artwork on the compositor, not on the ink canvas -- while
+             * the compositor's own repaint is scheduled for the next animation
+             * frame. Those are two different frames, and in between them the
+             * stroke the artist has just finished is on neither surface: a blank
+             * frame, measured at pointer-up as one frame of nothing followed by
+             * the mark arriving.
+             *
+             * Flushing the render the document change has already asked for puts
+             * both surfaces in the same frame. Nothing is rendered twice and
+             * nothing is rendered early; the work that was going to happen next
+             * frame happens in this one, before the browser composites either
+             * canvas, so there is no moment at which the mark is missing and
+             * none at which it is drawn twice.
+             */
+            controller.flushRender();
           }
         },
         onStrokeCancelled: ({ dirtyRect }) => activeStrokeRenderer.cancelStroke(dirtyRect),
