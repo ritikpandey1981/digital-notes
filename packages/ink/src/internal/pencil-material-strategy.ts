@@ -556,12 +556,19 @@ export function drawPencilMaterial(
   let built = 0;
   const smoothing = context.imageSmoothingEnabled;
   context.imageSmoothingEnabled = true;
+  // Established once for the whole stroke: the transform does not change
+  // between its tiles, and neither should the grid they are placed on.
+  const grid = deviceGrid(context);
+  if (grid !== null) {
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+  }
   for (const key of geometry.tileKeys) {
     if (only !== undefined && !only.has(key)) continue;
     if (supply.kind === "live") {
       const alpha = supply.tiles.get(key);
       if (alpha === undefined) continue;
-      drawTile(context, scratchTileCanvas(alpha, brush.color), key);
+      drawTile(context, scratchTileCanvas(alpha, brush.color), key, grid);
       painted += 1;
       continue;
     }
@@ -600,28 +607,145 @@ export function drawPencilMaterial(
       missing.push(key);
       continue;
     }
-    drawTile(context, display.canvas, key);
+    drawTile(context, display.canvas, key, grid);
     painted += 1;
   }
+  if (grid !== null) context.restore();
   context.imageSmoothingEnabled = smoothing;
   return { painted, missing };
+}
+
+/**
+ * How a run of tiles is put on the canvas.
+ *
+ * Adjacent tiles abut *exactly* in page space -- tile `t` ends at `t * 64` and
+ * tile `t + 1` begins there -- and that is not enough. Each `drawImage` is
+ * rasterized on its own, so when the shared boundary falls between two device
+ * pixels the straddled pixel is covered partly by the left tile and then partly
+ * by the right one. Two partial coverages composited with `source-over` do not
+ * add up to one: a pixel that should have been solid graphite comes out
+ * lighter, and the result is a pale line along every tile boundary -- the grid
+ * a person sees through broad Pencil.
+ *
+ * Measured directly, with uniform tiles so that nothing but the compositor can
+ * vary: body tone 80, seam tone 86-118, at exactly `floor(n x pitch)`. It
+ * appears wherever the pitch is fractional -- 64 x 1.93 = 123.52 -- and,
+ * because panning is continuous, at *every* zoom once the camera sits on a
+ * fractional offset. At 0.8 the boundaries that happen to land on whole pixels
+ * (5 x 51.2 = 256) have no seam at all, which is the mechanism confirming
+ * itself.
+ *
+ * The rule that removes it: a tile is placed by **whole device pixels**, and
+ * both neighbours derive their shared edge from the same page coordinate
+ * through the same rounding. They therefore agree on it exactly, by
+ * construction rather than by luck, and no pixel is ever left partly covered.
+ *
+ * Placing them means drawing under the identity transform, which is also why
+ * the edges agree to the bit: going back to page space to express the rectangle
+ * would reassociate the arithmetic, and `(l - e) / a + (r - l) / a` is not
+ * `(r - e) / a` in floating point. A clip is held in device space and is
+ * unaffected by the transform change.
+ *
+ * `null` means draw exactly, in page space: either the canvas cannot say what
+ * transform it is under, or that transform is rotated or skewed. Under rotation
+ * there is no device axis to snap to and the seam is not an axis-aligned line
+ * anyway.
+ */
+interface DeviceGrid {
+  readonly a: number;
+  readonly d: number;
+  readonly e: number;
+  readonly f: number;
+}
+
+function deviceGrid(context: CanvasRenderingContext2D): DeviceGrid | null {
+  if (typeof context.getTransform !== "function") return null;
+  const matrix = context.getTransform();
+  if (matrix.b !== 0 || matrix.c !== 0 || matrix.a === 0 || matrix.d === 0) return null;
+  return { a: matrix.a, d: matrix.d, e: matrix.e, f: matrix.f };
+}
+
+/** One tile's rectangle on the canvas, in whole device pixels. */
+export function materialTileDeviceRect(
+  grid: DeviceGrid,
+  key: MaterialTileKey,
+): Readonly<{ x: number; y: number; width: number; height: number }> {
+  const comma = key.indexOf(",");
+  const left = Number(key.slice(0, comma)) * TILE_PAGE_UNITS;
+  const top = Number(key.slice(comma + 1)) * TILE_PAGE_UNITS;
+  const x = Math.round(grid.a * left + grid.e);
+  const y = Math.round(grid.d * top + grid.f);
+  const right = Math.round(grid.a * (left + TILE_PAGE_UNITS) + grid.e);
+  const bottom = Math.round(grid.d * (top + TILE_PAGE_UNITS) + grid.f);
+  // A tile scaled below a pixel would round away to nothing and take its
+  // material with it. One pixel is wrong by less than one pixel; a tile that
+  // vanishes is wrong by a tile.
+  return {
+    x: Math.min(x, right),
+    y: Math.min(y, bottom),
+    width: Math.max(1, Math.abs(right - x)),
+    height: Math.max(1, Math.abs(bottom - y)),
+  };
 }
 
 function drawTile(
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   key: MaterialTileKey,
+  grid: DeviceGrid | null,
 ): void {
-  const comma = key.indexOf(",");
-  const tx = Number(key.slice(0, comma));
-  const ty = Number(key.slice(comma + 1));
-  context.drawImage(
-    canvas,
-    tx * TILE_PAGE_UNITS,
-    ty * TILE_PAGE_UNITS,
-    TILE_PAGE_UNITS,
-    TILE_PAGE_UNITS,
-  );
+  if (grid === null) {
+    const comma = key.indexOf(",");
+    const tx = Number(key.slice(0, comma));
+    const ty = Number(key.slice(comma + 1));
+    context.drawImage(
+      canvas,
+      tx * TILE_PAGE_UNITS,
+      ty * TILE_PAGE_UNITS,
+      TILE_PAGE_UNITS,
+      TILE_PAGE_UNITS,
+    );
+    return;
+  }
+  const rect = materialTileDeviceRect(grid, key);
+  context.drawImage(canvas, rect.x, rect.y, rect.width, rect.height);
+}
+
+/**
+ * The device grid a context is drawing on, for the tests and the diagnostic.
+ *
+ * Exported so that "adjacent tiles cover continuously" is asserted as
+ * arithmetic on the rectangles rather than as a comparison of screenshots.
+ */
+export function materialTileGrid(context: CanvasRenderingContext2D): DeviceGrid | null {
+  return deviceGrid(context);
+}
+
+/**
+ * Draws the material tile lattice over the artwork.
+ *
+ * A development instrument, never enabled in a build: it exists so that a
+ * reported "grid" can be held against the real tile boundaries, and the two
+ * either line up or they do not. It is what established that the seam this
+ * module now places away was tile-aligned rather than something in the
+ * deposited material.
+ */
+export function drawMaterialTileGrid(
+  context: CanvasRenderingContext2D,
+  keys: Iterable<MaterialTileKey>,
+  color = "#ff00ff",
+): void {
+  const grid = deviceGrid(context);
+  if (grid === null) return;
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.strokeStyle = color;
+  context.lineWidth = 1;
+  for (const key of keys) {
+    const rect = materialTileDeviceRect(grid, key);
+    context.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
+  }
+  context.restore();
 }
 
 /** The page rectangle one material tile covers, for dirty-region invalidation. */

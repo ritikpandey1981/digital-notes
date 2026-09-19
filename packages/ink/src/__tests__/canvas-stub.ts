@@ -60,7 +60,11 @@ export function installCanvasStub(): CanvasStub {
       globalAlpha: 1,
       globalCompositeOperation: "source-over",
       fillStyle: "",
+      strokeStyle: "",
+      lineWidth: 1,
       imageSmoothingEnabled: true,
+      getTransform: vi.fn(() => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })),
+      strokeRect: vi.fn(),
       createImageData: (width: number, height: number) => ({
         width,
         height,
@@ -116,8 +120,33 @@ export function installCanvasStub(): CanvasStub {
   };
 }
 
+/**
+ * The upright transform a recording context reports.
+ *
+ * Only the six components a painter can act on, because that is all the tile
+ * painter reads: it snaps a destination onto whole device pixels, and to do
+ * that it needs the scale and translation it is drawing under.
+ */
+export interface StubTransform {
+  readonly a: number;
+  readonly b: number;
+  readonly c: number;
+  readonly d: number;
+  readonly e: number;
+  readonly f: number;
+}
+
+export const IDENTITY_TRANSFORM: StubTransform = Object.freeze({
+  a: 1,
+  b: 0,
+  c: 0,
+  d: 1,
+  e: 0,
+  f: 0,
+});
+
 /** A recording 2D context, for painting one stroke straight into a test. */
-export function recordingContext(): {
+export function recordingContext(transform: StubTransform = IDENTITY_TRANSFORM): {
   context: CanvasRenderingContext2D;
   draws: RecordedDraw[];
   alphas: number[];
@@ -127,7 +156,11 @@ export function recordingContext(): {
   const context = {
     globalAlpha: 1,
     fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
     imageSmoothingEnabled: false,
+    getTransform: vi.fn(() => ({ ...transform })),
+    strokeRect: vi.fn(),
     save: vi.fn(),
     restore: vi.fn(),
     translate: vi.fn(),
