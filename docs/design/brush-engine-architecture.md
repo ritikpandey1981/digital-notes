@@ -1301,6 +1301,29 @@ introduced in E4.2B asserted a wall-clock slice bound, which this repository kee
 performance flag for good reason; it failed about one run in three under load and now asserts
 structure instead.
 
+### E4.2D — Where a tile is put, and when it is handed over
+
+Two defects a person reported from the running application, neither of them in the material.
+
+**A pale grid through broad Pencil.** Tiles abut exactly in page space and the deposited
+alpha runs across the join without a step -- both were checked first, so that the rest of
+the work was known to be about compositing. Neither survives rasterization: each `drawImage`
+is antialiased on its own, so a shared boundary between two device pixels is covered partly
+by one tile and then partly by the other, and two partial coverages do not add up to one.
+Tiles are now placed on whole device pixels, with both neighbours rounding the same page
+coordinate so they agree by construction. See [D-039](../DECISIONS.md).
+
+**A flicker when the pencil is lifted.** Sampling every animation frame across pointer-up
+found one frame with the mark on neither surface, then a frame carrying 46% of it. Two
+causes: the live layer was cleared synchronously while the compositor's repaint waited for
+the next animation frame, and the inline presentation limit -- which exists to protect a
+cold viewport -- was rationing the tiles of a mark the artist had just finished. The render
+is now flushed inside the same task, and a stroke the runtime is handing over finishes in
+one frame. See [D-040](../DECISIONS.md).
+
+Deposition is untouched: the nib, the fields, the pressure model, the accumulation rule and
+the spacing are all unchanged, and the resource and strategy freeze digests are unmoved.
+
 ### Later — Marker
 
 Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,

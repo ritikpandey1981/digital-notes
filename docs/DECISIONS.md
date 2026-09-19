@@ -761,3 +761,79 @@ it registers as a long task, scales with allocation, and vanishes under both a C
 and a timeline trace. It is recorded as a memory-profile characteristic with its evidence,
 rather than assigned a cause it has not been shown to have. Removing the two largest
 per-frame allocators did not move it, and that is reported as a result rather than omitted.
+
+
+## D-039 — Abutting tiles are placed on whole device pixels, not on exact coordinates
+
+**Status:** accepted
+
+Two neighbouring material tiles meet exactly in page space, and the deposited alpha runs
+across the join without a step. Broad Pencil still showed a pale grid, because neither fact
+survives rasterization: **each `drawImage` is antialiased on its own**, so a shared boundary
+falling between two device pixels is covered partly by one tile and then partly by the
+other, and two partial coverages composited with `source-over` do not add up to one.
+
+Measured with uniform tiles, so that nothing but the compositor could vary: body tone 80,
+seam tone 86–118, at exactly `floor(n × pitch)`. It appears wherever the pitch is fractional
+— 64 × 1.93 = 123.52 — and, because panning is continuous, at *every* zoom once the camera
+sits on a fractional offset. At 0.8 the boundaries that happen to land on whole pixels have
+no seam at all, which is the mechanism confirming itself.
+
+**The rule: a tile is placed by whole device pixels, and both neighbours derive their shared
+edge from the same page coordinate through the same rounding.** They agree on it exactly, by
+construction rather than by luck. Nothing is antialiased and no pixel is left partly covered.
+
+Two consequences worth stating, because both were found by measuring rather than by
+reasoning:
+
+- **The snapped rectangle is expressed in device space, under the identity transform.**
+  Going back to page space reassociates the arithmetic, and `(l − e) / a + (r − l) / a` is
+  not `(r − e) / a` in floating point. In the running editor the page-space form disagreed
+  on ten of thirty shared edges at 150%; the device-space form on none at any zoom. The
+  disagreement was far too small to rasterize differently, and it was still wrong.
+- **It applies only to an upright transform.** Under rotation there is no device axis to
+  snap to and the seam is not an axis-aligned line, so the exact rectangle is kept.
+
+What is left is at the level of the paper's own texture: folding the tone across sixteen
+offsets inside a tile, the boundary went from the lightest of the sixteen in eleven of twelve
+conditions to exceeding the worst ordinary column by at most a tenth of a tone. The residue
+is bilinear clamping at a tile's own edge, and the remedy — a one-pixel gutter — would make a
+presentation depend on four neighbours' material. That trade is recorded and not taken.
+
+**Consequence.** Any later medium that composites a lattice of separately rasterized tiles,
+Marker included, inherits this: abutment in the artwork's coordinates is not abutment on the
+screen.
+
+## D-040 — A representation is retired only once its replacement is on screen
+
+**Status:** accepted
+
+A finished Pencil stroke leaves the live ink layer and arrives on the compositor that keeps
+it. Finalizing cleared the live layer synchronously while the compositor's repaint was
+requested through `requestAnimationFrame`, so the two landed in different frames, and the
+mark the artist had just finished was on neither surface in between. Sampling every animation
+frame across pointer-up: one frame with nothing, then a frame carrying **46%** of the mark,
+then the whole of it about 20 ms later.
+
+**The rule: a completed mark is on one surface or the other in every frame, whole, and on
+only one of them.** Two separate causes had to be fixed to make that true, and they are
+different kinds of mistake.
+
+**The blank frame was ordering**, and was fixed by ordering — flushing the render the
+document change has already asked for, so both surfaces change inside one task and the
+browser composites them together. Not a delay, not a held copy: the work that was going to
+happen next frame happens in this one. Keeping the live layer's copy until the compositor was
+ready would have needed cross-layer lifetime state, could strand a stale copy when the object
+is undone or moved, and would composite the mark twice while both were up.
+
+**The partial frame was a good rule meeting the case it was not for.** Building at most eight
+presentations a frame protects a cold viewport of a large project, where hundreds want
+presenting at once and none is urgent. A mark the artist has this moment finished is the
+opposite in every respect — few tiles, material already in hand because it was adopted rather
+than rebuilt, and every bare tile a hole in artwork that was whole a moment ago. So the
+runtime marks a stroke as *handing over* when it adopts its material, and a stroke handing
+over finishes in one frame; the handover ends the first time the mark is painted whole.
+
+**Consequence.** A limit that protects the general case needs to be asked whether the moment
+of handoff is the general case. It usually is not: the tiles are few, they are hot, and the
+artwork is already on screen. Marker inherits both halves of this.

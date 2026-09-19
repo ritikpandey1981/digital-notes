@@ -134,6 +134,14 @@ deposited material: a project-runtime-owned cache under hard 64 MiB material and
 obsolete work, visible-first reconstruction that publishes only exact tiles, and a live path
 that repaints the tail rather than the stroke. See D-035 and D-036.
 
+E4.2D then fixed the two things a person reported from the running application, neither of
+them in the material: a pale grid through broad Pencil, which was abutting tiles each being
+antialiased separately where a boundary fell between device pixels, and a flicker on lifting
+the pencil, which was the live layer being cleared a frame before the compositor painted and
+the inline presentation limit rationing the tiles of a mark just finished. Tiles are now
+placed on whole device pixels and a stroke being handed over is painted whole in one frame.
+See D-039 and D-040.
+
 Remaining:
 
 - Visual approval of the hybrid Pencil. `pencil@1` is deliberately not frozen yet: until

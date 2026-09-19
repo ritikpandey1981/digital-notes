@@ -379,18 +379,131 @@ Colour is deliberately **not** in that key. Material is colour-neutral, so recol
 throw away the tint and not the graphite. The presentation records the colour it was tinted
 with, and a painter that meets a presentation in the wrong colour rebuilds only that.
 
-## 19. What remains
+## 19. Where a tile is put
+
+A tile's rectangle in page space is exact and continuous: tile `t` ends at `t × 64` and tile
+`t + 1` begins there, and the material's own alpha runs across that line without a step.
+Neither fact is sufficient, because **each `drawImage` is rasterized on its own**.
+
+When the shared boundary falls between two device pixels, the straddled pixel is covered
+partly by the left tile and then partly by the right one, and two partial coverages
+composited with `source-over` do not add up to one. A pixel that should have been solid
+graphite comes out lighter. Repeat that down every boundary and a person sees a pale grid
+through broad Pencil — which is exactly what was reported.
+
+Measured with uniform tiles, so that nothing but the compositor could vary:
+
+| zoom | tile pitch, device px | seams |
+| --- | --- | --- |
+| 0.5, 1, 1.5, 2, 2.5, 3 | 32, 64, 96, 128, 160, 192 | none |
+| 0.8 | 51.2 | at ⌊n × 51.2⌋ — **except** where n × 51.2 is a whole number |
+| 1.93 | 123.52 | at ⌊n × 123.52⌋, every boundary |
+
+Body tone 80, seam tone 86–118. The exception at 0.8 is the mechanism confirming itself:
+the boundaries that happen to land on whole pixels have no seam. And a **fractional pan
+puts every zoom in the same position**, including 100%, 200% and 300% — panning is
+continuous, so this is the ordinary case rather than an odd one.
+
+### The rule
+
+A tile is placed by **whole device pixels**, and both neighbours derive their shared edge
+from the same page coordinate through the same rounding. They therefore agree on it exactly,
+by construction rather than by luck, and no pixel is left partly covered by anything.
+
+Placing them means drawing under the identity transform. That is not incidental: expressing
+the snapped rectangle back in page space reassociates the arithmetic, and
+`(l − e) / a + (r − l) / a` is not `(r − e) / a` in floating point. Measured in the running
+editor, the page-space form disagreed on ten of thirty shared edges at 150%; the device-space
+form disagrees on none at any zoom. A clip is held in device space and is unaffected by the
+transform change.
+
+It applies only to an upright transform. Under rotation there is no device axis to snap to,
+the seam is not an axis-aligned line anyway, and the exact rectangle is what is wanted.
+
+The cost is that a tile's width varies by at most one device pixel out of sixty-four — under
+two per cent, applied to a resampling that was already happening. This is what every tiled
+renderer does.
+
+### What is left
+
+Folding the tone of a scribbled block onto all sixteen offsets inside a tile, in the running
+editor: the boundary was **the lightest of the sixteen in eleven of twelve conditions**
+before, exceeding the worst ordinary column by about three tones. After, it exceeds it by at
+most **0.13 of a tone** and is an unremarkable member of the set.
+
+A residual that small is visible in the numbers at 300% and nowhere else. It is the edge of
+bilinear filtering: upsampling clamps at the tile's own edge instead of blending with the
+neighbour's last cell, because a tile's presentation does not contain its neighbours. The
+remedy would be a one-pixel gutter, which makes a presentation depend on the material of
+four other tiles and grows its backing. That is a real coupling increase for something at
+the level of the paper's own texture, and it is recorded here rather than built.
+
+## 20. The handover
+
+A finished stroke leaves the live ink layer and arrives on the compositor that will keep it.
+The editor draws finished artwork on the compositor and not on the ink canvas, so those are
+two different surfaces, and the transition between them has a visual contract:
+
+> A completed mark is on one surface or the other in **every** frame, whole, and on only one
+> of them.
+
+Measured at pointer-up before this phase, both halves of that were false:
+
+| frame | ink layer | compositor |
+| --- | --- | --- |
+| n | the mark | — |
+| n + 1 | — | — |
+| n + 2 | — | **46%** of the mark |
+| n + 3 | — | the mark |
+
+Two separate causes, one visible result.
+
+**The blank frame is ordering.** Finalizing clears the live layer synchronously; the
+compositor's repaint is requested through `requestAnimationFrame` and therefore lands in the
+next frame. Flushing the render the document change has already asked for puts both surfaces
+in the same frame. Nothing is rendered twice and nothing is rendered early — the work that
+was going to happen next frame happens in this one, before the browser composites either
+canvas. Ordering, not delay.
+
+**The partial frame is the inline presentation limit**, doing exactly what it is for in the
+one case where it is wrong. Eight tiles a frame protects a cold viewport of a large project,
+where hundreds want presenting at once and none is urgent. A mark the artist has this moment
+finished is the opposite in every respect: its tiles are few, their material is already in
+hand because it was adopted rather than rebuilt, and a tile left bare is a hole in artwork
+that was whole a moment ago. So the runtime marks a stroke as **handing over** when it
+adopts its material, and a stroke handing over finishes in one frame. Measured: about
+seventeen tiles for a 720-pixel mark at 26 page units, three to four milliseconds at the
+measured 0.2 ms a tile, inside one frame at 120 Hz.
+
+The handover ends the first time the mark is painted whole, and a local repaint of part of it
+cannot end it on the rest's behalf. It is forgotten with the stroke and with the cache.
+
+The alternative — keeping the live layer's copy until the compositor is ready — was
+considered and is worse: it needs cross-layer lifetime state, it can leave a stale copy
+behind if the object is undone or moved before the release, and during the overlap the mark
+is composited twice and reads darker. Making the two surfaces agree inside one task needs
+none of that.
+
+### What this did not change
+
+Nothing here touches deposition. The nib, the paper field, the clump field, the pressure
+model, the accumulation rule and the spacing are all untouched, and the resource digests and
+strategy freeze digests are unmoved. This phase moved where tiles are drawn and when they are
+handed over, which is compositing and lifetime, not material.
+
+## 21. What remains
 
 Canvas 2D is sufficient and GPU is not required; the prototype evidence and the mounted
 measurement in [`../performance/pencil-e4-2.md`](../performance/pencil-e4-2.md) agree.
 What is still open is not about the material:
 
-- **E4.2C: slice the presentation build.** The one expensive frame the mounted run found is
-  the moment a finished stroke is first painted and every tile it occupies needs a
-  presentation canvas built at once — 212 ms for a seventy-tile mark. That is exactly the
-  work the scheduler already knows how to slice, and it is recorded rather than smuggled
-  into this phase.
-
+- **A collection pause at 26 page units.** One long task per run, around 230 ms, about 1.4 s
+  into a broad stroke. It does not reproduce under a CPU profile or a timeline trace and
+  attributes to `(program)`. E4.2B attributed it, by reasoning, to presentation-tile
+  creation; E4.2C measured presentation at 0.2 ms a tile and twenty-five tiles a workload
+  and showed that was wrong. It is a property of the memory profile of a broad stroke —
+  roughly 200 KiB of fresh allocation per new tile — and wants a memory pass rather than
+  another scheduling one.
 - **Visual approval.** `pencil@1` is not frozen. The picture has not been signed off, and
   until it is, a refinement is still a re-pin rather than a `pencil@2`.
 - **Marker**, which will deposit into the same lattice and inherits every rule here.
