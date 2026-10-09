@@ -10,6 +10,8 @@ import {
   createPencilMaterialProgram,
   materialAppearanceKey,
   resolveMaterialResource,
+  type CommittedMaterialTile,
+  type CommittedPencilMaterial,
   type MaterialTileKey,
 } from "../internal/pencil-material";
 import {
@@ -38,7 +40,16 @@ import { installCanvasStub, recordingContext, type CanvasStub } from "./canvas-s
  * scheduling did not disturb them.
  */
 
-const PRESENTATION_BYTES = TILE_CELLS * TILE_CELLS * 4;
+/**
+ * What a drawable tile costs, gutter included.
+ *
+ * A presentation is one cell larger than its tile on every side, so that a
+ * magnified tile has real neighbouring material to interpolate towards instead
+ * of clamping against its own edge. That is 130 squared rather than 128: 67,600
+ * bytes against 65,536, which is 3.1% more backing per presentation and 2.5%
+ * more per resident tile once the alpha is counted too.
+ */
+const PRESENTATION_BYTES = (TILE_CELLS + 2) * (TILE_CELLS + 2) * 4;
 
 function scribble(count: number, pressure = 0.55, offsetY = 0): StrokePoint[] {
   const points: StrokePoint[] = [];
@@ -297,8 +308,9 @@ describe("Pencil presentation tiles", () => {
   });
 
   it("charges presentation backing to the material budget", () => {
-    // Sixteen kilobytes of alpha becomes eighty once it can be drawn. A budget
-    // that counted only the alpha would be wrong by a factor of five.
+    // Sixteen kilobytes of alpha becomes eighty-two once it can be drawn. A
+    // budget that counted only the alpha would be wrong by a factor of five,
+    // and one that counted the tile without its gutter by a further 3%.
     const brush = pencilBrush({ size: 12 });
     const points = scribble(120);
     const keys = tileKeysOf(points, brush).slice(0, 1);
@@ -472,6 +484,158 @@ describe("the handover from live to cached", () => {
       const cold = rebuilt.get(key);
       if (cold !== undefined) expect(tile.alpha).toEqual(cold.alpha);
     }
+    runtime.destroy();
+  });
+});
+
+describe("gutters and the neighbours they read", () => {
+  /**
+   * A presentation samples one cell of each neighbour, so material arriving
+   * later can make an existing presentation wrong.
+   *
+   * The dependency is deliberately one tile deep and no deeper, and only
+   * presentations that actually went without a neighbour are dropped -- a
+   * presentation that found everything it wanted is already right. That is what
+   * keeps a cold rebuild from re-presenting the same tiles repeatedly.
+   */
+  function material(brush: ResolvedBrushSnapshot, points: readonly StrokePoint[]) {
+    const accumulator = new PencilMaterialAccumulator(
+      brush,
+      new MaterialFieldCache(
+        resolveMaterialResource(createPencilMaterialProgram(brush).paperResourceId),
+      ),
+    );
+    accumulator.append(points, true);
+    return accumulator.commit();
+  }
+
+  /** The same committed material, carrying only the tiles named. */
+  function only(
+    committed: CommittedPencilMaterial,
+    keys: readonly MaterialTileKey[],
+  ): CommittedPencilMaterial {
+    const tiles = new Map<MaterialTileKey, CommittedMaterialTile>();
+    for (const key of keys) {
+      const tile = committed.tiles.get(key);
+      if (tile !== undefined) tiles.set(key, tile);
+    }
+    return { ...committed, tiles };
+  }
+
+  function neighbourKeys(key: MaterialTileKey): MaterialTileKey[] {
+    const comma = key.indexOf(",");
+    const tx = Number(key.slice(0, comma));
+    const ty = Number(key.slice(comma + 1));
+    const out: MaterialTileKey[] = [];
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (dx === 0 && dy === 0) continue;
+        out.push(`${String(tx + dx)},${String(ty + dy)}`);
+      }
+    }
+    return out;
+  }
+
+  it("drops a presentation whose gutter was built before its neighbour arrived", () => {
+    const brush = pencilBrush({ size: 20 });
+    const points = scribble(400, 0.8);
+    const committed = material(brush, points);
+    const keys = [...committed.tiles.keys()];
+    const subject = keys.find((key) => neighbourKeys(key).some((other) => keys.includes(other)));
+    expect(subject).toBeDefined();
+    if (subject === undefined) return;
+    const late = neighbourKeys(subject).find((key) => keys.includes(key));
+    if (late === undefined) return;
+
+    const runtime = createPencilMaterialRuntime();
+    // Everything except the one neighbour, so the subject's gutter goes short.
+    for (const key of committed.tiles.keys()) {
+      if (key === late) continue;
+      runtime.adopt("s", only(committed, [key]));
+    }
+    expect(runtime.prepare("s", subject, "#343434")).toBe(true);
+    expect(runtime.display("s", subject)).not.toBeNull();
+
+    const arriving = committed.tiles.get(late);
+    expect(arriving).toBeDefined();
+    if (arriving === undefined) return;
+    runtime.adopt("s", only(committed, [late]));
+    // The subject went without this neighbour, so its gutter is now wrong.
+    expect(runtime.display("s", subject)).toBeNull();
+    runtime.destroy();
+  });
+
+  it("leaves a presentation alone once its gutter is complete", () => {
+    const brush = pencilBrush({ size: 20 });
+    const points = scribble(400, 0.8);
+    const committed = material(brush, points);
+    const runtime = createPencilMaterialRuntime();
+    runtime.adopt("s", committed);
+    const keys = [...committed.tiles.keys()];
+    const inner = keys.find((key) =>
+      neighbourKeys(key).every((other) => committed.tiles.has(other)),
+    );
+    if (inner === undefined) {
+      // No fully surrounded tile in this stroke; the rule is still exercised
+      // by the tiles that do have every neighbour they asked for.
+      expect(keys.length).toBeGreaterThan(0);
+      runtime.destroy();
+      return;
+    }
+    expect(runtime.prepare("s", inner, "#343434")).toBe(true);
+    const display = runtime.display("s", inner);
+    expect(display).not.toBeNull();
+    // Re-storing every neighbour must not disturb a presentation that already
+    // had all of them.
+    for (const key of neighbourKeys(inner)) {
+      const tile = committed.tiles.get(key);
+      if (tile === undefined) continue;
+      runtime.adopt("s", only(committed, [key]));
+    }
+    expect(runtime.display("s", inner)).toBe(display);
+    runtime.destroy();
+  });
+
+  it("depends on neighbours one tile away and no further", () => {
+    const brush = pencilBrush({ size: 20 });
+    const points = scribble(600, 0.8);
+    const committed = material(brush, points);
+    const keys = [...committed.tiles.keys()];
+    const subject = keys[0];
+    expect(subject).toBeDefined();
+    if (subject === undefined) return;
+    const runtime = createPencilMaterialRuntime();
+    runtime.adopt("s", only(committed, [subject]));
+    expect(runtime.prepare("s", subject, "#343434")).toBe(true);
+    expect(runtime.display("s", subject)).not.toBeNull();
+
+    const adjacent = new Set(neighbourKeys(subject));
+    for (const key of committed.tiles.keys()) {
+      if (key === subject || adjacent.has(key)) continue;
+      runtime.adopt("s", only(committed, [key]));
+    }
+    // Nothing beyond the ring can reach this tile's gutter.
+    expect(runtime.display("s", subject)).not.toBeNull();
+    runtime.destroy();
+  });
+
+  it("presents a whole stroke once rather than once per arriving neighbour", () => {
+    // The scheduler deposits everything a job owes before presenting any of
+    // it, so each gutter is built from material that has already arrived. A
+    // scheduler that interleaved the two would present a tile, invalidate it
+    // with the next tile, and present it again.
+    const brush = pencilBrush({ size: 20 });
+    const points = scribble(700, 0.8);
+    const keys = tileKeysOf(points, brush);
+    expect(keys.length).toBeGreaterThan(4);
+    const runtime = createPencilMaterialRuntime();
+    runtime.requestVisible([runtime.createRequest("s", points, brush, keys)]);
+    runtime.scheduler.flush();
+    const resident = keys.filter((key) => runtime.tile("s", key) !== null);
+    expect(resident.length).toBeGreaterThan(0);
+    for (const key of resident) expect(runtime.ready("s", key, "#343434")).toBe(true);
+    // One presentation per tile, not one per tile per neighbour.
+    expect(runtime.stats().presentationsBuilt).toBe(resident.length);
     runtime.destroy();
   });
 });

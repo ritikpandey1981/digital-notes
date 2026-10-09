@@ -154,8 +154,18 @@ interface MaterialJob {
   index: PencilDabIndex | null;
   indexBuild: IndexBuild | null;
   tile: TileBuild | null;
-  /** A tile whose material is ready and whose presentation is the next quantum. */
-  present: MaterialTileKey | null;
+  /**
+   * Tiles whose material is settled and whose drawable form is still to be
+   * made, one quantum each.
+   *
+   * Deliberately drained only once the job has nothing left to deposit. A
+   * presentation reads one cell of each neighbour so that a magnified tile has
+   * a true edge, so presenting a tile while its neighbours are still arriving
+   * builds a gutter that the next tile immediately invalidates -- correct, and
+   * a great deal of work to reach the same picture. Depositing first means
+   * every gutter is built once, from material that is already there.
+   */
+  present: MaterialTileKey[];
   published: MaterialTileKey[];
 }
 
@@ -282,7 +292,7 @@ export class PencilReconstructionScheduler {
         index: this.#host.index(request.strokeId),
         indexBuild: null,
         tile: null,
-        present: null,
+        present: [],
         published: [],
       });
     }
@@ -456,10 +466,12 @@ export class PencilReconstructionScheduler {
     }
 
     // A presentation is its own quantum, so a burst of them cannot run away
-    // with a slice any more than a burst of deposition can.
-    if (job.present !== null) {
-      const key = job.present;
-      job.present = null;
+    // with a slice any more than a burst of deposition can. They wait until
+    // there is nothing left to deposit, so that each gutter is built from
+    // neighbours that have already arrived.
+    if (job.pending.length === 0 && job.tile === null && job.present.length > 0) {
+      const key = job.present.shift();
+      if (key === undefined) return null;
       if (!this.#host.isActive() || job.generation !== this.#generation) return null;
       return this.#host.prepare(job.request.strokeId, key, job.request.color) ? key : null;
     }
@@ -474,9 +486,10 @@ export class PencilReconstructionScheduler {
         const membership = index.membership(key);
         if (membership === null) continue;
         if (this.#host.resident(job.request.strokeId, key)) {
-          // Deposited already; only the drawable form is missing.
-          job.present = key;
-          return null;
+          // Deposited already; only the drawable form is missing, and that
+          // waits until the rest of the neighbourhood has been deposited too.
+          job.present.push(key);
+          continue;
         }
         job.tile = {
           key,
@@ -524,8 +537,9 @@ export class PencilReconstructionScheduler {
     this.#host.publish(job.request.strokeId, commitMaterialTile(build.tile));
     this.#published += 1;
     job.published.push(build.key);
-    // Deposited, not yet drawable. Its presentation is the next quantum.
-    job.present = build.key;
+    // Deposited, not yet drawable. Its presentation is queued behind whatever
+    // else this job still has to deposit.
+    job.present.push(build.key);
     return build.key;
   }
 
@@ -537,7 +551,7 @@ export class PencilReconstructionScheduler {
         job.pending.length === 0 &&
         job.tile === null &&
         job.indexBuild === null &&
-        job.present === null
+        job.present.length === 0
       ) {
         this.#jobs.splice(index, 1);
       }

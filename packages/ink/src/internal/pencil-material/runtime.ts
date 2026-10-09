@@ -18,7 +18,12 @@ import {
   type MaterialSchedulerStats,
   type MaterialTileRequest,
 } from "./scheduler";
-import { COMMITTED_TILE_BYTES, type CommittedMaterialTile, type MaterialTileKey } from "./tiles";
+import {
+  COMMITTED_TILE_BYTES,
+  materialTileKey,
+  type CommittedMaterialTile,
+  type MaterialTileKey,
+} from "./tiles";
 
 /**
  * Who owns deposited material, what it may cost, and what happens when they
@@ -86,6 +91,32 @@ interface MaterialEntry {
   display: MaterialDisplayHandle | null;
   bytes: number;
   visible: boolean;
+  /**
+   * Which neighbours were absent when this tile's presentation was built.
+   *
+   * A presentation samples one cell of each neighbour so that a magnified tile
+   * has somewhere true to interpolate towards at its edge. A neighbour that
+   * arrives afterwards therefore makes it wrong, and this is what says so
+   * without rebuilding presentations that were already complete.
+   */
+  missingNeighbours: number;
+}
+
+/** The eight directions a presentation's gutter reads, and their bit. */
+const NEIGHBOUR_OFFSETS: readonly (readonly [number, number])[] = Object.freeze([
+  [-1, -1],
+  [0, -1],
+  [1, -1],
+  [-1, 0],
+  [1, 0],
+  [-1, 1],
+  [0, 1],
+  [1, 1],
+]);
+
+function neighbourBit(dx: number, dy: number): number {
+  const index = NEIGHBOUR_OFFSETS.findIndex(([ox, oy]) => ox === dx && oy === dy);
+  return index < 0 ? 0 : 1 << index;
 }
 
 interface IndexEntry {
@@ -108,7 +139,12 @@ export interface PencilMaterialRuntimeOptions {
    * material model is deliberately free of them. The runtime pays for it, owns
    * its lifetime and schedules its creation; it never learns what it is.
    */
-  readonly presentation?: (tile: CommittedMaterialTile, color: string) => MaterialDisplayHandle;
+  readonly presentation?: (
+    tile: CommittedMaterialTile,
+    color: string,
+    /** One cell of each neighbour, so a magnified tile has a true edge. */
+    neighbour: (dx: number, dy: number) => Uint8Array | null,
+  ) => MaterialDisplayHandle;
 }
 
 export interface PencilMaterialRuntimeStats {
@@ -157,7 +193,12 @@ export class PencilMaterialRuntime {
   readonly #onPublished: ((strokeId: string, keys: readonly MaterialTileKey[]) => void) | undefined;
   readonly #scheduler: PencilReconstructionScheduler;
   readonly #presentation:
-    ((tile: CommittedMaterialTile, color: string) => MaterialDisplayHandle) | undefined;
+    | ((
+        tile: CommittedMaterialTile,
+        color: string,
+        neighbour: (dx: number, dy: number) => Uint8Array | null,
+      ) => MaterialDisplayHandle)
+    | undefined;
   #materialBytes = 0;
   #indexBytes = 0;
   #materialEvictions = 0;
@@ -239,10 +280,19 @@ export class PencilMaterialRuntime {
     const entry = this.#material.get(strokeId)?.get(key);
     if (entry === undefined) return false;
     if (entry.display !== null && entry.display.color === color) return false;
+    const tiles = this.#material.get(strokeId);
+    let missing = 0;
+    const neighbour = (dx: number, dy: number): Uint8Array | null => {
+      const found = tiles?.get(materialTileKey(entry.tile.tx + dx, entry.tile.ty + dy));
+      if (found !== undefined) return found.tile.alpha;
+      missing |= neighbourBit(dx, dy);
+      return null;
+    };
     const started = now();
-    const handle = factory(entry.tile, color);
-    this.notePresentationBuild(now() - started);
-    this.attachDisplay(strokeId, key, handle);
+    const handle = factory(entry.tile, color, neighbour);
+    this.#notePresentationBuild(now() - started);
+    this.#attachDisplay(strokeId, key, handle);
+    entry.missingNeighbours = missing;
     return true;
   }
 
@@ -251,13 +301,8 @@ export class PencilMaterialRuntime {
     return this.#touch(strokeId, key)?.display ?? null;
   }
 
-  /**
-   * Records what one presentation build cost, for the diagnostics.
-   *
-   * Kept separate from `attachDisplay` because the interesting question is how
-   * long the *build* took, and only the painter knows when it started.
-   */
-  notePresentationBuild(milliseconds: number): void {
+  /** Records what one presentation build cost, for the diagnostics. */
+  #notePresentationBuild(milliseconds: number): void {
     this.#presentationsBuilt += 1;
     this.#presentationMillisecondsTotal += milliseconds;
     this.#longestPresentationMilliseconds = Math.max(
@@ -266,8 +311,15 @@ export class PencilMaterialRuntime {
     );
   }
 
-  /** Attaches a painter's presentation to a resident tile, and charges for it. */
-  attachDisplay(strokeId: string, key: MaterialTileKey, handle: MaterialDisplayHandle): void {
+  /**
+   * Attaches a presentation to a resident tile, and charges for it.
+   *
+   * Private on purpose. A presentation reads one cell of each neighbour, and
+   * only the runtime knows where the neighbours are, so the runtime is the only
+   * thing that can build one correctly. A second way in is a second border
+   * rule, and two border rules is the defect this is here to prevent.
+   */
+  #attachDisplay(strokeId: string, key: MaterialTileKey, handle: MaterialDisplayHandle): void {
     const entry = this.#material.get(strokeId)?.get(key);
     if (entry === undefined) {
       handle.release();
@@ -513,6 +565,33 @@ export class PencilMaterialRuntime {
     return entry;
   }
 
+  /**
+   * Drops the presentations whose gutter was built without this tile.
+   *
+   * Only those: a presentation that found every neighbour it wanted is already
+   * right and is left alone, so arriving material costs at most the eight tiles
+   * that were actually waiting on it. The dependency is one tile deep in every
+   * direction and goes no further.
+   */
+  #refreshNeighbourGutters(
+    tiles: Map<MaterialTileKey, MaterialEntry>,
+    tx: number,
+    ty: number,
+  ): void {
+    for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
+      const other = tiles.get(materialTileKey(tx + dx, ty + dy));
+      if (other === undefined || other.display === null) continue;
+      const bit = neighbourBit(-dx, -dy);
+      if ((other.missingNeighbours & bit) === 0) continue;
+      other.display.release();
+      other.display = null;
+      this.#materialBytes -= other.bytes;
+      other.bytes = COMMITTED_TILE_BYTES;
+      this.#materialBytes += other.bytes;
+      other.missingNeighbours &= ~bit;
+    }
+  }
+
   #store(strokeId: string, tile: CommittedMaterialTile, visible: boolean): void {
     let tiles = this.#material.get(strokeId);
     if (tiles === undefined) {
@@ -525,8 +604,15 @@ export class PencilMaterialRuntime {
       existing.display?.release();
       this.#materialBytes -= existing.bytes;
     }
-    tiles.set(key, { tile, display: null, bytes: COMMITTED_TILE_BYTES, visible });
+    tiles.set(key, {
+      tile,
+      display: null,
+      bytes: COMMITTED_TILE_BYTES,
+      visible,
+      missingNeighbours: 0,
+    });
     this.#materialBytes += COMMITTED_TILE_BYTES;
+    this.#refreshNeighbourGutters(tiles, tile.tx, tile.ty);
     this.#order.delete(orderKey(strokeId, key));
     this.#order.set(orderKey(strokeId, key), { strokeId, key });
     this.#trimMaterial();

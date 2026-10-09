@@ -2,8 +2,9 @@ import { Viewport, type AnimationFrameAdapter } from "@folio/rendering";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createResolvedBrushSnapshot, type ResolvedBrushSnapshot } from "../brush-model";
 import { resolveStrokeRenderGeometry } from "../internal/brush-render-strategy";
-import { PencilMaterialRuntime, type MaterialTileKey } from "../internal/pencil-material";
+import type { MaterialTileKey } from "../internal/pencil-material";
 import {
+  createPencilMaterialRuntime,
   PencilMaterialEvaluator,
   releasePreviewMaterialRuntime,
 } from "../internal/pencil-material-strategy";
@@ -209,7 +210,7 @@ describe("Pencil live rendering", () => {
 
     // The live accumulator's final material and a cold rebuild from the
     // committed stroke must be the same bytes. Lifting the pencil moves nothing.
-    const live = new PencilMaterialRuntime();
+    const live = createPencilMaterialRuntime();
     const geometry = resolveStrokeRenderGeometry(stroke);
     if (geometry.kind !== "material") throw new Error("Expected material geometry.");
     if (geometry.supply.kind !== "cached") throw new Error("Expected cached supply.");
@@ -220,7 +221,7 @@ describe("Pencil live rendering", () => {
     }
     expect(cold.size).toBeGreaterThan(0);
 
-    const second = new PencilMaterialRuntime();
+    const second = createPencilMaterialRuntime();
     for (const [key, alpha] of cold) {
       const again = second.tileNow(stroke.id, key, geometry.supply.points, brush);
       expect([...(again?.alpha ?? [])]).toEqual([...alpha]);
@@ -239,10 +240,24 @@ describe("Pencil live rendering", () => {
     );
     const busy = frames.slice(8);
     expect(busy.length).toBeGreaterThan(100);
-    for (const dirty of busy) expect(dirty.length).toBeLessThanOrEqual(4);
+    // A frame repaints the tail's tiles and the ring whose gutters read them,
+    // and only tiles the stroke has actually reached -- so the bound is a small
+    // constant rather than four exactly.
+    for (const dirty of busy) expect(dirty.length).toBeLessThanOrEqual(12);
+    const worst = (slice: readonly (readonly string[])[]) =>
+      Math.max(...slice.map((dirty) => dirty.length));
     const total = new Set(frames.flat());
-    // And the mark as a whole really did cover more ground than any one frame.
-    expect(total.size).toBeGreaterThan(4);
+    // The mark as a whole covered far more ground than any one frame of it.
+    expect(total.size).toBeGreaterThan(worst(busy) * 2);
+    // And the property that actually matters: drawing two and a half times as
+    // far does not make a frame cost more. A constant on its own would pass for
+    // a repaint that grew slowly; this is what says it does not grow at all.
+    const longer = drawWhole(
+      createHarness(pencil(0.2, 6)),
+      curvedSamples(400, () => 0.6),
+    );
+    expect(new Set(longer.flat()).size).toBeGreaterThan(total.size);
+    expect(worst(longer.slice(8))).toBeLessThanOrEqual(worst(busy));
   });
 
   it("clears exactly the tiles it is about to redraw", () => {

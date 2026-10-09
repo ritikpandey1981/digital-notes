@@ -22,6 +22,7 @@ import {
   type MaterialTileKey,
 } from "../internal/pencil-material";
 import {
+  createPencilMaterialRuntime,
   PencilMaterialEvaluator,
   releasePreviewMaterialRuntime,
 } from "../internal/pencil-material-strategy";
@@ -354,7 +355,7 @@ describe("Pencil strategy", () => {
     const brush = pencil({ size: 12, opacity: 0.4 });
     const geometry = evaluate(brush, curveSamples(30));
     expect(geometry.alpha).toBe(0.4);
-    const runtime = new PencilMaterialRuntime();
+    const runtime = createPencilMaterialRuntime();
     warm(runtime, geometry, brush);
     const { context, draws, alphas } = recordingContext();
     drawBrushRenderGeometry(context, geometry, brush, { materialRuntime: runtime });
@@ -368,7 +369,7 @@ describe("Pencil strategy", () => {
   it("tints graphite with the selected colour rather than a hardcoded grey", () => {
     const brush = pencil({ size: 12, color: "#0099bb" });
     const geometry = evaluate(brush, curveSamples(30));
-    const runtime = new PencilMaterialRuntime();
+    const runtime = createPencilMaterialRuntime();
     warm(runtime, geometry, brush);
     const { context } = recordingContext();
     drawBrushRenderGeometry(context, geometry, brush, { materialRuntime: runtime });
@@ -381,7 +382,7 @@ describe("Pencil strategy", () => {
     // different texture, so a tile that is not ready is simply left bare.
     const brush = pencil({ size: 12 });
     const geometry = evaluate(brush, curveSamples(60));
-    const runtime = new PencilMaterialRuntime();
+    const runtime = createPencilMaterialRuntime();
     const { context, draws } = recordingContext();
     drawBrushRenderGeometry(context, geometry, brush, { materialRuntime: runtime });
     expect(draws).toHaveLength(0);
@@ -402,7 +403,7 @@ describe("Pencil strategy", () => {
   it("paints only the tiles a local repaint asked for", () => {
     const brush = pencil({ size: 12 });
     const geometry = evaluate(brush, curveSamples(120));
-    const runtime = new PencilMaterialRuntime();
+    const runtime = createPencilMaterialRuntime();
     warm(runtime, geometry, brush);
     expect(geometry.tileKeys.length).toBeGreaterThan(1);
     const one = geometry.tileKeys[0];

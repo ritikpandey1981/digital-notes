@@ -11,15 +11,40 @@ import { vi } from "vitest";
  * graphite is settled by the material suites and, in the end, by the eye.
  */
 
+/**
+ * Where a `drawImage` put something, whichever form the caller used.
+ *
+ * A tile is blitted from inside a padded presentation, so the call carries a
+ * source rectangle as well as a destination. Recording the first four numbers
+ * would record the source and quietly assert the wrong thing.
+ */
+function destinationOf(rest: readonly number[]): RecordedDraw {
+  const nine = rest.length >= 8;
+  const d = nine ? rest.slice(4) : rest;
+  return {
+    x: d[0] ?? 0,
+    y: d[1] ?? 0,
+    width: d[2] ?? 0,
+    height: d[3] ?? 0,
+    source: nine
+      ? { x: rest[0] ?? 0, y: rest[1] ?? 0, width: rest[2] ?? 0, height: rest[3] ?? 0 }
+      : null,
+  };
+}
+
 export interface RecordedDraw {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
+  /** The source rectangle, when the caller gave one. Null for the short form. */
+  readonly source: Readonly<{ x: number; y: number; width: number; height: number }> | null;
 }
 
 export interface CanvasStub {
   readonly draws: RecordedDraw[];
+  /** Every pixel buffer uploaded to a tile canvas, so a test can read a gutter. */
+  readonly uploads: { width: number; height: number; data: Uint8ClampedArray }[];
   /** Colours used to tint a tile, in order. */
   readonly fills: string[];
   /** `globalAlpha` in force at each tint, to prove opacity is applied once. */
@@ -44,6 +69,7 @@ interface StubContext {
  */
 export function installCanvasStub(): CanvasStub {
   const draws: RecordedDraw[] = [];
+  const uploads: { width: number; height: number; data: Uint8ClampedArray }[] = [];
   const fills: string[] = [];
   const fillAlphas: number[] = [];
   let created = 0;
@@ -70,14 +96,16 @@ export function installCanvasStub(): CanvasStub {
         height,
         data: new Uint8ClampedArray(width * height * 4),
       }),
-      putImageData: vi.fn(),
+      putImageData: vi.fn((image: { width: number; height: number; data: Uint8ClampedArray }) => {
+        uploads.push({ width: image.width, height: image.height, data: image.data.slice() });
+      }),
       clearRect: vi.fn(),
       fillRect: vi.fn(() => {
         fills.push(String(context.fillStyle));
         fillAlphas.push(context.globalAlpha);
       }),
-      drawImage: vi.fn((_source: unknown, x: number, y: number, width: number, height: number) => {
-        draws.push({ x, y, width, height });
+      drawImage: vi.fn((_source: unknown, ...rest: number[]) => {
+        draws.push(destinationOf(rest));
       }),
       save: vi.fn(),
       restore: vi.fn(),
@@ -108,6 +136,7 @@ export function installCanvasStub(): CanvasStub {
 
   return {
     draws,
+    uploads,
     fills,
     fillAlphas,
     get created() {
@@ -178,8 +207,8 @@ export function recordingContext(transform: StubTransform = IDENTITY_TRANSFORM):
     fill: vi.fn(),
     stroke: vi.fn(),
     setTransform: vi.fn(),
-    drawImage: vi.fn((_source: unknown, x: number, y: number, width: number, height: number) => {
-      draws.push({ x, y, width, height });
+    drawImage: vi.fn((_source: unknown, ...rest: number[]) => {
+      draws.push(destinationOf(rest));
       alphas.push((context as unknown as { globalAlpha: number }).globalAlpha);
     }),
   } as unknown as CanvasRenderingContext2D;
