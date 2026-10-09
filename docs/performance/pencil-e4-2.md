@@ -94,10 +94,15 @@ result and the reason this section says what it says.
 
 | | |
 | --- | --- |
-| Cost of one presentation | ~0.2 ms |
-| Built during a whole 26 px workload | 25, under 5 ms total |
-| Built inline per frame, at most | 8 |
+| Cost of one presentation | ~0.26 ms |
+| Built during a whole 26 px workload | 25, about 4.5 ms total |
+| Built inline per frame, at most | 8, or the whole of a stroke being handed over |
 | Beyond that | requested and scheduled |
+
+A presentation carries one cell of each neighbour so that a magnified tile has a true edge
+rather than a clamped one, which costs **about 18% more to build** — 0.26 ms against 0.22 —
+and 3.1% more to hold. Frame times did not move: medians stayed at the display's own 8.3 ms
+across every workload and the 95th percentile at 8.5 to 8.7 ms, with no new long tasks.
 
 The inline limit is the measurement applied: eight is under two milliseconds and more than
 an ordinary stroke occupies, so an ordinary mark is never sent through a task hop to save
@@ -122,10 +127,14 @@ presentation suites drive cold, warm and hot paths directly and check the bytes.
 ## Memory
 
 Budgets are 64 MiB material and 16 MiB index, held separately and hard-capped, with
-presentation backing charged to the material budget — a displayed tile is 80 KiB, not 16,
+presentation backing charged to the material budget — a displayed tile is 82 KiB, not 16,
 and a budget that counted only the alpha would be wrong by a factor of five. This scenario
 never came near either cap, so what it demonstrates is the accounting; the cap itself is
 exercised in the unit suites with a deliberately tiny budget.
+
+The gutter moved a resident displayed tile from 81,920 bytes to **83,984**, measured: 72
+tiles held 6,046,848 bytes against 5,898,240 before. That is 2.5%, and it buys about twenty
+fewer tiles at the 64 MiB cap — 799 rather than 819.
 
 Typed-array ownership is what is accounted. This is not a process RSS measurement.
 

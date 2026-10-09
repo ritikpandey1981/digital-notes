@@ -1324,6 +1324,35 @@ one frame. See [D-040](../DECISIONS.md).
 Deposition is untouched: the nib, the fields, the pressure model, the accumulation rule and
 the spacing are all unchanged, and the resource and strategy freeze digests are unmoved.
 
+### E4.2E — The seam, and an experiment that could not fail
+
+E4.2D placed tiles on whole device pixels and the grid was still there at high zoom. Two
+different mistakes, recorded because they are different kinds.
+
+**Alignment is not a property one operation can have.** The live path repaints a tile by
+clearing it and redrawing it, and only the drawing had been aligned; the clear and the clip
+were still derived from page coordinates, so a clear whose edge fell between pixels partly
+erased the neighbouring tile's graphite while the neighbour was not dirty. Measured on the
+live layer: thirty-two units of graphite short along every boundary, nine standard
+deviations outside ordinary variation. Invisible on the compositor, which redraws whole
+objects -- which is why the lines changed when the pencil was lifted, and why that change
+was the clue. See [D-041](../DECISIONS.md).
+
+**And the verification could not have failed.** E4.2D's controlled comparison used uniform
+tiles, and clamping a constant returns the same constant, so it could not detect edge
+sampling at all. Repeated with a varying field against a contiguous reference, the defect is
+exact: zero difference everywhere, 10.5 tone units within one pixel of a boundary, only once
+a tile is magnified past 1:1. A presentation now carries one cell of each neighbour and the
+painter blits the inner square, letting the filter reach into the ring. See
+[D-042](../DECISIONS.md) and [D-043](../DECISIONS.md).
+
+The uncomfortable part is kept: this seam preserves average tone and is flanked by flat
+clamped runs, so neither a brightness statistic nor an averaged gradient resolves it in the
+running editor. It was settled against ground truth in a fixture and confirmed by magnified
+pictures.
+
+Deposition is untouched: the resource and strategy freeze digests are unmoved.
+
 ### Later — Marker
 
 Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,

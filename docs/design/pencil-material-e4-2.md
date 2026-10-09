@@ -424,19 +424,19 @@ The cost is that a tile's width varies by at most one device pixel out of sixty-
 two per cent, applied to a resampling that was already happening. This is what every tiled
 renderer does.
 
-### What is left
+### What this left
 
 Folding the tone of a scribbled block onto all sixteen offsets inside a tile, in the running
 editor: the boundary was **the lightest of the sixteen in eleven of twelve conditions**
 before, exceeding the worst ordinary column by about three tones. After, it exceeds it by at
-most **0.13 of a tone** and is an unremarkable member of the set.
+most **0.13 of a tone**.
 
-A residual that small is visible in the numbers at 300% and nowhere else. It is the edge of
-bilinear filtering: upsampling clamps at the tile's own edge instead of blending with the
-neighbour's last cell, because a tile's presentation does not contain its neighbours. The
-remedy would be a one-pixel gutter, which makes a presentation depend on the material of
-four other tiles and grows its backing. That is a real coupling increase for something at
-the level of the paper's own texture, and it is recorded here rather than built.
+That is the whole of what this rule fixed, and the section that follows is the record of
+what it did not. Placing a tile is one of three operations that have to agree about where a
+tile goes, and the other two were left alone; and the residual dismissed here as "the edge of
+bilinear filtering ... at the level of the paper's own texture" was a real defect that a
+person found at 664%. Both are settled in §21 and §22. See [D-041](../DECISIONS.md) and
+[D-042](../DECISIONS.md).
 
 ## 20. The handover
 
@@ -491,7 +491,115 @@ model, the accumulation rule and the spacing are all untouched, and the resource
 strategy freeze digests are unmoved. This phase moved where tiles are drawn and when they are
 handed over, which is compositing and lifetime, not material.
 
-## 21. What remains
+## 21. The seam, properly
+
+E4.2D placed tiles on whole device pixels and the grid was still there. Two things were
+wrong with that phase's work, and they are different kinds of wrong.
+
+**It fixed one of three things that have to agree.** Placing a tile on whole pixels is only
+half a rule if the *clear* and the *clip* are still derived from page coordinates. In the
+live path they were. A `clearRect` whose edge falls between pixels is antialiased, so the
+straddled pixel is *partly* erased — and what is being partly erased is the neighbouring
+tile's graphite, while the neighbour is not dirty and so is not redrawn. The clip did the
+same thing from the other side, shaving the outermost fraction off a tile the painter had
+just aligned.
+
+Measured on the live layer, graphite load along the boundary against fifteen ordinary
+columns of the same mark: **thirty-two units short, nine standard deviations out**, at both
+300% and 664%. That is the line a person sees while drawing, and it is why the lines looked
+different after pointer-up — the compositor redraws whole objects and never took the
+per-tile clear path at all.
+
+**And it verified the other half with an experiment that could not fail.** The controlled
+comparison in E4.2D used *uniform* tiles. Clamping a constant field returns the same
+constant, so uniform tiles cannot reveal edge sampling under any circumstances. It reported
+the tiled path pixel-perfect because the question had been asked in a form that had only one
+answer.
+
+Asked again with a varying field, against a contiguous reference raster of the same
+material, as mean absolute tone difference by distance from a boundary:
+
+| zoom | at the boundary | one pixel in | two pixels in | beyond |
+| --- | --- | --- | --- | --- |
+| 1.0 | 0 | 0 | 0 | 0 |
+| 3.0 | 5.04 | 2.52 | 0 | 0 |
+| 6.64 | 10.52 | 5.97 | 0.71 | 0 |
+
+Zero everywhere except within a pixel or two of a boundary, and only once a tile is
+magnified past 1:1 — which is exactly why 100% and 200% looked right and 300% and 664% did
+not. A tile scaled up is resampled, and a bilinear filter asked for a pixel at the tile's own
+edge needs a sample from beyond it; with nothing there it clamps and repeats the edge cell.
+The texture stops dead along the boundary.
+
+That one is worth stating carefully, because it is nearly invisible to measurement.
+Clamping preserves average tone, so the brightness statistic that passed E4.2D sees nothing
+(0.33σ). It puts a whole cell's difference into one pixel where a ramp would spread it, but
+flanked by two flat clamped runs, so an *averaged* gradient sees nothing either (0.74
+against a control mean of 1.04). Only a direct comparison against ground truth finds it, and
+the magnified pictures confirm it: the texture visibly breaks and restarts. **A defect that
+no available statistic resolves is still a defect**, and the honest record is that the
+fixture comparison is what settled this one.
+
+## 22. What a presentation carries now
+
+**One cell of every neighbour, all the way round.** A presentation is 130 cells square where
+its tile is 128, and the painter blits the inner square — `drawImage` with an explicit source
+rectangle — letting the filter reach into the ring for the samples it needs. With it, the
+difference from the contiguous reference is 0.00 at every distance and every zoom tested,
+worst single column 0.13. Two cells of gutter measure no better than one, because a bilinear
+filter never reaches further than one sample.
+
+Three things this deliberately is not:
+
+- **Not an expanded destination.** Overlapping neighbouring rectangles would composite
+  semi-transparent graphite twice along every boundary and trade a pale grid for a dark one.
+  The gutter is drawn *through*, never drawn.
+- **Not a repeat of the tile's own edge.** That is the clamp this replaces.
+- **Not nearest-neighbour filtering.** Turning smoothing off removes the seam by replacing
+  the entire resampling with a worse picture, which is hiding the defect rather than fixing
+  it. It is recorded as a diagnostic and rejected as a remedy.
+
+A missing neighbour leaves zeroes, and that is the right answer rather than a fallback: a
+tile the stroke never reached holds no graphite, so interpolating towards nothing is what
+the contiguous raster does too.
+
+**Both paths assemble it the same way.** The live layer takes its neighbours from the
+accumulator, which holds every tile the stroke has reached; the compositor takes them from
+the runtime, which owns the material. Ownership differs, the border rule does not — and the
+two now measure identically at the boundary, which is the property that makes lifting the
+pencil change nothing.
+
+### Depending on a neighbour
+
+A presentation that was built while a neighbour was missing is wrong once that neighbour
+arrives, so the runtime records which directions went short and drops exactly those
+presentations when material lands. A presentation that found everything it wanted is already
+right and is left alone. **The dependency is one tile deep in every direction and goes no
+further.**
+
+The scheduler does its part by ordering: a job deposits everything it owes before presenting
+any of it. Interleaving the two would present a tile, invalidate it with the next tile, and
+present it again — correct, and a great deal of work to arrive at the same picture.
+
+### What it costs
+
+A presentation is 67,600 bytes rather than 65,536: **3.1% more backing per presentation**,
+and 2.5% more per resident tile once the alpha is counted with it. The budget is charged the
+real figure, as it was before.
+
+## 23. Where the lattice is, and is not
+
+| | measured at the tile boundary, against fifteen in-tile controls |
+| --- | --- |
+| Live layer, before | tone −8.8σ at 300%, −9.2σ at 664%; sharpest step 15× and 41× ordinary |
+| Live layer, after | +0.4σ and −0.0σ; step 0.85 and 0.55, inside control range |
+| Compositor, before | tone 0.3σ; step 1.25 and 1.18 — below what the statistic resolves |
+| Compositor, after | 0.3σ and −0.0σ; step 0.85 and 0.56 |
+
+Active and committed now agree to two decimal places on both statistics, which is the
+border-equivalence claim stated as a number rather than an impression.
+
+## 24. What remains
 
 Canvas 2D is sufficient and GPU is not required; the prototype evidence and the mounted
 measurement in [`../performance/pencil-e4-2.md`](../performance/pencil-e4-2.md) agree.

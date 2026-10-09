@@ -142,6 +142,14 @@ the inline presentation limit rationing the tiles of a mark just finished. Tiles
 placed on whole device pixels and a stroke being handed over is painted whole in one frame.
 See D-039 and D-040.
 
+E4.2E then finished the seam, which E4.2D had not. Placing a tile is one of three operations
+that must agree about where it goes, and the live path's clear and clip were still derived
+from page coordinates, leaving the live layer thirty-two units of graphite short along every
+boundary. And E4.2D's own verification used uniform tiles, which cannot reveal edge sampling
+at all; against a varying field a magnified tile clamps at its own edge and the texture
+breaks. A presentation now carries one cell of each neighbour, at 3% more backing. See D-041,
+D-042 and D-043.
+
 Remaining:
 
 - Visual approval of the hybrid Pencil. `pencil@1` is deliberately not frozen yet: until

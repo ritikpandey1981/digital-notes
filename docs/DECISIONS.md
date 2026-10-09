@@ -837,3 +837,91 @@ over finishes in one frame; the handover ends the first time the mark is painted
 **Consequence.** A limit that protects the general case needs to be asked whether the moment
 of handoff is the general case. It usually is not: the tiles are few, they are hot, and the
 artwork is already on screen. Marker inherits both halves of this.
+
+
+## D-041 — A tile is placed, cleared and clipped on the same grid, or it is not aligned at all
+
+**Status:** accepted
+
+D-039 put a tile's *destination* on whole device pixels and broad Pencil still showed a
+grid while it was being drawn. Alignment is not a property a drawing operation can have on
+its own: the live path repaints a tile by clearing it and redrawing it, and the clear and
+the clip were still derived from page coordinates. A `clearRect` whose edge falls between
+two device pixels is antialiased, so the straddled pixel is *partly* erased — and what is
+partly erased is the neighbouring tile's graphite, while the neighbour is not dirty and is
+therefore not redrawn.
+
+Measured on the live layer against fifteen ordinary columns of the same mark: **thirty-two
+units of graphite short along every tile boundary, nine standard deviations out**, at 300%
+and at 664%. It was invisible on the compositor, which redraws whole objects and never takes
+the per-tile clear path — which is exactly why the lines changed appearance when the pencil
+was lifted, and why that change was the clue rather than a second defect.
+
+**The rule: every operation that participates in repainting a tile — placing it, clearing
+it, clipping to it — asks the same thing where the tile goes.** Not three roundings that
+agree in most cases, one answer used three times.
+
+**Consequence.** A partial repaint is a contract between a clear and a draw, and any
+quantisation applied to one is a change to the other. The same applies to any later medium
+that repaints by region.
+
+## D-042 — An experiment that cannot fail has not been run
+
+**Status:** accepted
+
+D-039 was verified with a controlled comparison that rendered tiles of **uniform** material
+and found the tiled path pixel-identical to a contiguous reference. Clamping a constant field
+returns the same constant, so that experiment could not have detected edge sampling under
+any circumstances. It did not confirm the fix; it confirmed that the question had been asked
+in a form with one possible answer. The residual it reported as "at the level of the paper's
+own texture" was a real defect, and a person found it at 664% after it had been documented
+as acceptable.
+
+Repeated with a *varying* field, the same comparison isolates the defect exactly: zero
+difference from the reference everywhere, except 10.5 tone units within one pixel of a
+boundary, and only once a tile is magnified past 1:1.
+
+**The rule has two halves.** A verification must be able to produce the failing answer —
+construct the experiment so that the defect, if present, has somewhere to show. And when a
+measurement reports no defect, that is a fact about the measurement until it has been shown
+to be sensitive to the thing being measured.
+
+The corollary is uncomfortable and is kept here deliberately: this seam preserves average
+tone, so a brightness statistic reads 0.3σ, and it is flanked by flat clamped runs, so an
+averaged gradient reads below its own controls. **No statistic available in the running
+editor resolves it.** It was settled against ground truth in a fixture, and confirmed by
+magnified pictures. A defect that measurement cannot see is still a defect, and the right
+response is a better experiment rather than a conclusion that nothing is wrong.
+
+**Consequence.** Where a derived cache is sampled rather than blitted, correctness is
+checked against a contiguous rendering of the same data, not against its own neighbours.
+
+## D-043 — A sampled tile carries its neighbours' edge, and depends on them one deep
+
+**Status:** accepted
+
+A tile scaled up is resampled, and a bilinear filter asked for a pixel at the tile's own edge
+needs a sample from beyond it. Holding only its own cells, it clamps and repeats the edge
+cell, and the texture stops dead along the boundary. So a Pencil presentation is 130 cells
+square where its tile is 128, and the painter blits the inner square and lets the filter
+reach into the ring. One cell is sufficient and two measure no better, because the filter
+never reaches further than one sample.
+
+Three rejected alternatives, each for its own reason. **Expanding the destination rectangle**
+would overlap neighbours and composite semi-transparent graphite twice, trading a pale grid
+for a dark one. **Repeating the tile's own edge** is the clamp being replaced. **Turning off
+image smoothing** removes the seam by replacing the whole resampling with a worse picture,
+which is hiding a defect rather than fixing one.
+
+Depending on neighbours has to be paid for honestly. A presentation built while a neighbour
+was missing is wrong once it arrives, so the runtime records which directions went short and
+drops exactly those; one that found everything is already right and is left alone. **The
+dependency is one tile deep in every direction.** The scheduler does the rest by ordering —
+a job deposits everything it owes before presenting any of it, because interleaving would
+present a tile, invalidate it with the next, and present it again.
+
+Cost: 67,600 bytes a presentation rather than 65,536, 3.1% more, charged to the same budget.
+
+**Consequence.** Marker inherits this with its own material. More generally: a tile that
+will be *sampled* rather than blitted is not self-contained, and the cache that owns it is
+the only thing that can complete it.
