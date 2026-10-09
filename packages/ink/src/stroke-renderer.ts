@@ -1,4 +1,10 @@
-import { RenderScheduler, type Point, type Rect, type Viewport } from "@folio/rendering";
+import {
+  RenderScheduler,
+  type Point,
+  type Rect,
+  type Viewport,
+  type ViewportSnapshot,
+} from "@folio/rendering";
 import { InkError } from "./errors";
 import {
   createBrushRenderGeometry,
@@ -10,6 +16,8 @@ import {
 import type { LiveBrushEvaluator, LiveEvaluationSnapshot } from "./internal/brush-geometry";
 import {
   PencilMaterialEvaluator,
+  materialTileDeviceRect,
+  materialTileGrid,
   materialTileRect,
   pencilMaterialCacheId,
 } from "./internal/pencil-material-strategy";
@@ -464,25 +472,59 @@ export class StrokeRenderer {
 
     const context = this.context;
     const snapshot = this.viewport.snapshot();
+
+    /**
+     * Clear exactly the pixels that are about to be redrawn.
+     *
+     * The painter places a tile on whole device pixels; this has to agree with
+     * it to the pixel or the two disagree by up to half of one. A clear whose
+     * edge falls between pixels is antialiased, so the straddled pixel is
+     * *partly* erased -- and it is the neighbouring tile's graphite being
+     * partly erased, while the neighbour is not dirty and so is not redrawn.
+     * The result is a pale line along every tile boundary that appears only
+     * while the pencil is down, measured at thirty-two units of graphite below
+     * its surroundings, nine standard deviations outside ordinary in-tile
+     * variation. Asking the painter's own placement where the tile goes is what
+     * makes the two agree by construction.
+     */
     context.save();
-    context.setTransform(snapshot.devicePixelRatio, 0, 0, snapshot.devicePixelRatio, 0, 0);
-    for (const key of dirty) {
-      const viewportRect = this.pageRectToViewport(materialTileRect(key));
-      context.clearRect(viewportRect.x, viewportRect.y, viewportRect.width, viewportRect.height);
+    this.applyPageTransform(snapshot);
+    const grid = materialTileGrid(context);
+    context.restore();
+
+    let deviceClip: Rect | null = null;
+    context.save();
+    if (grid === null) {
+      context.setTransform(snapshot.devicePixelRatio, 0, 0, snapshot.devicePixelRatio, 0, 0);
+      for (const key of dirty) {
+        const viewportRect = this.pageRectToViewport(materialTileRect(key));
+        context.clearRect(viewportRect.x, viewportRect.y, viewportRect.width, viewportRect.height);
+      }
+    } else {
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      for (const key of dirty) {
+        const rect = materialTileDeviceRect(grid, key);
+        context.clearRect(rect.x, rect.y, rect.width, rect.height);
+        deviceClip = unionRects(deviceClip, rect);
+      }
     }
     context.restore();
 
-    this.withPageTransform(affected, () => {
-      if (this.finalizedPresentation === "retained") {
-        for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
-      }
-      // A live accumulator supplies its own tiles, so no runtime cache is
-      // consulted and nothing can be missing.
-      drawBrushRenderGeometry(this.context, geometry, state.brush, {
-        materialRuntime: null,
-        tiles: dirty,
-      });
-    });
+    this.withPageTransform(
+      affected,
+      () => {
+        if (this.finalizedPresentation === "retained") {
+          for (const stroke of this.finalizedStrokes) this.drawFinalizedStroke(stroke);
+        }
+        // A live accumulator supplies its own tiles, so no runtime cache is
+        // consulted and nothing can be missing.
+        drawBrushRenderGeometry(this.context, geometry, state.brush, {
+          materialRuntime: null,
+          tiles: dirty,
+        });
+      },
+      deviceClip,
+    );
     this.renderCountValue += 1;
     this.updateCanvasDiagnostics();
   }
@@ -527,21 +569,49 @@ export class StrokeRenderer {
     this.updateCanvasDiagnostics();
   }
 
-  private withPageTransform(dirtyRect: Rect | null, draw: () => void): void {
+  /** The page's own coordinates on this canvas, with no clipping of any kind. */
+  private applyPageTransform(snapshot: ViewportSnapshot): void {
+    const context = this.context;
+    context.setTransform(snapshot.devicePixelRatio, 0, 0, snapshot.devicePixelRatio, 0, 0);
+    context.translate(snapshot.size.width / 2, snapshot.size.height / 2);
+    context.scale(snapshot.camera.zoom, snapshot.camera.zoom);
+    context.translate(-snapshot.camera.position.x, -snapshot.camera.position.y);
+    context.translate(snapshot.pageRect.x, snapshot.pageRect.y);
+  }
+
+  /**
+   * Draws under the page transform, clipped to the region being repainted.
+   *
+   * `deviceClip` is for a caller that has already decided, in whole device
+   * pixels, exactly which pixels it is repainting. A clip derived from page
+   * coordinates lands between pixels and is antialiased, so it shaves the
+   * outermost fraction off a tile the painter placed on a whole pixel -- the
+   * same half-pixel disagreement as an unsnapped clear, in a different place.
+   * A clip is held in device space whatever the transform is afterwards, which
+   * is what lets it be set before the page transform and still apply to it.
+   */
+  private withPageTransform(
+    dirtyRect: Rect | null,
+    draw: () => void,
+    deviceClip: Rect | null = null,
+  ): void {
     const context = this.context;
     const snapshot = this.viewport.snapshot();
     context.save();
+    if (deviceClip !== null) {
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.beginPath();
+      context.rect(deviceClip.x, deviceClip.y, deviceClip.width, deviceClip.height);
+      context.clip();
+    }
     context.setTransform(snapshot.devicePixelRatio, 0, 0, snapshot.devicePixelRatio, 0, 0);
-    if (dirtyRect !== null) {
+    if (deviceClip === null && dirtyRect !== null) {
       const viewportRect = this.pageRectToViewport(dirtyRect);
       context.beginPath();
       context.rect(viewportRect.x, viewportRect.y, viewportRect.width, viewportRect.height);
       context.clip();
     }
-    context.translate(snapshot.size.width / 2, snapshot.size.height / 2);
-    context.scale(snapshot.camera.zoom, snapshot.camera.zoom);
-    context.translate(-snapshot.camera.position.x, -snapshot.camera.position.y);
-    context.translate(snapshot.pageRect.x, snapshot.pageRect.y);
+    this.applyPageTransform(snapshot);
     context.beginPath();
     context.rect(0, 0, snapshot.pageRect.width, snapshot.pageRect.height);
     context.clip();
