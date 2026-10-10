@@ -176,20 +176,26 @@ long frame is no longer the brush engine's item. Evidence in
 
 Remaining:
 
-- **Recovery capture cost**, which is where that hitch now belongs, and which is now half
-  answered. Recovery R1 made the capture wait for the hand: a press on the editor surface is
-  tracked separately from settlement, and a capture that comes due during one is held back
-  until the press ends rather than started inside it. Drawing is now free of recovery blocks.
-  The encode itself is unchanged and still costs what it costs — a 5 000-sample stroke
-  encodes to 5.6 MB of JSON at roughly 26 ms per megabyte of record — so the remaining item
-  is the codec: `assertJsonTextDepth` walking every character of the encoded text,
-  `sortJsonValue` rebuilding every object with sorted keys, and a serializability guard the
-  tree build already establishes, together about 47% of the work for no concurrency at all.
-  Off-main-thread encoding was priced and is not the next step: no practical transfer
-  boundary is cheap enough, because the cheapest payload to move is a string and the string
-  only exists after the work worth moving. Measured breakdown in
-  [`performance/pencil-e4-3.md`](performance/pencil-e4-3.md), scheduling in
-  [`ARCHITECTURE.md`](ARCHITECTURE.md) and D-046.
+- **Recovery capture cost**, which is where that hitch belonged and which is now largely
+  answered. Recovery R1 made the capture wait for the hand, so drawing is free of recovery
+  blocks. Recovery R2 then made the capture itself cheaper for the same bytes: the codec
+  emits canonical key order instead of rebuilding the document to get it, and proves its own
+  output in one walk instead of a serializability traversal plus a scan of the encoded text.
+  Five whole-document passes became two, for **41% less encode time** at 39 MB and about a
+  third less mounted renderer block, with the encoded bytes identical and `formatVersion`
+  unchanged. Evidence in [`performance/recovery-r2.md`](performance/recovery-r2.md), rules in
+  D-047 and D-048.
+
+  What remains is the encoder re-validating output it just built. `encodeStroke` assembles a
+  stroke from already-validated model fields and then runs the full decode-side `parseStroke`
+  over the result; skipping it takes 39 MB from 1332 ms to 603 ms, so it is roughly **728 ms,
+  twice `JSON.stringify`**. Removing it needs a proof that the `Stroke` model's own invariants
+  cover every cross-field rule that parse enforces — ordered timestamps, point-count
+  agreement, pressure monotonicity — which is a phase of its own. A custom JSON writer would
+  attack the second-largest stage while the largest sits untouched, and off-main-thread
+  encoding was already priced and rejected: the cheapest payload to move is a string, and the
+  string only exists after the work worth moving. The mounted block also contains handing that
+  string across the process boundary, which is now comparable in size to the encode itself.
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a

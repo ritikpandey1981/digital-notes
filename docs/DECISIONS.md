@@ -1047,3 +1047,81 @@ free, and the artist experiences the second one every time.
 arrives mid-encode is still blocked by it. This phase decides when to start, and chooses not
 to start at a bad time. Making the encode itself cheap, or preemptible, or someone else's
 thread, is separate work with its own evidence.
+
+## D-047 — The canonical order is emitted, and it is not the order you would guess
+
+**Status:** accepted
+
+A `.folio` file's key order is part of the file. It was produced by rebuilding every object in
+the document with its keys sorted, as a pass over the finished tree — which at 35 000 Ink
+samples means an allocation per point to answer a question the codec already knew the answer
+to. The codec now writes keys in order to begin with, and nothing rebuilds the document.
+
+Two facts had to be established first, and neither matched the plan.
+
+**The order is not "sorted".** It is array-index-like keys first, ascending, and then
+everything else by `localeCompare(_, "en")`. The first half is not the codec's decision: a
+JavaScript object always enumerates integer-like keys before string keys and in numeric order,
+whatever order they were inserted in, so `{"10":…,"2":…}` emits `"2"` then `"10"` no matter
+what the sort did. A gate asserting the simpler rule passed for eight corpus fixtures and
+failed on the ninth, which is why the ninth exists. The same engine behaviour is what makes
+emitting canonical order safe: for exactly those keys, insertion order cannot matter.
+
+**The locale matters for dynamic keys and not for fixed ones.** `localeCompare` puts "apple"
+before "Apple" and sorts "ümlaut" among the letters; a code-unit comparison does neither. So
+the comparison cannot be simplified without changing the bytes of every file containing a
+dynamic key. But for all twenty-seven of the codec's fixed schemas, locale order and code-unit
+order agree — asserted where those orders are declared — so the fixed schema's bytes do not
+depend on the collation library. The four structures whose keys the codec cannot know (object
+metadata, Ink rendering hints, the two vector payloads) keep the locale-aware sort, applied
+where they are small.
+
+**What makes this safe to do at all** is that the gate came first and was shown to fail.
+Digests of nine fixtures were captured from the previous implementation before anything moved,
+and a second gate asserts that every object in the output carries its keys in canonical order
+— which generalises to fixtures nobody pinned. Reversing the comparison fails 27 of 36 tests.
+A golden was re-pinned exactly once, when a fixture's own input changed, and then only after
+re-capturing it from the old implementation and confirming the new one reproduced it.
+
+**Consequence.** Key order is now a property of the codec's emission rather than of a pass
+that repairs it afterwards, so every new object literal in the codec has to be written in
+order. That is a real constraint on future edits, and it is the one the second gate exists to
+enforce. Changing the order deliberately is a `formatVersion` change, with its own goldens.
+
+## D-048 — Proving the output is one walk, not three passes
+
+**Status:** accepted
+
+The project encoder used to make five whole-document passes before anything reached IPC. Three
+of them were about correctness: a traversal asking whether every value was one JSON could
+carry, a rebuild for key order, and a scan of the encoded *text* to recover its structural
+nesting. All three are gone or folded, the invariants are unchanged, and the bytes are
+identical.
+
+**Depth belongs on the tree, not the text.** The decoder scans text because when it runs there
+is no tree — checking before `JSON.parse` is the point of it. The encoder has a tree, and
+measuring the same quantity there costs one traversal instead of a second pass over every
+character. The two definitions have to agree exactly, because the alternative is writing files
+Folio cannot read, an asymmetry this codec has been bitten by before. The boundary tests do not
+assume where the ceiling is: they walk nesting outwards until the encoder refuses, then assert
+the last accepted document has a text depth of exactly the limit, for objects, arrays and the
+two alternating.
+
+**And serializability could never have been checked on the text.** `JSON.stringify` does not
+refuse what it cannot represent. It drops `undefined` and functions and turns `NaN` into
+`null`, so by the time text exists the evidence is gone and what is left is a file that decodes
+to the wrong document. That is why the invariant survives rather than being deleted as
+"redundant": it is the difference between failing a save and writing a file nobody can read
+back. It now rides along on the walk that measures depth, because both are questions about the
+same nodes.
+
+**What this does not claim.** The guard is defence in depth, not the only line — the model
+layer rejects almost every bad value long before the codec sees it, which is why the adversarial
+tests exercise the walk directly instead of through a model that would never build such a
+thing. A test that could only reach it through the model would be testing the model.
+
+**Consequence.** One validation authority for the encoder's output, documented next to it, and
+41% less encode time for the same bytes. What remains is the codec re-validating output it just
+built — roughly 728 ms of the 1332 ms at 39 MB, twice `JSON.stringify` — which is the next
+phase and not this one, because removing it needs a proof that the model's own invariants cover
+every cross-field rule the decode-side parse enforces.

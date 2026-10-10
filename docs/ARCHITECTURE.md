@@ -442,6 +442,17 @@ longer being kept a copy of, rather than the copy quietly failing. Discovery kee
 summaries only and decodes nothing, a record whose filename disagrees with what it
 contains is not that record, and anything that is not a regular file is ignored.
 
+Encoding a project is deterministic and canonical: the same content produces the same
+bytes, because key order is part of the format. The codec emits those keys in order
+rather than sorting the finished document, and it proves its own output in one walk
+before serializing -- that the nesting is what the decoder accepts, counted the way
+the decoder counts it, and that every value is one JSON can carry, which cannot be
+checked afterwards because `JSON.stringify` silently rewrites what it cannot
+represent. The decoder keeps its own text scan, because on the way in there is no
+tree yet. Only the four structures whose keys the codec cannot know statically --
+object metadata, Ink rendering hints and the two vector payloads -- are sorted, and
+they are sorted where they are small. See D-047 and D-048.
+
 Two separate questions decide when a snapshot is taken, and merging them would make
 the wrong thing true in both directions.
 
