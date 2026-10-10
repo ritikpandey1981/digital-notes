@@ -442,6 +442,35 @@ longer being kept a copy of, rather than the copy quietly failing. Discovery kee
 summaries only and decodes nothing, a record whose filename disagrees with what it
 contains is not that record, and anything that is not a regular file is ignored.
 
+Two separate questions decide when a snapshot is taken, and merging them would make
+the wrong thing true in both directions.
+
+*Is this state safe to serialize?* is settlement, and it is a question about the
+document. A live preview gesture or an open History transaction means the document is
+showing something a release of the pointer may take back, so it is not written.
+
+*Should the renderer begin this work now?* is foreground activity, and it is a
+question about the person. Encoding a project is hundreds of milliseconds of
+synchronous work on the drawing thread, and a mark being drawn is not in the document
+at all -- so a project stays perfectly safe to serialize for exactly as long as
+someone is drawing it, which is exactly when serializing it is felt. A press on the
+editor surface is therefore tracked on its own, separately from anything about
+content, and a capture that comes due during one is held back rather than started.
+
+Holding back never drops the requirement. The timer stays armed, the pending change
+keeps the age it already had, and the capture runs at the first moment the hand is
+free: promptly when the press committed nothing, and otherwise on the newer state's
+own debounce, so a burst of marks still produces one snapshot of the latest state. The
+age limit that stops continuous editing from starving recovery is a deadline for the
+next safe moment rather than a licence to encode wherever it falls -- and it could
+never fire inside a single mark anyway, because nothing is committed until the mark
+is finished.
+
+The cost is bounded and real: what a long interaction delays is the snapshot of content
+committed just before it began, so a crash inside a long mark can lose the mark before it. The
+bound is one interaction plus the settle. Once encoding has started it runs to completion;
+this is scheduling, and the encoder itself is not preemptible.
+
 ## Electron boundary
 
 The Electron main and preload code provide the desktop host. The React renderer owns

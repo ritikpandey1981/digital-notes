@@ -992,3 +992,58 @@ fixture is not established by the code that asks for it, only by reading back wh
 resident memory, no long task at any width. Optimizing it would have been work against a
 measurement rather than from one. The hitch is real and belongs to persistence, where its
 cost model is now written down.
+
+## D-046 — Safe to write and free to write are different questions
+
+**Status:** accepted
+
+Recovery blocked the renderer for 147 ms, 1.76 seconds into a mark the artist was still
+drawing. There was no bug in the check that was supposed to prevent it. `isPersistenceSettled`
+asks whether the document holds a state the user has committed to, and during a stroke the
+answer is a truthful yes: the mark being drawn is not in the document, so the committed
+project was exactly as safe to serialize as it had been a second earlier.
+
+The tempting fix is to make drawing unsettled. It is wrong twice over. A live stroke genuinely
+is not recoverable content — excluding it is the behaviour we want, not a side effect — and a
+document that *is* safe to write would start claiming it is not. The predicate would stop
+being true about anything in particular, and the next thing to ask it a question would get the
+wrong answer in the other direction.
+
+**Two questions, two owners.** *Is this state safe to serialize?* is about the document, and
+settlement answers it. *Should the renderer begin several hundred milliseconds of work right
+now?* is about the person, and nothing was asking it. They are orthogonal: through a whole
+stroke the first is yes and the second is no, which is precisely why one predicate cannot
+carry both. So presses on the editor surface are tracked by themselves — not as document
+state, not as History, not as dirtiness — and the capture path requires both answers before it
+begins.
+
+**Holding back is not dropping.** A deferral leaves the timer armed and leaves the pending
+change the age it already had, so the requirement survives the interaction that postponed it.
+What happens next depends on what the interaction did, and the content identity the capture
+was waiting for is what distinguishes the two cases: still current means nothing was committed
+and the capture is merely overdue, so it runs a quarter of a second after the release;
+changed means the interaction committed something newer, and that newer state's own debounce
+is the schedule that should stand. Both endings produce one capture of the newest state, and
+neither produces a queue.
+
+**The age limit is a deadline, not a licence.** Bounding how stale a recoverable state may get
+is worth having, but forcing an encode into whatever the renderer happens to be doing buys
+nothing: during continuous input there is no newer committed content to lose, because nothing
+commits until a mark is finished. Measured on a 75-second stroke, the limit cannot fire inside
+one. So it now means *capture at the first safe moment*, and the first safe moment is the
+first one where the hand is free.
+
+**And it is paid for.** What continuous input delays is not content created during it, but
+content committed just before it. Measured on the fixture that produced the finding: the first
+mark's snapshot used to be durable 3.1 s after it was drawn, and is now durable 29.6 s after
+it was drawn, because the artist spent 25 s on the next mark. A crash inside that second
+stroke now loses the first mark. The exposure is bounded — one interaction plus the settle —
+and the age limit cannot shorten it, because nothing is committed during an interaction for
+the age limit to measure. That is the trade this decision makes: up to one interaction of
+extra exposure, against 147–692 ms of dead renderer in the middle of a mark. Neither side is
+free, and the artist experiences the second one every time.
+
+**What this does not do.** Once the encoder has entered, it runs to completion; a press that
+arrives mid-encode is still blocked by it. This phase decides when to start, and chooses not
+to start at a bad time. Making the encode itself cheap, or preemptible, or someone else's
+thread, is separate work with its own evidence.

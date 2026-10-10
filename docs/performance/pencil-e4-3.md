@@ -168,8 +168,19 @@ window is 35 ms.
   memory, no long task at any width, median at the display period.
 - **No Pencil optimization was made**, because the measurement did not support one. See
   [D-045](../DECISIONS.md).
-- **It is still a real hitch, and it is persistence's.** Two consequences worth stating: a
-  capture that lands while the artist has started a new mark blocks that mark, and
-  `RECOVERY_MAXIMUM_AGE_MS` is 30 000, so a continuous stroke longer than thirty seconds is
-  interrupted by one on purpose. A 5 000-sample stroke encodes to 5.6 MB of JSON, which is
-  where the cost is.
+- **It is still a real hitch, and it is persistence's.** A capture that lands while the
+  artist has started a new mark blocks that mark. A 5 000-sample stroke encodes to 5.6 MB of
+  JSON, which is where the cost is.
+
+## A correction
+
+This note also claimed that `RECOVERY_MAXIMUM_AGE_MS` is 30 000 and that "a continuous stroke
+longer than thirty seconds is interrupted by one on purpose". **The constant is right and the
+consequence is wrong.** The age limit is measured from `pendingSince`, which is set by the
+arrival of a *committed* change, and a mark in progress commits nothing — so there is no
+pending deadline for it to pass. Measured on a **75.4-second** continuous stroke: no capture
+and no block inside it at all.
+
+It was a reading of the code rather than a measurement of it, and the measurement that
+followed disagreed. The audit that produced it, and the scheduling phase that followed, are in
+[`recovery-r1.md`](recovery-r1.md).

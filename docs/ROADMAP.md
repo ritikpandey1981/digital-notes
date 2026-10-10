@@ -84,6 +84,12 @@ loss.
 Deliberately not built, and not planned as part of this: recent files, project rename,
 export, printing, cloud sync, and any mobile document provider.
 
+Recovery R1 then separated *when* a snapshot is taken from *whether* the state is safe to
+take: a capture that comes due while someone is drawing is held back to the first moment
+their hand is free, without weakening settlement, the atomic write, the envelope ceiling or
+any of the validation. Deferral keeps the pending requirement and its age, coalesces into
+the newest committed state, and never queues. See D-046.
+
 ### Validate physical input and rendering budgets
 
 - Perform operator QA with a physical stylus and trackpad; synthetic pen events are
@@ -170,13 +176,20 @@ long frame is no longer the brush engine's item. Evidence in
 
 Remaining:
 
-- **Recovery capture cost**, which is where that hitch now belongs. A 5 000-sample stroke
-  encodes to 5.6 MB of JSON, a capture that lands after a new mark has begun blocks it, and
-  `RECOVERY_MAXIMUM_AGE_MS` interrupts any stroke past thirty seconds deliberately. The time
-  is not in the stroke codec: it is `assertJsonTextDepth` walking every character of the
-  encoded text, `sortJsonValue` rebuilding every object with sorted keys, and
-  `JSON.stringify` — all linear in the document and all on the main thread. Measured
-  breakdown in [`performance/pencil-e4-3.md`](performance/pencil-e4-3.md).
+- **Recovery capture cost**, which is where that hitch now belongs, and which is now half
+  answered. Recovery R1 made the capture wait for the hand: a press on the editor surface is
+  tracked separately from settlement, and a capture that comes due during one is held back
+  until the press ends rather than started inside it. Drawing is now free of recovery blocks.
+  The encode itself is unchanged and still costs what it costs — a 5 000-sample stroke
+  encodes to 5.6 MB of JSON at roughly 26 ms per megabyte of record — so the remaining item
+  is the codec: `assertJsonTextDepth` walking every character of the encoded text,
+  `sortJsonValue` rebuilding every object with sorted keys, and a serializability guard the
+  tree build already establishes, together about 47% of the work for no concurrency at all.
+  Off-main-thread encoding was priced and is not the next step: no practical transfer
+  boundary is cheap enough, because the cheapest payload to move is a string and the string
+  only exists after the work worth moving. Measured breakdown in
+  [`performance/pencil-e4-3.md`](performance/pencil-e4-3.md), scheduling in
+  [`ARCHITECTURE.md`](ARCHITECTURE.md) and D-046.
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a
