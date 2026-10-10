@@ -862,9 +862,11 @@ export function CanvasSurface({
         if (canvas === undefined) return;
         const stats = materialRuntime.stats();
         // Written only when something moved: this runs after every frame, and
-        // thirteen dataset writes a frame would be measurable in the very path
-        // the diagnostics exist to measure.
-        const signature = `${String(stats.residentTiles)}:${String(stats.scheduler.tilesPublished)}:${String(stats.presentationsBuilt)}:${String(stats.materialHits)}:${String(pencilGeometryDiagnostics().builds)}`;
+        // fifteen dataset writes a frame would be measurable in the very path
+        // the diagnostics exist to measure. The field cache is in the signature
+        // as well as in the output, so its counters cannot go stale while
+        // something else happens to be moving.
+        const signature = `${String(stats.residentTiles)}:${String(stats.scheduler.tilesPublished)}:${String(stats.presentationsBuilt)}:${String(stats.materialHits)}:${String(stats.fieldTiles)}:${String(pencilGeometryDiagnostics().builds)}`;
         if (signature === publishedDiagnostics) return;
         publishedDiagnostics = signature;
         canvas.dataset.materialResidentTiles = String(stats.residentTiles);
@@ -877,6 +879,8 @@ export function CanvasSurface({
         canvas.dataset.materialLongestSlice = stats.scheduler.longestSliceMilliseconds.toFixed(3);
         canvas.dataset.materialPublished = String(stats.scheduler.tilesPublished);
         canvas.dataset.materialCancelled = String(stats.scheduler.jobsCancelled);
+        canvas.dataset.materialFieldTiles = String(stats.fieldTiles);
+        canvas.dataset.materialFieldBytes = String(stats.fieldBytes);
         canvas.dataset.materialPresentations = String(stats.presentationsBuilt);
         canvas.dataset.materialPresentationMs = stats.presentationMillisecondsTotal.toFixed(3);
         canvas.dataset.materialLongestPresentation =
