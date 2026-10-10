@@ -193,9 +193,12 @@ describe("frozen engine brush strategies", () => {
     // the strategy stopped drawing contours and started depositing material.
     // Both were before the strategy had shipped in a release, which is the only
     // circumstance in which one of these moves without a new version: no saved
-    // artwork could yet be looking at the old digest. After the release that
-    // ships Pencil the same refinement is `pencil@2`, without exception. The two
-    // pens have shipped, and theirs have never moved.
+    // artwork could yet be looking at the old digest. That is over: the
+    // appearance has since been approved and frozen in E4.3A, so the same
+    // refinement is now `pencil@2`, without exception. Its material is pinned
+    // beside this in `pencil-visual-freeze.test.ts`, which is where a Pencil
+    // change shows up as pixels rather than as a dab stream. The two pens have
+    // shipped, and theirs have never moved.
     expect(digests).toEqual([
       "technical-pen@0:x1q4l0",
       "technical-pen@0.3:a2i6kf",

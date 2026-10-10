@@ -18,15 +18,6 @@ import {
  * the fields it was actually made with without the format gaining a field.
  */
 
-function digest(samples: Uint8Array): string {
-  let accumulator = 0x811c_9dc5;
-  for (const value of samples) {
-    accumulator ^= value;
-    accumulator = Math.imul(accumulator, 0x0100_0193);
-  }
-  return (accumulator >>> 0).toString(36);
-}
-
 describe("built-in material resources", () => {
   it("registers exactly the resources this build contains", () => {
     expect(registeredMaterialResources()).toEqual([
@@ -100,21 +91,18 @@ describe("built-in material resources", () => {
     }
   });
 
-  it("generates the same nib bytes every time", () => {
-    // Regenerating this to make a failing run pass would defeat the gate: a
-    // change here is a change to every Pencil mark ever drawn with `pencil@1`.
-    const first = resolveMaterialResource("folio.graphite.hb-tip.v1").samples.slice();
-    releaseMaterialResources();
-    const second = resolveMaterialResource("folio.graphite.hb-tip.v1").samples;
-    expect([...second]).toEqual([...first]);
-    expect(digest(second)).toBe("1yig76y");
-  });
-
-  it("generates the same paper bytes every time", () => {
-    const first = resolveMaterialResource("folio.paper.graphite-tooth.v1").samples.slice();
-    releaseMaterialResources();
-    const second = resolveMaterialResource("folio.paper.graphite-tooth.v1").samples;
-    expect([...second]).toEqual([...first]);
-    expect(digest(second)).toBe("1a91iur");
-  });
+  it.each(["folio.graphite.hb-tip.v1", "folio.paper.graphite-tooth.v1"] as const)(
+    "generates the same bytes every time: %s",
+    (id) => {
+      // That a resource is generated at all is only safe because generating it
+      // twice gives the same field. *Which* field is pinned in
+      // [`pencil-visual-freeze.test.ts`](pencil-visual-freeze.test.ts), with
+      // the rest of the approved appearance, so there is one place a Pencil
+      // digest can be edited rather than two.
+      const first = resolveMaterialResource(id).samples.slice();
+      releaseMaterialResources();
+      const second = resolveMaterialResource(id).samples;
+      expect([...second]).toEqual([...first]);
+    },
+  );
 });
