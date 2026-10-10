@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, test, _electron as electron, type Page } from "@playwright/test";
-import { activateDockSlot } from "./dock-helpers";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 /**
  * Hybrid Pencil measured in the mounted editor.
@@ -17,6 +17,10 @@ import { activateDockSlot } from "./dock-helpers";
  * how long the reconstruction slices are. Neither is pen-to-screen latency, and
  * neither is claimed to be -- a frame gap is main-thread scheduling, and the
  * compositor and the display are downstream of it.
+ *
+ * The long task this records is **not Pencil's.** It is the recovery capture,
+ * firing three seconds after pointer-up, and `taskStartsMs` against
+ * `pointerUpAtMs` is what says so. See `../../docs/performance/pencil-e4-3.md`.
  *
  * Opt in with `FOLIO_PENCIL_PERFORMANCE=1`; it is skipped in the ordinary suite
  * because it is a measurement rather than an assertion about correctness.
@@ -42,6 +46,9 @@ interface FrameProbe {
    */
   readonly longestTaskMs: number;
   readonly longTasks: number;
+  /** When each task over 50 ms began, measured from the probe's own start. */
+  readonly taskStartsMs: readonly number[];
+  readonly taskDurationsMs: readonly number[];
 }
 
 /** Records the gaps between animation frames while `body` runs. */
@@ -65,12 +72,16 @@ async function withFrameProbe<T>(window: Page, body: () => Promise<T>): Promise<
     };
     (window as unknown as { __folioProbing: boolean }).__folioProbing = true;
     requestAnimationFrame(tick);
-    const tasks = { longest: 0, count: 0 };
+    const tasks = { longest: 0, count: 0, starts: [] as number[], durations: [] as number[] };
     (window as unknown as { __folioTasks: typeof tasks }).__folioTasks = tasks;
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         tasks.count += 1;
         if (entry.duration > tasks.longest) tasks.longest = entry.duration;
+        if (entry.duration >= 50) {
+          tasks.starts.push(Number((entry.startTime - probe.started).toFixed(1)));
+          tasks.durations.push(Number(entry.duration.toFixed(1)));
+        }
       }
     });
     try {
@@ -110,6 +121,11 @@ async function withFrameProbe<T>(window: Page, body: () => Promise<T>): Promise<
       ),
       longTasks:
         (window as unknown as { __folioTasks?: { count: number } }).__folioTasks?.count ?? 0,
+      taskStartsMs:
+        (window as unknown as { __folioTasks?: { starts: number[] } }).__folioTasks?.starts ?? [],
+      taskDurationsMs:
+        (window as unknown as { __folioTasks?: { durations: number[] } }).__folioTasks?.durations ??
+        [],
     };
   });
   await window.evaluate(() => {
@@ -229,24 +245,39 @@ test("measures mounted hybrid Pencil", async () => {
     const bounds = (await inkCanvas.boundingBox())!;
     const runs: Record<string, unknown>[] = [];
 
+    /**
+     * Sets the Pencil's width through the control a person uses.
+     *
+     * This replaces a `window.__folioDrawingActions` hook that **never
+     * existed**. It was optional-chained, so every call was a silent no-op and
+     * the "12 px" and "26 px" workloads were both drawn at the preset's own 2
+     * page units -- which is why their numbers differed only by how much was
+     * already on the page. The value is read back rather than assumed.
+     */
+    const rail = window.getByTestId("drawing-property-rail");
+    const palette = window.getByTestId("context-tool-palette");
+    const setSize = async (size: number): Promise<void> => {
+      await openSlotToolOptions(window, "pencil");
+      const field = palette.getByLabel("Size value");
+      await field.fill(String(size));
+      await field.press("Enter");
+      await window.keyboard.press("Escape");
+      await expect(palette).toHaveCount(0);
+      await expect(rail.locator('button[data-property-key="strokeWidth"]')).toHaveAttribute(
+        "data-property-value",
+        String(size),
+      );
+    };
+
     const workloads = [
-      { name: "ordinary", samples: 220, size: null },
-      { name: "dense-12px", samples: 5000, size: 12 },
-      { name: "dense-26px", samples: 5000, size: 26 },
+      { name: "ordinary", samples: 220, size: 2 },
+      { name: "dense-12pu", samples: 5000, size: 12 },
+      { name: "dense-26pu", samples: 5000, size: 26 },
     ] as const;
 
     let objects = 0;
     for (const workload of workloads) {
-      if (workload.size !== null) {
-        await window.evaluate((size) => {
-          const actions = (
-            window as unknown as {
-              __folioDrawingActions?: { setSize?: (value: number) => void };
-            }
-          ).__folioDrawingActions;
-          actions?.setSize?.(size);
-        }, workload.size);
-      }
+      await setSize(workload.size);
       const origin = { x: bounds.x + 260, y: bounds.y + 260 + runs.length * 60 };
       const before = await materialDiagnostics(window);
       let pointerUpAtMs = 0;
@@ -257,8 +288,16 @@ test("measures mounted hybrid Pencil", async () => {
             .__folioFrameProbe;
           return performance.now() - state.started;
         });
-        // Let the commit frame and anything it queued actually run.
-        await window.waitForTimeout(1500);
+        /**
+         * Settle past the recovery capture, not before it.
+         *
+         * `RECOVERY_DEBOUNCE_MS` is three seconds, and a 1500 ms settle used to
+         * stop short of it -- so the capture landed about a second into the
+         * *next* workload's stroke and was read as that stroke's long task.
+         * Waiting past it keeps the capture in the probe that caused it, where
+         * `taskStartsMs` against `pointerUpAtMs` names it for what it is.
+         */
+        await window.waitForTimeout(6000);
       });
       objects += 1;
       await expect(surface).toHaveAttribute("data-document-object-count", String(objects));

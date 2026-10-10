@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test, _electron as electron, type Page } from "@playwright/test";
-import { activateDockSlot } from "./dock-helpers";
+import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 
 /**
  * Hybrid Pencil in the running application.
@@ -282,12 +282,22 @@ test("fills in a broad Pencil stroke progressively and exactly", async () => {
 
     const inkCanvas = window.locator('canvas[data-folio-layer="ink"]');
     await activateDockSlot(window, "pencil");
-    await window.evaluate(() => {
-      const actions = (
-        window as unknown as { __folioDrawingActions?: { setSize?: (value: number) => void } }
-      ).__folioDrawingActions;
-      actions?.setSize?.(26);
-    });
+    // Through the control a person uses. The `window.__folioDrawingActions`
+    // hook this replaces never existed, and being optional-chained it left this
+    // test drawing at the preset's own 2 page units -- so "a broad mark" was
+    // never broad, and the many-tile case it exists for was never reached.
+    await openSlotToolOptions(window, "pencil");
+    const sizePalette = window.getByTestId("context-tool-palette");
+    const sizeField = sizePalette.getByLabel("Size value");
+    await sizeField.fill("26");
+    await sizeField.press("Enter");
+    await window.keyboard.press("Escape");
+    await expect(sizePalette).toHaveCount(0);
+    await expect(
+      window
+        .getByTestId("drawing-property-rail")
+        .locator('button[data-property-key="strokeWidth"]'),
+    ).toHaveAttribute("data-property-value", "26");
 
     const bounds = (await inkCanvas.boundingBox())!;
     const originX = bounds.x + 260;
