@@ -1,4 +1,3 @@
-import type { JsonValue } from "@folio/domain";
 import {
   Layer,
   ObjectCollection,
@@ -11,7 +10,6 @@ import {
   type PagePaper,
   type PaperType,
 } from "@folio/document";
-import { stringifyCanonicalJson } from "../json";
 import { FolioProjectCodecError } from "./project-errors";
 import {
   decodePageObject,
@@ -119,6 +117,8 @@ export function encodeFolioProject(project: FolioProjectSnapshot): string {
       pages: sketchbook.pages.map((page, index) => encodePage(page, index, budget, identities)),
     },
   };
+  // format, formatVersion, metadata, sketchbook: already canonical.
+
   // One walk of the finished tree, before any text exists: it proves the
   // nesting the decoder will accept and that every value is one JSON can
   // actually carry. Both used to be separate full passes, and the second of
@@ -129,7 +129,8 @@ export function encodeFolioProject(project: FolioProjectSnapshot): string {
     "INVALID_PROJECT",
     "$",
     "Folio project could not be encoded as JSON.",
-    () => stringifyCanonicalJson(serialized as unknown as JsonValue),
+    () => `${JSON.stringify(serialized, null, 2)}
+`,
   );
   assertEncodedOutputWithinLimits(output);
   return output;
@@ -287,11 +288,16 @@ function encodePage(
   });
   assertMembership(encodedLayers, encodedObjects, `${path}.content`);
   return {
+    content: { layers: encodedLayers, objects: encodedObjects },
+    // The model's own geometry and paper carry their keys in the order the
+    // document package builds them, which is not this format's order.
+    geometry: { height: geometry.height, width: geometry.width },
     id,
     name,
-    geometry,
-    paper,
-    content: { layers: encodedLayers, objects: encodedObjects },
+    paper:
+      paper.spacing === undefined
+        ? { color: paper.color, type: paper.type }
+        : { color: paper.color, spacing: paper.spacing, type: paper.type },
   };
 }
 
@@ -395,16 +401,16 @@ function encodeLayer(
   registerIdentity(identities.layerIds, id, `${path}.id`, "Layer", "INVALID_LAYER");
   return {
     id,
+    locked: expectBoolean(layer.locked, `${path}.locked`, "INVALID_LAYER"),
     name: expectString(layer.name, `${path}.name`, "INVALID_LAYER", {
       nonBlank: true,
       maximumLength: PROJECT_LIMITS.nameLength,
     }),
-    visible: expectBoolean(layer.visible, `${path}.visible`, "INVALID_LAYER"),
-    locked: expectBoolean(layer.locked, `${path}.locked`, "INVALID_LAYER"),
-    opacity: parseLayerOpacity(layer.opacity, `${path}.opacity`),
     objectIds: layer.objectIds.map((objectId, index) =>
       expectId(objectId, `${path}.objectIds[${index}]`, "INVALID_LAYER"),
     ),
+    opacity: parseLayerOpacity(layer.opacity, `${path}.opacity`),
+    visible: expectBoolean(layer.visible, `${path}.visible`, "INVALID_LAYER"),
   };
 }
 
@@ -450,12 +456,12 @@ function parseMetadata(value: unknown, path: string): FolioProjectMetadata {
   );
   assertExactKeys(record, ["documentId", "title", "createdAt"], [], path, "INVALID_METADATA");
   return {
+    createdAt: expectIsoTimestamp(record.createdAt, `${path}.createdAt`, "INVALID_METADATA"),
     documentId: expectId(record.documentId, `${path}.documentId`, "INVALID_METADATA"),
     title: expectString(record.title, `${path}.title`, "INVALID_METADATA", {
       nonBlank: true,
       maximumLength: PROJECT_LIMITS.titleLength,
     }),
-    createdAt: expectIsoTimestamp(record.createdAt, `${path}.createdAt`, "INVALID_METADATA"),
   };
 }
 

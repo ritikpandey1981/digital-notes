@@ -6,23 +6,24 @@ export function stableStringify(value: JsonValue): string {
   if (!isJsonSerializable(value)) {
     throw new PersistenceError("INVALID_DATA", "Value is not JSON serializable.");
   }
-  return stringifyCanonicalJson(value);
+  return `${JSON.stringify(sortJsonValue(value), null, 2)}\n`;
 }
 
 /**
- * Canonical JSON for a value the caller has already proven JSON-safe.
+ * Rebuilds a value with every object's keys in the format's canonical order.
  *
- * The same bytes {@link stableStringify} produces, without its guard. It exists
- * for one caller: the project codec, which builds its own tree out of validated
- * fields and then proves the finished tree in a single walk that also measures
- * nesting. Repeating the guard here would be a second full traversal to
- * re-establish something already established.
+ * The comparison is locale-aware, and that is not an accident of how this was
+ * first written: it is what the format's key order is defined by, so swapping it
+ * for a code-unit comparison would change the bytes of every file that has a
+ * dynamic key in it. For the codec's own fixed schemas the two orders agree,
+ * which is asserted where those orders are declared.
  *
- * Every other caller hands over data it did not build and should keep using
- * {@link stableStringify}.
+ * The project codec needs this only for the structures whose keys it cannot know
+ * statically: object metadata, Ink rendering hints, and the vector payloads. It
+ * emits everything else in order already, so it never rebuilds the document.
  */
-export function stringifyCanonicalJson(value: JsonValue): string {
-  return `${JSON.stringify(sortJsonValue(value), null, 2)}\n`;
+export function canonicalizeJsonValue(value: JsonValue): JsonValue {
+  return sortJsonValue(value);
 }
 
 export function parseJsonObject(content: string, filePath?: string): JsonObject {

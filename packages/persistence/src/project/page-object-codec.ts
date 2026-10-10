@@ -1,4 +1,5 @@
 import type { JsonObject } from "@folio/domain";
+import { canonicalizeJsonValue } from "../json";
 import {
   EllipseObject,
   InkObject,
@@ -80,18 +81,30 @@ export function encodePageObject(
     if (!(object instanceof InkObject)) {
       fail("INVALID_OBJECT", path, "Ink PageObject must be an InkObject instance.");
     }
+    // Spelled out rather than spread, because a spread appends its keys and
+    // `payload` and `type` belong in the middle of this object's canonical
+    // order, not after it.
     return {
-      ...common,
-      type: "ink",
+      createdAt: common.createdAt,
+      id: common.id,
+      locked: common.locked,
+      metadata: common.metadata,
+      modifiedAt: common.modifiedAt,
       payload: {
+        renderingHints: canonicalizeJsonValue(
+          expectJsonObject(
+            object.renderingHints,
+            `${path}.payload.renderingHints`,
+            "INVALID_OBJECT",
+            budget,
+          ),
+        ) as JsonObject,
         stroke: encodeStroke(object.stroke, `${path}.payload.stroke`, budget),
-        renderingHints: expectJsonObject(
-          object.renderingHints,
-          `${path}.payload.renderingHints`,
-          "INVALID_OBJECT",
-          budget,
-        ),
       },
+      transform: common.transform,
+      type: "ink",
+      version: common.version,
+      visible: common.visible,
     };
   }
   if (!isVectorObject(object)) {
@@ -99,12 +112,19 @@ export function encodePageObject(
   }
   const serialized = serializeVectorObject(object);
   return {
-    ...common,
-    type: serialized.type,
+    createdAt: common.createdAt,
+    id: common.id,
+    locked: common.locked,
+    metadata: common.metadata,
+    modifiedAt: common.modifiedAt,
     payload: {
-      geometry: serialized.payload.geometry,
-      style: serialized.payload.style,
+      geometry: canonicalizeJsonValue(serialized.payload.geometry) as JsonObject,
+      style: canonicalizeJsonValue(serialized.payload.style) as JsonObject,
     },
+    transform: common.transform,
+    type: serialized.type,
+    version: common.version,
+    visible: common.visible,
   };
 }
 
@@ -239,22 +259,26 @@ function serializeCommon(
     }
   }
   return {
-    id: expectId(object.id, `${path}.id`, "INVALID_OBJECT"),
-    version: 1,
     createdAt,
-    modifiedAt,
-    visible: expectBoolean(object.visible, `${path}.visible`, "INVALID_OBJECT"),
+    id: expectId(object.id, `${path}.id`, "INVALID_OBJECT"),
     locked: expectBoolean(object.locked, `${path}.locked`, "INVALID_OBJECT"),
-    metadata: expectJsonObject(object.metadata, `${path}.metadata`, "INVALID_OBJECT", budget),
+    // Dynamic keys: validated here, and ordered here, because nothing
+    // downstream rebuilds the document any more.
+    metadata: canonicalizeJsonValue(
+      expectJsonObject(object.metadata, `${path}.metadata`, "INVALID_OBJECT", budget),
+    ) as JsonObject,
+    modifiedAt,
     transform: serializeTransform(object.transform),
+    version: 1,
+    visible: expectBoolean(object.visible, `${path}.visible`, "INVALID_OBJECT"),
   };
 }
 
 function serializeTransform(transform: Transform): SerializedTransform {
   return {
-    translation: { x: transform.translation.x, y: transform.translation.y },
     rotation: transform.rotation,
     scale: transform.scale,
+    translation: { x: transform.translation.x, y: transform.translation.y },
   };
 }
 

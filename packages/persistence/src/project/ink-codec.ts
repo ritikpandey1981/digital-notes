@@ -72,24 +72,24 @@ export function encodeStroke(
     fail("INVALID_INK", path, "Ink artwork must contain a finalized Stroke instance.");
   }
   const serialized: SerializedStroke = {
+    brush: serializeBrush(stroke.brush),
     id: stroke.id,
-    timestamp: stroke.timestamp,
+    metrics: serializeMetrics(stroke.metrics),
     points: stroke.points.map(serializeProcessedPoint),
     sourceSamples: stroke.sourceSamples.map(serializeSourceSample),
+    statistics: serializeStatistics(stroke.statistics),
     style: {
-      color: stroke.style.color,
-      width: stroke.style.width,
-      opacity: stroke.style.opacity,
-      pressureEnabled: stroke.style.pressureEnabled,
-      lineCap: stroke.style.lineCap,
-      lineJoin: stroke.style.lineJoin,
       ...(stroke.style.brushTextureId === undefined
         ? {}
         : { brushTextureId: stroke.style.brushTextureId }),
+      color: stroke.style.color,
+      lineCap: stroke.style.lineCap,
+      lineJoin: stroke.style.lineJoin,
+      opacity: stroke.style.opacity,
+      pressureEnabled: stroke.style.pressureEnabled,
+      width: stroke.style.width,
     },
-    brush: serializeBrush(stroke.brush),
-    metrics: serializeMetrics(stroke.metrics),
-    statistics: { ...stroke.statistics },
+    timestamp: stroke.timestamp,
   };
   parseStroke(serialized, path, budget);
   return serialized;
@@ -155,27 +155,38 @@ function parseStroke(value: unknown, path: string, budget: ProjectResourceBudget
 
 function serializeSourceSample(sample: StrokePointInput): SerializedStrokePointInput {
   return {
-    x: sample.x,
-    y: sample.y,
-    timestamp: sample.timestamp,
+    ...(sample.altitudeAngle === undefined ? {} : { altitudeAngle: sample.altitudeAngle }),
+    ...(sample.azimuthAngle === undefined ? {} : { azimuthAngle: sample.azimuthAngle }),
+    button: sample.button,
+    buttons: sample.buttons,
+    pointerType: sample.pointerType,
     pressure: sample.pressure,
     tiltX: sample.tiltX,
     tiltY: sample.tiltY,
+    timestamp: sample.timestamp,
     twist: sample.twist,
-    pointerType: sample.pointerType,
-    button: sample.button,
-    buttons: sample.buttons,
-    ...(sample.altitudeAngle === undefined ? {} : { altitudeAngle: sample.altitudeAngle }),
-    ...(sample.azimuthAngle === undefined ? {} : { azimuthAngle: sample.azimuthAngle }),
+    x: sample.x,
+    y: sample.y,
   };
 }
 
 function serializeProcessedPoint(point: StrokePoint): SerializedStrokePoint {
   return {
-    ...serializeSourceSample(point),
-    delta: { x: point.delta.x, y: point.delta.y },
-    velocity: point.velocity,
     acceleration: point.acceleration,
+    ...(point.altitudeAngle === undefined ? {} : { altitudeAngle: point.altitudeAngle }),
+    ...(point.azimuthAngle === undefined ? {} : { azimuthAngle: point.azimuthAngle }),
+    button: point.button,
+    buttons: point.buttons,
+    delta: { x: point.delta.x, y: point.delta.y },
+    pointerType: point.pointerType,
+    pressure: point.pressure,
+    tiltX: point.tiltX,
+    tiltY: point.tiltY,
+    timestamp: point.timestamp,
+    twist: point.twist,
+    velocity: point.velocity,
+    x: point.x,
+    y: point.y,
   };
 }
 
@@ -325,28 +336,28 @@ function parseStrokeStyle(value: unknown, path: string): StrokeStyle {
 
 function serializeBrush(brush: ResolvedBrushSnapshot): ResolvedBrushSnapshot {
   return {
-    schemaVersion: brush.schemaVersion,
+    color: brush.color,
+    dynamics: {
+      pressureOpacity: serializePressureResponse(brush.dynamics.pressureOpacity),
+      pressureSize: serializePressureResponse(brush.dynamics.pressureSize),
+    },
+    family: brush.family,
+    opacity: brush.opacity,
     presetId: brush.presetId,
     presetVersion: brush.presetVersion,
-    family: brush.family,
-    color: brush.color,
+    renderer: { kind: brush.renderer.kind, version: brush.renderer.version },
+    schemaVersion: brush.schemaVersion,
     size: brush.size,
-    opacity: brush.opacity,
-    smoothing: { mode: brush.smoothing.mode, amount: brush.smoothing.amount },
-    dynamics: {
-      pressureSize: serializePressureResponse(brush.dynamics.pressureSize),
-      pressureOpacity: serializePressureResponse(brush.dynamics.pressureOpacity),
-    },
-    renderer: { version: brush.renderer.version, kind: brush.renderer.kind },
+    smoothing: { amount: brush.smoothing.amount, mode: brush.smoothing.mode },
   };
 }
 
 function serializePressureResponse(response: BrushPressureResponse): BrushPressureResponse {
   return {
+    curve: { exponent: response.curve.exponent, kind: response.curve.kind },
     enabled: response.enabled,
-    minimumFactor: response.minimumFactor,
     maximumFactor: response.maximumFactor,
-    curve: { kind: response.curve.kind, exponent: response.curve.exponent },
+    minimumFactor: response.minimumFactor,
   };
 }
 
@@ -506,21 +517,40 @@ function parsePressureResponse(value: unknown, path: string): BrushPressureRespo
 function serializeMetrics(metrics: StrokeMetrics): StrokeMetrics {
   return {
     bounds: serializeBounds(metrics.bounds),
-    inflatedBounds: serializeBounds(metrics.inflatedBounds),
-    dirtyRect: { ...metrics.dirtyRect },
-    center: { ...metrics.center },
-    length: metrics.length,
+    center: { x: metrics.center.x, y: metrics.center.y },
+    dirtyRect: {
+      height: metrics.dirtyRect.height,
+      width: metrics.dirtyRect.width,
+      x: metrics.dirtyRect.x,
+      y: metrics.dirtyRect.y,
+    },
     duration: metrics.duration,
+    inflatedBounds: serializeBounds(metrics.inflatedBounds),
+    length: metrics.length,
   };
 }
 
 function serializeBounds(bounds: StrokeBounds): StrokeBounds {
   return {
+    center: { x: bounds.center.x, y: bounds.center.y },
+    height: bounds.height,
+    width: bounds.width,
     x: bounds.x,
     y: bounds.y,
-    width: bounds.width,
-    height: bounds.height,
-    center: { ...bounds.center },
+  };
+}
+
+function serializeStatistics(statistics: StrokeStatistics): StrokeStatistics {
+  return {
+    averageAcceleration: statistics.averageAcceleration,
+    averagePressure: statistics.averagePressure,
+    averageVelocity: statistics.averageVelocity,
+    maximumAcceleration: statistics.maximumAcceleration,
+    maximumPressure: statistics.maximumPressure,
+    maximumVelocity: statistics.maximumVelocity,
+    minimumPressure: statistics.minimumPressure,
+    minimumVelocity: statistics.minimumVelocity,
+    pointCount: statistics.pointCount,
   };
 }
 
