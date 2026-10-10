@@ -1,0 +1,464 @@
+import { describe, expect, it } from "vitest";
+import type { JsonObject } from "@folio/domain";
+import {
+  Layer,
+  ObjectCollection,
+  ObjectFactory,
+  Page,
+  PageDocument,
+  SketchbookDocument,
+  createPageGeometry,
+  createPagePaper,
+  type PageObject,
+} from "@folio/document";
+import {
+  StrokeBuilder,
+  StrokeSmoother,
+  createResolvedBrushSnapshot,
+  type ResolvedBrushSnapshot,
+  type Stroke,
+  type StrokePointInput,
+} from "@folio/ink";
+import { decodeFolioProject, encodeFolioProject } from "../project-codec";
+import type { FolioProjectSnapshot } from "../project-types";
+
+/**
+ * What a `.folio` project encodes to, pinned byte for byte.
+ *
+ * The recovery codec is on the drawing thread, so it gets optimized. Every
+ * optimization is allowed to change how the bytes are produced and nothing
+ * about what they are: a project this version writes must be the same file the
+ * previous version wrote, down to key order, spacing and the trailing newline.
+ * Decoded equivalence is not the property under test here -- two files that
+ * decode alike are still two different files on disk.
+ *
+ * The digests below were captured from the implementation that existed before
+ * Recovery R2 touched anything, so they are evidence about that implementation
+ * rather than a description of the current one. They must never be re-blessed
+ * to accommodate a change in output. A deliberate format change is a
+ * `formatVersion` change, and would arrive with its own goldens.
+ *
+ * The second gate is the one that generalises. Every object in the output is
+ * asserted to carry its keys in the codec's canonical order, so a new fixture
+ * nobody pinned a digest for still cannot be emitted out of order.
+ */
+
+const LINEAR = Object.freeze({ kind: "linear" as const, exponent: 1 });
+
+/** FNV-1a over the encoded text. Local, so no helper can drift underneath it. */
+function digest(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+function brush(): ResolvedBrushSnapshot {
+  return createResolvedBrushSnapshot({
+    schemaVersion: 1,
+    presetId: "corpus-pencil",
+    presetVersion: 1,
+    family: "pencil",
+    color: "#343434",
+    size: 26,
+    opacity: 0.78,
+    smoothing: { mode: "average", amount: 0.2 },
+    dynamics: {
+      pressureSize: { enabled: true, minimumFactor: 0.65, maximumFactor: 1.25, curve: LINEAR },
+      pressureOpacity: {
+        enabled: true,
+        minimumFactor: 0.45,
+        maximumFactor: 1,
+        curve: { kind: "power", exponent: 0.75 },
+      },
+    },
+    renderer: { version: 1, kind: "pencil" },
+  });
+}
+
+function stroke(id: string, samples: number): Stroke {
+  const builder = new StrokeBuilder({
+    id,
+    timestamp: 0,
+    brush: brush(),
+    smoother: new StrokeSmoother({ mode: "average" }),
+  });
+  for (let index = 0; index < samples; index += 1) {
+    const t = index / samples;
+    const input: StrokePointInput = {
+      x: 100 + Math.sin(t * 11) * 160 + t * 520,
+      y: 200 + Math.cos(t * 7) * 110,
+      timestamp: index * 4,
+      // Pressure and tilt vary so the optional sample fields and the pressure
+      // response are both exercised rather than written as constants.
+      pressure: 0.3 + 0.5 * Math.abs(Math.sin(t * 5)),
+      tiltX: Math.round(Math.sin(t * 3) * 40),
+      tiltY: Math.round(Math.cos(t * 3) * 40),
+      twist: index % 360,
+      pointerType: "pen",
+      button: 0,
+      buttons: 1,
+      altitudeAngle: 0.8,
+      azimuthAngle: 1.2,
+    };
+    builder.addPoint(input);
+  }
+  return builder.finalize();
+}
+
+const TIMESTAMP = "2026-10-11T00:00:00.000Z";
+
+function factory(): ObjectFactory {
+  return new ObjectFactory({ now: () => TIMESTAMP });
+}
+
+function page(
+  id: string,
+  objects: readonly PageObject[],
+  options: Readonly<{
+    name?: string;
+    layers?: readonly Layer[];
+    paper?: Parameters<typeof createPagePaper>[0];
+    geometry?: Parameters<typeof createPageGeometry>[0];
+  }> = {},
+): Page {
+  const layers =
+    options.layers ??
+    ([
+      new Layer({ id: `${id}-layer-1`, name: "Layer 1", objectIds: objects.map((o) => o.id) }),
+    ] as readonly Layer[]);
+  return new Page({
+    id,
+    ...(options.name === undefined ? {} : { name: options.name }),
+    ...(options.geometry === undefined ? {} : { geometry: createPageGeometry(options.geometry) }),
+    paper: createPagePaper(options.paper ?? { type: "blank" }),
+    content: new PageDocument({ layers, objects: new ObjectCollection(objects) }),
+  });
+}
+
+function snapshot(
+  pages: readonly Page[],
+  metadata: Readonly<{ documentId?: string; title?: string }> = {},
+): FolioProjectSnapshot {
+  return {
+    metadata: {
+      documentId: metadata.documentId ?? "corpus",
+      title: metadata.title ?? "Corpus",
+      createdAt: TIMESTAMP,
+    },
+    sketchbook: new SketchbookDocument({ pages }),
+  } as unknown as FolioProjectSnapshot;
+}
+
+/** A nesting chain of a given depth, for the dynamic-key metadata structures. */
+function nest(levels: number): JsonObject {
+  let value: JsonObject = { leaf: 1 };
+  for (let index = 0; index < levels; index += 1) value = { [`level${String(index)}`]: value };
+  return value;
+}
+
+interface CorpusEntry {
+  readonly label: string;
+  readonly build: () => FolioProjectSnapshot;
+}
+
+const CORPUS: readonly CorpusEntry[] = Object.freeze([
+  {
+    label: "minimal",
+    build: () => snapshot([page("page-1", [])]),
+  },
+  {
+    label: "one-ink-stroke",
+    build: () => {
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: stroke("stroke-1", 24),
+        createdAt: TIMESTAMP,
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "vectors",
+    build: () => {
+      const make = factory();
+      const line = make.createLineObject({
+        id: "line-1",
+        geometry: { start: { x: 10, y: 20 }, end: { x: 90, y: 120 } },
+        style: { strokeColor: { hex: "#112233", opacity: 0.5 }, strokeWidth: 3 },
+        zIndex: 0,
+      });
+      const rectangle = make.createRectangleObject({
+        id: "rect-1",
+        geometry: { x: 5, y: 6, width: 70, height: 80 },
+        style: { fillColor: "#aabbcc", lineStyle: "dashed" },
+        zIndex: 1,
+      });
+      const ellipse = make.createEllipseObject({
+        id: "ellipse-1",
+        geometry: { center: { x: 50, y: 60 }, radiusX: 25, radiusY: 15 },
+        zIndex: 2,
+      });
+      return snapshot([page("page-1", [line, rectangle, ellipse])]);
+    },
+  },
+  {
+    label: "mixed-multi-page",
+    build: () => {
+      const make = factory();
+      const ink = make.createInkObject({
+        id: "object-1",
+        stroke: stroke("stroke-1", 16),
+        createdAt: TIMESTAMP,
+      });
+      const rectangle = make.createRectangleObject({
+        id: "rect-1",
+        geometry: { x: 1, y: 2, width: 30, height: 40 },
+        zIndex: 1,
+      });
+      return snapshot([
+        page("page-1", [ink, rectangle], {
+          name: "First",
+          paper: { type: "ruled", color: "#fffdf8", spacing: 24 },
+          geometry: { width: 816, height: 1056 },
+          layers: [
+            new Layer({ id: "page-1-layer-1", name: "Ink", objectIds: ["object-1"] }),
+            new Layer({
+              id: "page-1-layer-2",
+              name: "Shapes",
+              objectIds: ["rect-1"],
+              visible: false,
+              locked: true,
+              opacity: 0.4,
+            }),
+          ],
+        }),
+        page("page-2", [], {
+          name: "Second",
+          paper: { type: "grid", color: "#ffffff", spacing: 8 },
+        }),
+        page("page-3", [], {
+          name: "Third",
+          paper: { type: "isometric", color: "#f4f4f2", spacing: 12 },
+        }),
+      ]);
+    },
+  },
+  {
+    label: "many-layers",
+    build: () => {
+      const layers = Array.from(
+        { length: 24 },
+        (_unused, index) =>
+          new Layer({
+            id: `layer-${String(index).padStart(2, "0")}`,
+            name: `Layer ${String(index)}`,
+            objectIds: [],
+            visible: index % 3 !== 0,
+            locked: index % 4 === 0,
+            opacity: Number((index / 24).toFixed(4)),
+          }),
+      );
+      return snapshot([page("page-1", [], { layers })]);
+    },
+  },
+  {
+    label: "unicode-names",
+    build: () => {
+      const object = factory().createInkObject({
+        id: "object-ünïcode",
+        stroke: stroke("stroke-ü", 8),
+        createdAt: TIMESTAMP,
+      });
+      return snapshot(
+        [
+          page("page-1", [object], {
+            name: 'Ébauche — « étude » 日本語 🖌️\t"quoted"\\backslash',
+            layers: [
+              new Layer({
+                id: "page-1-layer-1",
+                name: "Çalışma \u0000\u001f control",
+                objectIds: ["object-ünïcode"],
+              }),
+            ],
+          }),
+        ],
+        { documentId: "corpus-ünïcode", title: "Título — 🎨  line separator" },
+      );
+    },
+  },
+  {
+    label: "dynamic-keys",
+    build: () => {
+      // The structures whose keys the codec does not know statically: object
+      // metadata, Ink rendering hints, and the vector payloads. Integer-like
+      // keys are included deliberately, because JavaScript enumerates those
+      // before string keys and in numeric order, which is not the order the
+      // codec's canonical comparison produces.
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: stroke("stroke-1", 8),
+        createdAt: TIMESTAMP,
+        metadata: {
+          zebra: 1,
+          Apple: 2,
+          apple: 3,
+          "10": 4,
+          "2": 5,
+          "1": 6,
+          "01": 7,
+          "-1": 8,
+          "layer-1": 9,
+          "a b": 10,
+          "": 11,
+          ümlaut: 12,
+          nested: { b: [1, 2, { d: true, c: null }], a: "x" },
+        },
+        renderingHints: { beta: false, alpha: [3, 2, 1], gamma: { inner: nest(4) } },
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "boundary-nesting",
+    build: () => {
+      // Metadata nested as deeply as the limit allows once the document that
+      // carries it is accounted for. The codec rejects anything past the
+      // ceiling, so this fixture sits just inside it.
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: stroke("stroke-1", 4),
+        createdAt: TIMESTAMP,
+        metadata: { deep: nest(50) },
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "punctuation-in-strings",
+    build: () => {
+      // A name full of JSON punctuation. Structural depth must be a property of
+      // the document, never of what its text happens to contain.
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: stroke("stroke-1", 4),
+        createdAt: TIMESTAMP,
+        metadata: {
+          note: '{"[[[":"]]]}"}' + "{".repeat(80) + "[".repeat(80),
+          escapes: 'a\\"b\\\\cé😀',
+        },
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+]);
+
+/**
+ * Byte length and FNV-1a digest of each fixture, from before R2.
+ *
+ * Captured with `FOLIO_PIN_CANONICAL_BYTES=1`, which prints a replacement for
+ * this table. Printing it is not blessing it: a change here has to be a
+ * deliberate format decision, with a `formatVersion` to go with it.
+ */
+const GOLDEN: Readonly<Record<string, string>> = Object.freeze({
+  minimal: "751:1w5x6tm",
+  "one-ink-stroke": "37122:hj2sj1",
+  vectors: "4627:1irczpu",
+  "mixed-multi-page": "28915:61ekj8",
+  "many-layers": "5787:iflpll",
+  "unicode-names": "15794:1i4i0z3",
+  "dynamic-keys": "16855:n1hnkg",
+  "boundary-nesting": "17956:84wtq2",
+  "punctuation-in-strings": "10594:9041zx",
+});
+
+/**
+ * Whether a key is an array index as far as the JavaScript engine is concerned.
+ *
+ * This matters because such keys are not stored in insertion order. An object
+ * always enumerates them first and ascending, however it was built -- so for
+ * them the codec's emission order is not a choice it gets to make, and
+ * inserting them "in sorted order" changes nothing about the resulting bytes.
+ */
+function isArrayIndexKey(key: string): boolean {
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key;
+}
+
+/**
+ * The order this format emits one object's keys in.
+ *
+ * Array-index-like keys first and ascending, because the engine insists; then
+ * every other key by `localeCompare(_, "en")`, which is the comparison the
+ * codec's canonical order is defined by. The locale is load-bearing: it puts
+ * "apple" before "Apple" and sorts "ümlaut" among the letters, neither of which
+ * a code-unit comparison does.
+ */
+function canonicalKeyOrder(keys: readonly string[]): string[] {
+  const indices = keys.filter(isArrayIndexKey).sort((left, right) => Number(left) - Number(right));
+  const names = keys
+    .filter((key) => !isArrayIndexKey(key))
+    .sort((left, right) => left.localeCompare(right, "en"));
+  return [...indices, ...names];
+}
+
+/** Every object in the parsed output whose keys are not in canonical order. */
+function outOfOrderKeyPaths(value: unknown, path = "$"): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => outOfOrderKeyPaths(item, `${path}[${String(index)}]`));
+  }
+  if (value === null || typeof value !== "object") return [];
+  const keys = Object.keys(value as Record<string, unknown>);
+  const sorted = canonicalKeyOrder(keys);
+  const own = keys.join("\u0000") === sorted.join("\u0000") ? [] : [path];
+  return [
+    ...own,
+    ...keys.flatMap((key) =>
+      outOfOrderKeyPaths((value as Record<string, unknown>)[key], `${path}.${key}`),
+    ),
+  ];
+}
+
+describe("the bytes a project encodes to", () => {
+  const encoded = new Map<string, string>();
+  for (const entry of CORPUS) {
+    encoded.set(entry.label, encodeFolioProject(entry.build()));
+  }
+
+  if (process.env.FOLIO_PIN_CANONICAL_BYTES === "1") {
+    it("prints a replacement golden table", () => {
+      const lines = [...encoded].map(
+        ([label, text]) => `  ${JSON.stringify(label)}: "${String(text.length)}:${digest(text)}",`,
+      );
+      console.log(`const GOLDEN = Object.freeze({\n${lines.join("\n")}\n});`);
+      expect(lines).toHaveLength(CORPUS.length);
+    });
+  }
+
+  it.each(CORPUS.map((entry) => entry.label))("is unchanged for %s", (label) => {
+    const text = encoded.get(label)!;
+    expect(`${String(text.length)}:${digest(text)}`).toBe(GOLDEN[label]);
+  });
+
+  it.each(CORPUS.map((entry) => entry.label))("carries canonical key order for %s", (label) => {
+    const text = encoded.get(label)!;
+    // `JSON.parse` preserves the emitted order of non-integer-like keys, so the
+    // parsed object reports what the text actually says.
+    expect(outOfOrderKeyPaths(JSON.parse(text))).toEqual([]);
+  });
+
+  it.each(CORPUS.map((entry) => entry.label))("still ends in one newline for %s", (label) => {
+    const text = encoded.get(label)!;
+    expect(text.endsWith("\n")).toBe(true);
+    expect(text.endsWith("\n\n")).toBe(false);
+    // Pretty printing at two spaces, which is part of the format.
+    expect(text.startsWith('{\n  "format": "folio-project",\n')).toBe(true);
+  });
+
+  it.each(CORPUS.map((entry) => entry.label))("round-trips %s back to the same bytes", (label) => {
+    const text = encoded.get(label)!;
+    expect(encodeFolioProject(decodeFolioProject(text))).toBe(text);
+  });
+});

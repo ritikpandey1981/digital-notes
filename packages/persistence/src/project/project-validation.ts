@@ -53,15 +53,7 @@ export function assertInputWithinLimits(input: unknown): asserts input is string
   assertJsonTextDepth(input);
 }
 
-/**
- * The whole-document budget an encoder must meet.
- *
- * It is deliberately the same structural check {@link assertInputWithinLimits}
- * applies on the way back in. Per-field validation is not enough on its own:
- * metadata nested legally within its own object still sits several levels down
- * inside the document that carries it, and a project Folio writes but cannot
- * read is worse than one it declines to write.
- */
+/** The size ceiling an encoder's output must meet, so a written project can be read back. */
 export function assertEncodedOutputWithinLimits(output: string): void {
   const byteLength = new TextEncoder().encode(output).byteLength;
   if (byteLength > PROJECT_LIMITS.inputBytes) {
@@ -70,7 +62,89 @@ export function assertEncodedOutputWithinLimits(output: string): void {
       maximumBytes: PROJECT_LIMITS.inputBytes,
     });
   }
-  assertJsonTextDepth(output);
+}
+
+/**
+ * Proves an encoder's finished tree is a document Folio can write and read back.
+ *
+ * Two invariants, one walk, because both are questions about the same nodes.
+ *
+ * *It is nesting the decoder will accept.* Per-field validation is not enough on
+ * its own: metadata nested legally within its own object still sits several
+ * levels down inside the document that carries it, and a project Folio writes
+ * but cannot read is worse than one it declines to write. Depth is counted the
+ * way {@link assertInputWithinLimits} counts it on the way back in -- the
+ * document's own outermost object is level one -- so the two agree by
+ * construction rather than by coincidence.
+ *
+ * *It is a value JSON can carry.* `JSON.stringify` does not refuse the things
+ * it cannot represent; it quietly drops `undefined` and functions, and turns
+ * `NaN` and `Infinity` into `null`. Either way the file that reached the disk is
+ * not the document that was in memory, and nothing finds out until someone tries
+ * to recover it. So the encoder proves its own output first and fails loudly
+ * instead.
+ *
+ * Walking the finished tree is what makes one pass enough. Doing it on the text
+ * instead costs a second full traversal and can only answer the first question,
+ * because by then the values JSON could not carry are already gone.
+ */
+export function assertEncodableProjectTree(tree: unknown): void {
+  assertEncodableNode(tree, 0, "$", new WeakSet<object>());
+}
+
+function assertEncodableNode(
+  value: unknown,
+  depth: number,
+  path: string,
+  ancestors: WeakSet<object>,
+): void {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      fail("INVALID_PROJECT", path, "Encoded Folio project cannot contain a non-finite number.", {
+        value: String(value),
+      });
+    }
+    return;
+  }
+  if (typeof value !== "object") {
+    fail("INVALID_PROJECT", path, `Encoded Folio project cannot contain a ${typeof value} value.`);
+  }
+  // The container about to be entered is what occupies the next level, which is
+  // the bracket the text scan would have counted here.
+  const nested = depth + 1;
+  if (nested > PROJECT_LIMITS.jsonDepth) {
+    resourceLimit(path, "Encoded Folio project exceeds the v1 JSON nesting limit.", {
+      depth: nested,
+      maximum: PROJECT_LIMITS.jsonDepth,
+    });
+  }
+  if (ancestors.has(value)) {
+    fail("INVALID_PROJECT", path, "Encoded Folio project cannot contain a circular reference.");
+  }
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      assertEncodableNode(value[index], nested, `${path}[${String(index)}]`, ancestors);
+    }
+  } else {
+    if (!isPlainRecord(value)) {
+      fail("INVALID_PROJECT", path, "Encoded Folio project cannot contain a non-plain object.", {
+        prototype: (Object.getPrototypeOf(value) as object | null)?.constructor?.name ?? null,
+      });
+    }
+    // Only string keys, because only string keys reach the text: a
+    // symbol-keyed property is invisible to `JSON.stringify` and always has been.
+    for (const key of Object.keys(value)) {
+      assertEncodableNode(
+        (value as Record<string, unknown>)[key],
+        nested,
+        propertyPath(path, key),
+        ancestors,
+      );
+    }
+  }
+  ancestors.delete(value);
 }
 
 export function expectRecord(

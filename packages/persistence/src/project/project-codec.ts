@@ -11,7 +11,7 @@ import {
   type PagePaper,
   type PaperType,
 } from "@folio/document";
-import { stableStringify } from "../json";
+import { stringifyCanonicalJson } from "../json";
 import { FolioProjectCodecError } from "./project-errors";
 import {
   decodePageObject,
@@ -27,6 +27,7 @@ import {
 import {
   PROJECT_LIMITS,
   addObjectCount,
+  assertEncodableProjectTree,
   assertEncodedOutputWithinLimits,
   assertExactKeys,
   assertInputWithinLimits,
@@ -118,11 +119,17 @@ export function encodeFolioProject(project: FolioProjectSnapshot): string {
       pages: sketchbook.pages.map((page, index) => encodePage(page, index, budget, identities)),
     },
   };
+  // One walk of the finished tree, before any text exists: it proves the
+  // nesting the decoder will accept and that every value is one JSON can
+  // actually carry. Both used to be separate full passes, and the second of
+  // them could only run after the values it was looking for had already been
+  // dropped by `JSON.stringify`.
+  assertEncodableProjectTree(serialized);
   const output = constructOrFail(
     "INVALID_PROJECT",
     "$",
     "Folio project could not be encoded as JSON.",
-    () => stableStringify(serialized as unknown as JsonValue),
+    () => stringifyCanonicalJson(serialized as unknown as JsonValue),
   );
   assertEncodedOutputWithinLimits(output);
   return output;
