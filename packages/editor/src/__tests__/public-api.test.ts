@@ -26,6 +26,7 @@ describe("@folio/editor public API", () => {
       "EDITOR_STROKE_WIDTHS",
       "EDITOR_VIEWPORT_ZOOM_PRESETS",
       "FAVORITE_COLOR_CAPACITY",
+      "ForegroundInteractionTracker",
       "MARQUEE_ACTIVATION_DISTANCE",
       "MAXIMUM_PAGE_EXTENT",
       "MINIMUM_PAGE_EXTENT",

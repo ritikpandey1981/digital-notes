@@ -1,4 +1,9 @@
-import { ProjectSession, ProjectRuntimeHost, type ProjectRuntime } from "@folio/editor";
+import {
+  ForegroundInteractionTracker,
+  ProjectSession,
+  ProjectRuntimeHost,
+  type ProjectRuntime,
+} from "@folio/editor";
 import { createEmptyFolioProject } from "@folio/persistence/project";
 import { ProjectPersistenceCoordinator } from "../../persistence/project-persistence-coordinator";
 import {
@@ -143,64 +148,69 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
       tone: "error",
     });
   }, [notify]);
-  const [{ host, persistence, lifecycle, recovery, startupRecovery, unsavedPrompt }] = useState(
-    () => {
-      const runtimeHost = new ProjectRuntimeHost(
-        new ProjectSession(createEmptyFolioProject()),
-        () => coordinator.canReplaceRuntime,
-      );
-      const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
-        () => runtimeHost.active.project,
-        { save: (request) => window.folio.projects.save(request) },
-        () => !runtimeHost.replacing,
-        {
-          host: runtimeHost,
-          port: {
-            open: () => window.folio.projects.open(),
-            adopt: (targetId) => window.folio.projects.adopt(targetId),
-            release: (targetId) => window.folio.projects.release(targetId),
-          },
-          openOriginal: (recoveryId) => window.folio.recovery.openOriginal(recoveryId),
+  const [
+    { host, persistence, lifecycle, recovery, startupRecovery, unsavedPrompt, interactionActivity },
+  ] = useState(() => {
+    const runtimeHost = new ProjectRuntimeHost(
+      new ProjectSession(createEmptyFolioProject()),
+      () => coordinator.canReplaceRuntime,
+    );
+    const coordinator: ProjectPersistenceCoordinator = new ProjectPersistenceCoordinator(
+      () => runtimeHost.active.project,
+      { save: (request) => window.folio.projects.save(request) },
+      () => !runtimeHost.replacing,
+      {
+        host: runtimeHost,
+        port: {
+          open: () => window.folio.projects.open(),
+          adopt: (targetId) => window.folio.projects.adopt(targetId),
+          release: (targetId) => window.folio.projects.release(targetId),
         },
-      );
-      const prompt = new DeferredUnsavedChangesPrompt();
-      const lifecycleCoordinator = new ProjectLifecycleCoordinator(coordinator, prompt);
-      const autosave = new RecoveryAutosaveCoordinator({
-        store: {
-          store: (request) => window.folio.recovery.store(request),
+        openOriginal: (recoveryId) => window.folio.recovery.openOriginal(recoveryId),
+      },
+    );
+    const prompt = new DeferredUnsavedChangesPrompt();
+    const lifecycleCoordinator = new ProjectLifecycleCoordinator(coordinator, prompt);
+    // One signal for the whole workspace: it describes the person using it,
+    // not any one project, and it outlives every project replacement.
+    const interaction = new ForegroundInteractionTracker();
+    const autosave = new RecoveryAutosaveCoordinator({
+      store: {
+        store: (request) => window.folio.recovery.store(request),
+        clear: (recoveryId) => window.folio.recovery.clear(recoveryId),
+      },
+      persistenceState: () => coordinator.persistenceState,
+      backingTargetId: () => coordinator.backing?.id ?? null,
+      interactionActivity: interaction,
+      // Losing one snapshot is a transient thing and says nothing worth
+      // interrupting for. Having stopped trying is different: from then on
+      // nothing is protecting the drawing, and only the user can act on that.
+      onStatusChange: (status) => {
+        if (status.phase === "failed" && status.exhausted) recoveryUnprotected();
+      },
+    });
+    return {
+      host: runtimeHost,
+      persistence: coordinator,
+      lifecycle: lifecycleCoordinator,
+      startupRecovery: new ProjectRecoveryCoordinator(
+        coordinator,
+        lifecycleCoordinator,
+        {
+          list: () => window.folio.recovery.list(),
+          read: (recoveryId) => window.folio.recovery.read(recoveryId),
           clear: (recoveryId) => window.folio.recovery.clear(recoveryId),
         },
-        persistenceState: () => coordinator.persistenceState,
-        backingTargetId: () => coordinator.backing?.id ?? null,
-        // Losing one snapshot is a transient thing and says nothing worth
-        // interrupting for. Having stopped trying is different: from then on
-        // nothing is protecting the drawing, and only the user can act on that.
-        onStatusChange: (status) => {
-          if (status.phase === "failed" && status.exhausted) recoveryUnprotected();
-        },
-      });
-      return {
-        host: runtimeHost,
-        persistence: coordinator,
-        lifecycle: lifecycleCoordinator,
-        startupRecovery: new ProjectRecoveryCoordinator(
-          coordinator,
-          lifecycleCoordinator,
-          {
-            list: () => window.folio.recovery.list(),
-            read: (recoveryId) => window.folio.recovery.read(recoveryId),
-            clear: (recoveryId) => window.folio.recovery.clear(recoveryId),
-          },
-          autosave,
-          // The drawing on screen is protected by a record of its own; it is
-          // never one of the crashes this offers to rescue.
-          () => autosave.activeRecoveryId,
-        ),
-        recovery: autosave,
-        unsavedPrompt: prompt,
-      };
-    },
-  );
+        autosave,
+        // The drawing on screen is protected by a record of its own; it is
+        // never one of the crashes this offers to rescue.
+        () => autosave.activeRecoveryId,
+      ),
+      recovery: autosave,
+      unsavedPrompt: prompt,
+      interactionActivity: interaction,
+    };
+  });
   const { onConfirmUnsavedChanges } = props;
   useEffect(() => {
     unsavedPrompt.setHandler(onConfirmUnsavedChanges ?? null);
@@ -258,6 +268,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
           host={host}
           entry={entry}
           publishEscape={publishEscape}
+          interactionActivity={interactionActivity}
         />
       ))}
     </div>
@@ -314,10 +325,12 @@ function ProjectWorkspace({
   onViewportActionsReady,
   onViewportChange,
   onViewportNavigationLearned,
+  interactionActivity,
 }: EditorWorkspaceProps & {
   host: ProjectRuntimeHost;
   entry: ProjectRuntime;
   publishEscape: (actions: EditorEscapeActions | null) => void;
+  interactionActivity: ForegroundInteractionTracker;
 }) {
   const projectSession = entry.project;
   const active = host.active === entry;
@@ -665,6 +678,7 @@ function ProjectWorkspace({
         artworkSamplingActive={eyedropperActive}
         artworkSamplingOwnerScope={colorPickerFloatingScope}
         drawingStyle={drawingStyle}
+        interactionActivity={interactionActivity}
         onArtworkSample={handleArtworkSample}
         viewportSnapshot={viewportSnapshot}
         onObjectLifecycleActionsReady={handleObjectLifecycleActionsReady}

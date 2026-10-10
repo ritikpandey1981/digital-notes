@@ -1,4 +1,4 @@
-import { ProjectSession } from "@folio/editor";
+import { ForegroundInteractionTracker, ProjectSession } from "@folio/editor";
 import { createEmptyFolioProject, decodeFolioProject } from "@folio/persistence/project";
 import { describe, expect, it, vi } from "vitest";
 import { createEditorHistoryCoordinator } from "../../../../../packages/editor/src/history/editor-history-coordinator";
@@ -13,6 +13,7 @@ import { RecoveryAutosaveCoordinator, type RecoveryClock } from "../recovery-aut
 
 const DEBOUNCE = 3_000;
 const MAXIMUM_AGE = 30_000;
+const INPUT_SETTLE = 250;
 
 /** A clock the test advances by hand, so nothing waits on real timers. */
 function createClock() {
@@ -83,6 +84,9 @@ function setup(options: { origin?: "created" | "loaded" } = {}) {
     hasUnsavedRisk: false,
   };
   const timers = createClock();
+  // The real signal, driven by hand: these tests are about what recovery does
+  // with it, and a stand-in could agree with an implementation that is wrong.
+  const interaction = new ForegroundInteractionTracker();
   const coordinator = new RecoveryAutosaveCoordinator({
     store,
     persistenceState: () => state,
@@ -95,6 +99,8 @@ function setup(options: { origin?: "created" | "loaded" } = {}) {
     debounceMs: DEBOUNCE,
     maximumAgeMs: MAXIMUM_AGE,
     retryDelayMs: 5_000,
+    inputSettleMs: INPUT_SETTLE,
+    interactionActivity: interaction,
   });
   const history = createEditorHistoryCoordinator({
     documentSession: project.documentSession,
@@ -110,6 +116,13 @@ function setup(options: { origin?: "created" | "loaded" } = {}) {
     timers,
     coordinator,
     history,
+    interaction,
+    /** A press begins, the mark it draws commits, and the hand lifts. */
+    stroke: (name: string) => {
+      interaction.begin(1);
+      history.executePageRename("page-A", name);
+      interaction.end(1);
+    },
     risk: (next: Partial<ProjectPersistenceState>) => {
       state = { ...state, ...next };
     },
@@ -557,6 +570,332 @@ describe("recovery autosave lifecycle", () => {
       await s.timers.advance(MAXIMUM_AGE * 2);
 
       expect(s.cleared).toEqual([]);
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+    } finally {
+      s.cleanup();
+    }
+  });
+});
+
+/**
+ * Recovery used to be allowed to encode the project while someone was drawing.
+ *
+ * Not because it ignored anything, but because the only question it asked was
+ * whether the document was safe to serialize, and the answer during a stroke is
+ * yes: the mark being drawn is not in the document. What it could not see was
+ * that producing those bytes takes several hundred milliseconds, and that the
+ * person is holding a pen.
+ */
+describe("recovery stays out of the way of interaction", () => {
+  it("captures a due state when nothing is being interacted with", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Quiet");
+      await s.timers.advance(DEBOUNCE);
+
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+      expect(s.interaction.isActive()).toBe(false);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("does not start a due capture while a press is in progress", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Mark A");
+
+      // The next mark starts inside the debounce armed by the previous one.
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.interaction.begin(1);
+      // Far past the moment the capture was due, and still nothing has run.
+      await s.timers.advance(DEBOUNCE * 4);
+
+      expect(s.store.store).not.toHaveBeenCalled();
+      // The requirement is not lost: it is still armed, waiting for the hand.
+      expect(s.timers.pendingCount).toBe(1);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("resumes a held-back capture promptly when the press commits nothing", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Mark A");
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.interaction.begin(1);
+      await s.timers.advance(DEBOUNCE);
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      // A cancelled stroke, a pan, a click that selected nothing: the press is
+      // over and the document is exactly what it was when the capture came due.
+      s.interaction.end(1);
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      await s.timers.advance(INPUT_SETTLE);
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+      expect(decodeFolioProject(s.stored[0]!.content).sketchbook.firstPage.name).toBe("Mark A");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("never encodes inside the release that ends the press", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Mark A");
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.interaction.begin(1);
+      await s.timers.advance(DEBOUNCE);
+
+      s.interaction.end(1);
+      // Finishing a mark commits it, hands it to the compositor and flushes a
+      // render, all in this one task. Recovery is not allowed to join it.
+      expect(s.store.store).not.toHaveBeenCalled();
+      await s.timers.advance(INPUT_SETTLE - 1);
+      expect(s.store.store).not.toHaveBeenCalled();
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("coalesces a held-back capture into the state the press committed", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Mark A");
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.stroke("Mark B");
+      await s.timers.advance(DEBOUNCE);
+
+      // One capture, of B. A's capture was due and held back; B's own debounce
+      // then became the authority, so A is never written on its own.
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+      expect(decodeFolioProject(s.stored[0]!.content).sketchbook.firstPage.name).toBe("Mark B");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("lets the newer state keep its own debounce rather than capturing early", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Mark A");
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.interaction.begin(1);
+      // Long enough that A's capture really does come due inside the press.
+      await s.timers.advance(DEBOUNCE);
+      expect(s.store.store).not.toHaveBeenCalled();
+      s.edit("Mark B");
+      s.interaction.end(1);
+
+      // The prompt resumption belongs to a press that committed nothing. This
+      // one committed, so capturing a quarter of a second after the lift would
+      // put the encode right back where the artist is still working.
+      await s.timers.advance(INPUT_SETTLE * 2);
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      // It is B's own debounce that decides, and B is what gets written.
+      await s.timers.advance(DEBOUNCE);
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+      expect(decodeFolioProject(s.stored[0]!.content).sketchbook.firstPage.name).toBe("Mark B");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("interrupts no stroke in a burst, and captures once afterwards", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      for (const name of ["One", "Two", "Three", "Four", "Five"]) {
+        s.interaction.begin(1);
+        // A mark takes time to draw, and the debounce can come due inside it.
+        await s.timers.advance(2_000);
+        s.edit(name);
+        s.interaction.end(1);
+        await s.timers.advance(1_500);
+      }
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      await s.timers.advance(DEBOUNCE);
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+      expect(decodeFolioProject(s.stored[0]!.content).sketchbook.firstPage.name).toBe("Five");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("holds back the age limit instead of forcing an encode into a stroke", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      // Steady committed editing: the age limit, not the debounce, decides.
+      for (let step = 0; step < 9; step += 1) {
+        s.stroke(`Step ${step}`);
+        await s.timers.advance(2_000);
+      }
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      // One long mark, drawn straight through the age limit.
+      s.interaction.begin(1);
+      await s.timers.advance(MAXIMUM_AGE * 2);
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      s.interaction.end(1);
+      await s.timers.advance(INPUT_SETTLE);
+      // Overdue, so it goes at the first moment the hand is free -- which is
+      // what the age limit is for. It is a deadline for the next safe boundary,
+      // not a licence to block the renderer wherever it happens to fall.
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+      expect(decodeFolioProject(s.stored[0]!.content).sketchbook.firstPage.name).toBe("Step 8");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("writes nothing for a project that was retired while a capture was held back", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Edited A");
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.interaction.begin(1);
+      await s.timers.advance(DEBOUNCE);
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      const b = new ProjectSession(createEmptyFolioProject({ documentId: "B", pageId: "page-B" }));
+      s.coordinator.setProject(b);
+      s.interaction.end(1);
+      await s.timers.advance(MAXIMUM_AGE);
+
+      // A is gone. Nothing it had pending may reach the disk under its identity.
+      expect(s.stored.every((request) => request.documentId === "B")).toBe(true);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("drops a held-back capture that a confirmed save has made unnecessary", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Edited");
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.interaction.begin(1);
+      await s.timers.advance(DEBOUNCE);
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      // Save lands while the press continues. The artwork is durable now, so
+      // the snapshot that was waiting protects nothing.
+      s.risk({ isDirty: false, hasConfirmedCheckpoint: true, hasUnsavedRisk: false });
+      s.project.confirmDurableCheckpoint(s.project.contentStateId);
+      s.interaction.end(1);
+      await s.timers.advance(MAXIMUM_AGE);
+
+      expect(s.store.store).not.toHaveBeenCalled();
+      expect(s.timers.pendingCount).toBe(0);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("keeps one timer and one pending capture however long input continues", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.interaction.begin(1);
+      for (let step = 0; step < 20; step += 1) {
+        s.edit(`Step ${step}`);
+        await s.timers.advance(DEBOUNCE);
+        // Deferral is a flag and a timer, not a list of postponed captures.
+        expect(s.timers.pendingCount).toBe(1);
+      }
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      s.interaction.end(1);
+      await s.timers.advance(DEBOUNCE + INPUT_SETTLE);
+      expect(s.store.store).toHaveBeenCalledTimes(1);
+      expect(s.timers.pendingCount).toBe(0);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("leaves settlement meaning what it meant, with or without a press", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      // A press is not a transaction: the document is settled throughout one.
+      s.interaction.begin(1);
+      expect(s.project.isPersistenceSettled).toBe(true);
+      s.edit("Drawn");
+      expect(s.project.isPersistenceSettled).toBe(true);
+      s.interaction.end(1);
+
+      // An open gesture transaction is still the thing that unsettles it.
+      s.history.controller.beginTransaction({
+        id: "erase-strokes-probe",
+        timestamp: "2026-10-10T09:00:00.000Z",
+        description: "Erase strokes",
+      });
+      s.edit("Mid gesture");
+      expect(s.project.isPersistenceSettled).toBe(false);
+      s.history.controller.rollbackTransaction();
+      expect(s.project.isPersistenceSettled).toBe(true);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("changes nothing about the document by being pressed on", async () => {
+    const s = setup();
+    try {
+      const before = {
+        stateId: s.project.contentStateId,
+        dirty: s.project.isDirty,
+        undo: s.history.controller.canUndo(),
+      };
+
+      s.interaction.begin(1);
+      s.interaction.begin(2);
+      s.interaction.end(2);
+      s.interaction.end(1);
+      await s.timers.settle();
+
+      expect(s.project.contentStateId).toBe(before.stateId);
+      expect(s.project.isDirty).toBe(before.dirty);
+      expect(s.history.controller.canUndo()).toBe(before.undo);
+      expect(s.store.store).not.toHaveBeenCalled();
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  it("waits for the last press to lift, not the first", async () => {
+    const s = setup();
+    try {
+      s.risk({ isDirty: true, hasUnsavedRisk: true });
+      s.edit("Edited");
+      await s.timers.advance(DEBOUNCE - 1_000);
+      s.interaction.begin(1);
+      s.interaction.begin(2);
+      await s.timers.advance(DEBOUNCE);
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      s.interaction.end(1);
+      await s.timers.advance(INPUT_SETTLE * 2);
+      // One finger up is not the end of the interaction.
+      expect(s.store.store).not.toHaveBeenCalled();
+
+      s.interaction.end(2);
+      await s.timers.advance(INPUT_SETTLE);
       expect(s.store.store).toHaveBeenCalledTimes(1);
     } finally {
       s.cleanup();

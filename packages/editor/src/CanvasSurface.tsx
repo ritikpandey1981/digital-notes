@@ -68,6 +68,7 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { RuntimeActivation, runtimeCallback } from "./runtime-activation";
 import type { ProjectRuntime, ProjectRuntimeHost } from "./project-runtime-host";
+import type { ForegroundInteractionReporter } from "./foreground-interaction";
 import {
   createCanvasArtworkColorSampler,
   type ArtworkColorSampleResult,
@@ -333,6 +334,14 @@ export interface CanvasSurfaceProps {
   readonly interactionMode?: CanvasInteractionMode;
   /** Optional style consumed only when a new pen or highlighter stroke begins. */
   readonly drawingStyle?: CanvasDrawingStyle;
+  /**
+   * Receives the start and end of every press on this surface.
+   *
+   * Background work that would be felt as a pause reads it to stay out of the
+   * way of interaction. It is reported for presses, not for document changes:
+   * what it describes is a person's hand, not the drawing.
+   */
+  readonly interactionActivity?: ForegroundInteractionReporter;
   /** Receives the mounted rendering controller. */
   readonly onControllerReady?: (controller: CanvasController) => void;
   /** Receives the interface-oriented selection controller. */
@@ -475,6 +484,7 @@ export function CanvasSurface({
   className,
   interactionMode = "ink",
   drawingStyle,
+  interactionActivity,
   onControllerReady,
   onSelectionControllerReady,
   onManipulationControllerReady,
@@ -529,6 +539,7 @@ export function CanvasSurface({
   const historyControllerReadyRef = useRef(onHistoryControllerReady);
   const diagnosticsRef = useRef(onDiagnostics);
   const errorRef = useRef(onError);
+  const interactionActivityRef = useRef(interactionActivity);
   const selectionChangeRef = useRef(onSelectionChange);
   const manipulationChangeRef = useRef(onManipulationChange);
   const historyChangeRef = useRef(onHistoryChange);
@@ -604,6 +615,10 @@ export function CanvasSurface({
     drawingStyleRef.current = drawingStyle;
     updateToolDiagnosticsRef.current?.();
   }, [drawingStyle]);
+
+  useEffect(() => {
+    interactionActivityRef.current = interactionActivity;
+  }, [interactionActivity]);
 
   useEffect(() => {
     selectionChangeRef.current = onSelectionChange;
@@ -2543,6 +2558,22 @@ export function CanvasSurface({
       synchronizeViewportLayers(controller.snapshot());
 
       const editorPointerIds = new Set<number>();
+      /**
+       * The presses this surface has told the activity signal about.
+       *
+       * Reported presses are released by id rather than by clearing the signal,
+       * because the signal belongs to the workspace and more than one surface
+       * can exist at once: a candidate runtime being torn down must not announce
+       * that the hand holding a pen on the live surface is free.
+       */
+      const reportedPointerIds = new Set<number>();
+      const releaseReportedPointer = (pointerId: number): void => {
+        if (!reportedPointerIds.delete(pointerId)) return;
+        interactionActivityRef.current?.end(pointerId);
+      };
+      const releaseEveryReportedPointer = (): void => {
+        for (const pointerId of [...reportedPointerIds]) releaseReportedPointer(pointerId);
+      };
       const viewportPanPointerIds = new Set<number>();
       let spacePanHeld = false;
       let navigationTeachingReported = false;
@@ -3264,6 +3295,14 @@ export function CanvasSurface({
       ): void => {
         const listener: EventListener = (nativeEvent) => {
           const event = nativeEvent as PointerEvent;
+          // Reported before any routing, so that every press counts exactly
+          // once however it is then handled. Which tool owns the press, and
+          // whether it produces artwork, a selection or a pan, is a question
+          // about the drawing; this one is only about whether a hand is busy.
+          if (phase === "down") {
+            reportedPointerIds.add(event.pointerId);
+            interactionActivityRef.current?.begin(event.pointerId);
+          }
           if (handleArtworkSamplingPointer(phase, event)) return;
           // A press on the artwork takes focus, the way pressing any surface
           // that owns interaction should. These listeners sit on the ink
@@ -3290,6 +3329,26 @@ export function CanvasSurface({
       addEditorPointerListener("pointerup", "up");
       addEditorPointerListener("pointercancel", "cancel");
       addEditorPointerListener("lostpointercapture", "cancel");
+      /**
+       * Releases are observed on the window rather than on the canvas.
+       *
+       * The canvas sees a release only while it still holds pointer capture,
+       * and a tool that consumes its own release stops the event before it
+       * could travel back out -- so the only place guaranteed to see the end of
+       * every press is in front of all of them.
+       *
+       * The report then waits for the press to finish being handled. A mark
+       * commits during this same event, and a scheduler told the hand is free
+       * before that commit exists would decide about the previous document and
+       * act on it inside the lift.
+       */
+      const reportInteractionRelease: EventListener = (nativeEvent) => {
+        const { pointerId } = nativeEvent as PointerEvent;
+        if (!reportedPointerIds.has(pointerId)) return;
+        queueMicrotask(() => releaseReportedPointer(pointerId));
+      };
+      activation.listen(window, "pointerup", reportInteractionRelease, true);
+      activation.listen(window, "pointercancel", reportInteractionRelease, true);
       const wheelListener: EventListener = (nativeEvent) => {
         const event = nativeEvent as WheelEvent;
         if (artworkSamplingActiveRef.current) {
@@ -3965,7 +4024,12 @@ export function CanvasSurface({
           activePointerInput.detach();
           throw cause;
         }
-        return () => activePointerInput.detach();
+        return () => {
+          activePointerInput.detach();
+          // A surface that stops owning input will never see the release of
+          // whatever was pressed when it lost it.
+          releaseEveryReportedPointer();
+        };
       });
       updateToolDiagnostics();
       callbacks.toolRegistryReadyRef.current?.(activeToolRegistry);
@@ -3982,6 +4046,8 @@ export function CanvasSurface({
       viewportBlurListener = () => {
         cancelContinuousStyleEdit();
         cancelViewportPan();
+        // A window that loses focus mid-press never receives the release.
+        releaseEveryReportedPointer();
       };
       activation.listen(window, "keydown", toolKeyboardDownListener as EventListener, true);
       activation.listen(window, "keyup", toolKeyboardUpListener as EventListener, true);

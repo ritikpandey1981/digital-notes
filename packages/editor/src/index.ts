@@ -14,6 +14,11 @@ export {
 } from "./project-runtime-host";
 export type { RuntimePreparationResult } from "./runtime-activation";
 export {
+  ForegroundInteractionTracker,
+  type ForegroundInteractionReporter,
+  type ForegroundInteractionSource,
+} from "./foreground-interaction";
+export {
   FAVORITE_COLOR_CAPACITY,
   RECENT_COLOR_CAPACITY,
   createEditorColorSystem,

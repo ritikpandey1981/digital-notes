@@ -1,4 +1,4 @@
-import type { ProjectSession } from "@folio/editor";
+import type { ForegroundInteractionSource, ProjectSession } from "@folio/editor";
 import { encodeFolioProject } from "@folio/persistence/project";
 import type { DesktopRecoveryPort, RecoveryStoreResult } from "../../electron/recovery-contract";
 import type { ProjectPersistenceState } from "./project-persistence-coordinator";
@@ -10,6 +10,15 @@ export const RECOVERY_MAXIMUM_AGE_MS = 30_000;
 export const RECOVERY_RETRY_DELAY_MS = 5_000;
 export const RECOVERY_MAXIMUM_RETRIES = 3;
 /**
+ * How long after an interaction ends before a capture it held back may run.
+ *
+ * Long enough that the encoding never happens in the task that ended the
+ * interaction -- finishing a mark commits it, hands it to the compositor and
+ * flushes a render, all inside the release -- and short enough that nobody
+ * could tell the difference in how fresh a snapshot is.
+ */
+export const RECOVERY_INPUT_SETTLE_MS = 250;
+/**
  * How long cleanup of a record that protects nothing may hold anything up.
  *
  * Removing a stale snapshot is housekeeping. Putting a project away must never
@@ -19,6 +28,9 @@ export const RECOVERY_MAXIMUM_RETRIES = 3;
 export const RECOVERY_CLEANUP_TIMEOUT_MS = 2_000;
 
 export type RecoveryTimerHandle = ReturnType<typeof setTimeout>;
+
+/** Content identity as the project reports it, without depending on History here. */
+type ProjectContentStateId = ProjectSession["contentStateId"];
 
 export interface RecoveryClock {
   readonly now: () => number;
@@ -36,6 +48,21 @@ export interface RecoveryAutosaveOptions {
   readonly maximumAgeMs?: number;
   readonly retryDelayMs?: number;
   readonly maximumRetries?: number;
+  readonly inputSettleMs?: number;
+  /**
+   * Whether the user is interacting with the editor right now.
+   *
+   * Orthogonal to settlement, and the two must stay that way. Settlement
+   * answers whether the model is safe to serialize. This answers whether the
+   * renderer should begin several hundred milliseconds of encoding at this
+   * moment. A live stroke is not in the document, so a drawing project is
+   * perfectly safe to write for the whole time it is being drawn -- and that is
+   * exactly when writing it is felt.
+   *
+   * Omitted, recovery schedules the way it did before interaction was visible
+   * to it: on settlement alone.
+   */
+  readonly interactionActivity?: ForegroundInteractionSource;
   readonly onStatusChange?: (status: RecoveryStatus) => void;
 }
 
@@ -58,6 +85,16 @@ interface ActiveRecovery {
   writing: Promise<unknown> | null;
   /** A newer state arrived while a write was in flight; at most one is remembered. */
   writeAgain: boolean;
+  /**
+   * The content a due capture was holding back for, while input was in progress.
+   *
+   * Remembering which state it was for is what tells the two endings apart. If
+   * that content is still current when the interaction finishes, nothing was
+   * committed and this capture is simply overdue. If it is not, the interaction
+   * committed something newer, and the newer state's own debounce is the
+   * schedule that should stand.
+   */
+  deferredStateId: ProjectContentStateId | null;
   storedStateId: string | null;
   attempts: number;
 }
@@ -86,7 +123,7 @@ export class RecoveryAutosaveCoordinator {
   readonly #options: Required<
     Omit<
       RecoveryAutosaveOptions,
-      "store" | "persistenceState" | "backingTargetId" | "onStatusChange"
+      "store" | "persistenceState" | "backingTargetId" | "interactionActivity" | "onStatusChange"
     >
   > &
     RecoveryAutosaveOptions;
@@ -111,6 +148,7 @@ export class RecoveryAutosaveCoordinator {
       maximumAgeMs: options.maximumAgeMs ?? RECOVERY_MAXIMUM_AGE_MS,
       retryDelayMs: options.retryDelayMs ?? RECOVERY_RETRY_DELAY_MS,
       maximumRetries: options.maximumRetries ?? RECOVERY_MAXIMUM_RETRIES,
+      inputSettleMs: options.inputSettleMs ?? RECOVERY_INPUT_SETTLE_MS,
       ...options,
     };
   }
@@ -188,11 +226,32 @@ export class RecoveryAutosaveCoordinator {
    */
   connect(): () => void {
     this.#suspended = false;
+    const releaseInteraction =
+      this.#options.interactionActivity?.subscribeIdle(() => this.#interactionEnded()) ?? null;
     if (this.#active !== null) this.#evaluate(this.#active);
     return () => {
       this.#suspended = true;
+      releaseInteraction?.();
       if (this.#active !== null) this.#cancelTimer(this.#active);
     };
+  }
+
+  /**
+   * Brings a capture that input held back forward to the end of that input.
+   *
+   * Holding one back always leaves its timer armed, so this is about promptness
+   * and not about correctness: without it the capture still happens, just after
+   * waiting out another debounce for no reason. A capture the interaction
+   * itself made obsolete is left alone -- see {@link ActiveRecovery.deferredStateId}.
+   */
+  #interactionEnded(): void {
+    const active = this.#active;
+    if (active === null || this.#suspended) return;
+    const deferredFor = active.deferredStateId;
+    if (deferredFor === null) return;
+    active.deferredStateId = null;
+    if (active.project.contentStateId !== deferredFor) return;
+    this.#schedule(active, this.#options.inputSettleMs);
   }
 
   #begin(project: ProjectSession): ActiveRecovery {
@@ -205,6 +264,7 @@ export class RecoveryAutosaveCoordinator {
       pendingSince: null,
       writing: null,
       writeAgain: false,
+      deferredStateId: null,
       storedStateId: null,
       attempts: 0,
     };
@@ -262,6 +322,7 @@ export class RecoveryAutosaveCoordinator {
       // content, or the project is the blank sketch Folio made.
       this.#cancelTimer(active);
       active.pendingSince = null;
+      active.deferredStateId = null;
       if (active.storedStateId !== null) {
         active.storedStateId = null;
         void this.#clearRecord(active.recoveryId);
@@ -312,6 +373,21 @@ export class RecoveryAutosaveCoordinator {
       this.#schedule(active, this.#options.debounceMs);
       return;
     }
+    // Settled says the bytes are safe to write. It does not say this is a good
+    // moment to spend several hundred milliseconds producing them, and during a
+    // stroke it never is: the mark being drawn is not in the document, so the
+    // committed project stays settled for exactly as long as someone is busy.
+    //
+    // Holding back is all this does. The timer stays armed, the pending change
+    // keeps the age it already had, and the capture happens at the first moment
+    // the hand is free -- promptly if the interaction ended with nothing newer
+    // to write, and otherwise on the newer state's own debounce.
+    if (this.#options.interactionActivity?.isActive() === true) {
+      active.deferredStateId = active.project.contentStateId;
+      this.#schedule(active, this.#options.debounceMs);
+      return;
+    }
+    active.deferredStateId = null;
     const state = this.#options.persistenceState();
     if (!state.hasUnsavedRisk) {
       this.#evaluate(active);

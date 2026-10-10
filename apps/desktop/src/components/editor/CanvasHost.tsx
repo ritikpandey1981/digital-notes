@@ -36,6 +36,7 @@ interface CanvasHostProps {
   readonly artworkSamplingActive: boolean;
   readonly artworkSamplingOwnerScope: string | undefined;
   readonly drawingStyle: CanvasDrawingStyle;
+  readonly interactionActivity: NonNullable<CanvasSurfaceProps["interactionActivity"]>;
   readonly onArtworkSample: (result: ArtworkColorSampleResult) => void;
   readonly viewportSnapshot: EditorViewportSnapshot;
   readonly onObjectLifecycleActionsReady: (actions: ObjectLifecycleActions | null) => void;
@@ -64,6 +65,7 @@ export const CanvasHost = memo(function CanvasHost({
   artworkSamplingActive,
   artworkSamplingOwnerScope,
   drawingStyle,
+  interactionActivity,
   onArtworkSample,
   viewportSnapshot,
   onObjectLifecycleActionsReady,
@@ -368,6 +370,7 @@ export const CanvasHost = memo(function CanvasHost({
         interactionMode={interactionMode}
         artworkSamplingActive={artworkSamplingActive}
         drawingStyle={drawingStyle}
+        interactionActivity={interactionActivity}
         onArtworkSample={onArtworkSample}
         onHistoryControllerReady={handleHistoryControllerReady}
         onDiagnostics={() => {
