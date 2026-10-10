@@ -150,15 +150,23 @@ at all; against a varying field a magnified tile clamps at its own edge and the 
 breaks. A presentation now carries one cell of each neighbour, at 3% more backing. See D-041,
 D-042 and D-043.
 
+E4.3A then froze it. The artist drew with the production Pencil and approved the picture, so
+`pencil@1`'s artistic output is now artwork's property rather than the engine's — pinned as
+page-cell digests of eleven fixtures across nine shapes, four widths and three pressures, the
+two generated fields, and the live, committed and cold deposition paths asserted against the
+pinned value rather than only against each other. Runtime mechanics are deliberately not
+frozen, because the next phase rewrites them. Every gate was shown able to fail first. See
+D-044.
+
 Remaining:
 
-- Visual approval of the hybrid Pencil. `pencil@1` is deliberately not frozen yet: until
-  the picture is signed off, a refinement is a re-pin rather than a `pencil@2`.
-- The long frame at twenty-six page units. E4.2C scheduled presentation building and fixed a
-  cache-identity defect, but measuring the hitch showed presentation was never its cause: it
-  is a single collection pause that no profiler reproduces. Recorded with its evidence in
+- The long frame at twenty-six page units, which is the next phase. E4.2C scheduled
+  presentation building and fixed a cache-identity defect, but measuring the hitch showed
+  presentation was never its cause: it is a single collection pause that no profiler
+  reproduces. Recorded with its evidence in
   [`performance/pencil-e4-2.md`](performance/pencil-e4-2.md); it needs a memory pass rather
-  than another scheduling one.
+  than another scheduling one. It is performance debt and not Pencil visual debt, and it is
+  not solved — the allocation work has to land underneath the E4.3A freeze digests.
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a

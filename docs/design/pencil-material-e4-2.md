@@ -611,9 +611,82 @@ What is still open is not about the material:
   creation; E4.2C measured presentation at 0.2 ms a tile and twenty-five tiles a workload
   and showed that was wrong. It is a property of the memory profile of a broad stroke —
   roughly 200 KiB of fresh allocation per new tile — and wants a memory pass rather than
-  another scheduling one.
-- **Visual approval.** `pencil@1` is not frozen. The picture has not been signed off, and
-  until it is, a refinement is still a re-pin rather than a `pencil@2`.
+  another scheduling one. It is **performance debt and not Pencil visual debt**: the mark is
+  approved and frozen, and the next phase goes after the allocations underneath it while the
+  digests in §25 hold the picture still. It is not solved.
 - **Marker**, which will deposit into the same lattice and inherits every rule here.
 - **Per-hardness Pencil parameters**, which are the phase that should make grain strength,
   tooth and spacing durable fields.
+
+## 25. The freeze
+
+The artist has drawn with the production Pencil and approved the picture. From that point
+`pencil@1` is artwork's property rather than the engine's, and what makes that enforceable
+is a pinned value rather than an intention — see [D-044](../DECISIONS.md).
+
+### What is frozen
+
+The artistic result, and only that: the strategy identity, the two generated fields, dab
+placement, pressure deposition, the clump and tooth fields, passage accumulation, taps,
+rounded starts and terminals, material alpha generation, tile reconstruction,
+active/committed convergence, the presentation border, and the colour and opacity
+semantics.
+
+Pinned in [`../../packages/ink/src/__tests__/pencil-visual-freeze.test.ts`](../../packages/ink/src/__tests__/pencil-visual-freeze.test.ts):
+
+| | |
+| --- | --- |
+| Resources | `folio.graphite.hb-tip.v1` `1yig76y`, `folio.paper.graphite-tooth.v1` `1a91iur` |
+| Fixtures | nine shapes — tap, short and long straight, curve, tight turn, loop, self-crossing, retrace, broad scribble — at 2, 6, 12 and 26 page units and three pressures, eleven in all |
+| Pressure | one path at low, medium and firm, pinned separately |
+| Paths | live, committed and cold reach the pinned value, not merely each other |
+| Order | tile order, neighbour order, a tile alone with its own field cache, and four sample-batch sizes all reach it |
+| Border | a presentation is 130 cells where its tile is 128, and the ring is the neighbour's |
+
+Digests are over **page cells**, not tiles: a cell is named by where it is on the page, so
+the pinned value is independent of how material happens to be tiled. Tiling is a cache
+decision, and the next phase may change it without re-pinning any artwork.
+
+The fixtures and the brush are transcribed into the freeze file rather than imported from
+the shared material fixture. A helper another suite can edit for its own reasons is a way
+for this gate to report that Pencil changed when it did not.
+
+### What is not frozen
+
+Scheduler timing, eviction order, memory layout, allocation strategy, Canvas object reuse,
+collection behaviour, queue implementation. Those are the subject of the next phase and
+freezing them would freeze the wrong thing.
+
+### Why the paths are pinned and not only compared
+
+[`pencil-material-cache.test.ts`](../../packages/ink/src/__tests__/pencil-material-cache.test.ts)
+already settles that live, committed and cold agree with each other, and that is not
+sufficient here. A change that moves all three together passes every one of those tests —
+and that is the exact shape of a memory optimization, which touches the buffers all three
+deposit into. So the frozen value is asserted *against* the paths rather than *between*
+them.
+
+### Every test was made to fail
+
+Following [D-042](../DECISIONS.md), each gate was shown sensitive before it was trusted.
+Changing `TONE_RANGE` from 0.78 to 0.7801 — thirteen parts in a hundred thousand — fails all
+seven digest assertions. Changing the nib's variation seed fails the resource gate and names
+the field. Setting the presentation gutter to zero fails the border gate.
+
+The pressure-superset claim is the instructive one. Read on the shipped preset it is a
+**coarse instrument**: a firm tip is nearly twice the radius of a light one, so the wider
+footprint absorbs a displacement of a cell or two and the subset never breaks. Measured — a
+pressure-dependent shift of one and a half cells passes it. The sharp form holds the
+footprint still, with the size response off, so pressure varies only the load; then a
+displacement of a **single cell** breaks the chain and names the cell. It reads a loop rather
+than a straight run, because a straight run is its own translate along its length and would
+hide exactly the defect being looked for. Both are kept: the first is the claim about the
+mark a person draws, the second is the one with teeth.
+
+### The roster
+
+Five strategies have shipped, and each is now accounted for by a gate that pins its pixels:
+`centerline@1` and `outline@1` in `legacy-strategy-freeze.test.ts`, `technical-pen@1`,
+`pressure-pen@1` and `pencil@1` in `engine-strategy-freeze.test.ts`, and `pencil@1` again
+here for its material. A roster test derives the list from the vocabulary, so a strategy
+cannot ship without a gate, and a failure names the strategy rather than only a count.

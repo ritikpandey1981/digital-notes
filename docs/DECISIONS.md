@@ -925,3 +925,34 @@ Cost: 67,600 bytes a presentation rather than 65,536, 3.1% more, charged to the 
 **Consequence.** Marker inherits this with its own material. More generally: a tile that
 will be *sampled* rather than blitted is not self-contained, and the cache that owns it is
 the only thing that can complete it.
+## D-044 — An approved appearance is frozen by pinning what it is
+
+**Status:** accepted
+
+The artist has looked at the production Pencil and approved it, which moves `pencil@1` from
+the engine's business to artwork's. The next phase goes after the collection pause, and that
+means rewriting allocation, buffer reuse, eviction and scheduling underneath a mark that is
+not allowed to change. An agreement not to touch the appearance is not a mechanism; the
+mechanism is a pinned value.
+
+What is pinned is the **result**, in page coordinates: a digest of every inked cell of each
+of eleven fixtures, the three readings of one path under low, medium and firm pressure, and
+the two generated fields the mark is made of. Page coordinates rather than tiles, because
+tiling is a cache decision and a later phase may change it without re-pinning the artwork. A
+digest per fixture rather than one over the set, because a failure then names the mark that
+moved.
+
+What is **not** pinned is every incidental runtime mechanic: scheduler timing, eviction
+order, memory layout, allocation strategy, Canvas reuse, queue implementation. Those are the
+subject of the next phase, and freezing them would freeze the wrong thing.
+
+The three deposition paths deserve a note of their own. That live, committed and cold
+agree **with each other** was already tested, and that test cannot see a change that moves
+all three together — which is the exact shape of a memory optimization. So the frozen value
+is asserted against the paths rather than between them.
+
+**Consequence.** Every shipped strategy is accounted for by a gate that pins its pixels,
+checked by a roster test, so a strategy cannot ship without one. A refinement to an approved
+appearance is a new strategy version — `pencil@2` — and never an edit to a pinned digest. The
+three strategies that have shipped have never moved; Pencil's were re-pinned twice before
+approval, and that is now over.

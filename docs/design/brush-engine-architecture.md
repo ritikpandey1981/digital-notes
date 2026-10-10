@@ -1353,6 +1353,32 @@ pictures.
 
 Deposition is untouched: the resource and strategy freeze digests are unmoved.
 
+### E4.3A — The Pencil visual freeze
+
+The artist drew with the production Pencil and approved it, so `pencil@1`'s artistic output
+is frozen from here. The freeze is a pinned value and not an intention: page-cell digests of
+eleven fixtures across nine shapes, four widths and three pressures, the three pressure
+readings of one path, and the two generated fields. Live, committed and cold deposition are
+each asserted *against* the pinned value rather than only against each other, because three
+paths moving together is exactly what a memory optimization does and mutual agreement cannot
+see it. See [D-044](../DECISIONS.md) and
+[`pencil-material-e4-2.md` §25](pencil-material-e4-2.md).
+
+Runtime mechanics are deliberately **not** frozen — scheduler timing, eviction order, memory
+layout, allocation strategy, Canvas reuse, collection behaviour — because the next phase
+rewrites them. The 26-page-unit collection pause is unchanged and unexplained; it is
+performance debt, not visual debt.
+
+Every gate in the freeze was shown able to fail before it was trusted. A thirteen-parts-in-a-hundred-thousand
+change to one tone constant fails all seven digest assertions. The pressure-superset claim
+needed two forms: read on the shipped preset a firm tip is nearly twice the radius of a light
+one, so the wider footprint absorbs a one-and-a-half-cell displacement without the subset
+breaking; with the size response off, a single cell breaks it.
+
+A roster test derives the five shipped strategies from the vocabulary and requires each to
+name a gate, so a strategy cannot ship without one. A refinement to an approved appearance
+is a new strategy version, never an edit to a digest.
+
 ### Later — Marker
 
 Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,
@@ -1502,7 +1528,9 @@ timing, and rerun a suspected focus failure alone before treating it as a regres
 - Deposited material is a **derived cache owned by the renderer/project runtime**. It is
   never reachable from `Stroke`, a document, History or the codec, and destroying all of it
   must leave the artwork authoritative and exactly reconstructable.
-- A shipped `(strategyId, strategyVersion)` **never changes what it draws**.
+- A shipped `(strategyId, strategyVersion)` **never changes what it draws**. Enforced by a
+  pinned digest per strategy, and a roster test that requires every shipped strategy to name
+  the gate that pins it.
 - No strategy stores derived geometry in the document.
 - No live per-frame step is **O(total stroke length)**.
 - `@folio/ink` stays free of React and Electron, and gains no new Canvas 2D coupling
