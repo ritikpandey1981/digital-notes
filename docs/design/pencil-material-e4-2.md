@@ -605,15 +605,14 @@ Canvas 2D is sufficient and GPU is not required; the prototype evidence and the 
 measurement in [`../performance/pencil-e4-2.md`](../performance/pencil-e4-2.md) agree.
 What is still open is not about the material:
 
-- **A collection pause at 26 page units.** One long task per run, around 230 ms, about 1.4 s
-  into a broad stroke. It does not reproduce under a CPU profile or a timeline trace and
-  attributes to `(program)`. E4.2B attributed it, by reasoning, to presentation-tile
-  creation; E4.2C measured presentation at 0.2 ms a tile and twenty-five tiles a workload
-  and showed that was wrong. It is a property of the memory profile of a broad stroke —
-  roughly 200 KiB of fresh allocation per new tile — and wants a memory pass rather than
-  another scheduling one. It is **performance debt and not Pencil visual debt**: the mark is
-  approved and frozen, and the next phase goes after the allocations underneath it while the
-  digests in §25 hold the picture still. It is not solved.
+- **Nothing, in the material.** The long task this list used to carry was attributed three
+  times before it was measured: to presentation-tile creation by reasoning, to a major
+  collection by its signatures, and finally — by asking when it fires and what it scales
+  with — to the recovery capture, three seconds after the previous pointer-up, costing
+  0.05–0.07 ms per sample in the document. Pencil's drawing path allocates 0.2 MB a second
+  and produces no long task at any width. See
+  [`../performance/pencil-e4-3.md`](../performance/pencil-e4-3.md) and D-045. The hitch is
+  real and belongs to persistence.
 - **Marker**, which will deposit into the same lattice and inherits every rule here.
 - **Per-hardness Pencil parameters**, which are the phase that should make grain strength,
   tooth and spacing durable fields.

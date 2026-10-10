@@ -956,3 +956,39 @@ checked by a roster test, so a strategy cannot ship without one. A refinement to
 appearance is a new strategy version — `pencil@2` — and never an edit to a pinned digest. The
 three strategies that have shipped have never moved; Pencil's were re-pinned twice before
 approval, and that is now over.
+## D-045 — A long task is attributed by when it fires and what it scales with
+
+**Status:** accepted
+
+Broad Pencil's one unexplained block was read as a major garbage collection because it looked
+like one: real main-thread blocking, no JavaScript frame under it, `(program)` in a CPU
+profile, and a size that grew with brush width — which is what grows allocation. Every one of
+those is a *signature*, and a signature is a resemblance rather than a mechanism.
+
+Two measurements that name a mechanism settled it in an afternoon. **When does it fire?** Six
+runs out of six, 2.98 seconds after the previous pointer-up, against a single three-second
+constant in the whole application. **What does it scale with?** The number of samples in the
+document, at 0.05–0.07 ms each, not the width of the stroke. It is the recovery capture
+encoding the project, it is not in the stroke at all, and no Pencil frame appears in a profile
+of it.
+
+The resemblance held up as long as it did because the harness started the next workload about
+two seconds after the previous commit, so a capture on a three-second debounce landed a
+second into the next stroke. Moving the settle past three seconds moved the block out of the
+stroke, which is the entire finding.
+
+**And a parameter set through a hook that does not exist is not set.** The same harness
+called `window.__folioDrawingActions.setSize` — optional-chained, absent from the source and
+from the built bundle, a silent no-op — so the broad fixture it claimed to measure was never
+created, and both dense workloads were drawn at the preset's own width. A harness that
+reports a difference between two workloads it never actually distinguished will have that
+difference explained, and the explanation will be wrong.
+
+**The rule.** Before an optimization, say what the mechanism is in terms that make a
+prediction: *when* it happens and *what* it is proportional to. A signature does not. And a
+fixture is not established by the code that asks for it, only by reading back what it got.
+
+**Consequence.** Pencil's drawing path was left alone: 0.2 MB a second of allocation, bounded
+resident memory, no long task at any width. Optimizing it would have been work against a
+measurement rather than from one. The hitch is real and belongs to persistence, where its
+cost model is now written down.

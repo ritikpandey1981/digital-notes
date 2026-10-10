@@ -26,6 +26,24 @@ Instrumenting the path settled it three ways:
 
 What it actually is, is recorded below.
 
+## A second correction
+
+Two claims below are wrong, and E4.3B settled both. They are left in place because what they
+were wrong about is the point; the measurement that replaces them is
+[`pencil-e4-3.md`](pencil-e4-3.md).
+
+**The brush width was never set.** Every workload here called a
+`window.__folioDrawingActions.setSize` hook that does not exist in the application, and being
+optional-chained it was a silent no-op. The "12 px" and "26 px" rows were both drawn at the
+preset's own 2 page units, and what separated them was how much was already on the page.
+
+**The one long task is not a garbage collection and not in the stroke.** It is the recovery
+capture -- `encodeFolioProject` over the whole document -- firing three seconds after the
+previous pointer-up, which with this file's 1500 ms settle landed about a second into the
+next workload's stroke. Six runs put it at 2.98 s after pointer-up; its cost is linear in the
+samples in the document; its stack is the codec. On the corrected fixture Pencil produces
+**no long task while drawing, at any width.** See [D-045](../DECISIONS.md).
+
 ## What is measured, and what is not
 
 Two different things, and the difference is the reason the first diagnosis stood as long as

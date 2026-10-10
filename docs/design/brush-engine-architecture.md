@@ -1379,6 +1379,40 @@ A roster test derives the five shipped strategies from the vocabulary and requir
 name a gate, so a strategy cannot ship without one. A refinement to an approved appearance
 is a new strategy version, never an edit to a digest.
 
+### E4.3B — The long task was not Pencil's
+
+This phase was briefed as a Pencil allocation and garbage-collection pass and did not become
+one, because the measurement did not support it. Two findings, in the order they were needed.
+
+**The broad fixture was never created.** Every mounted Pencil measurement set the brush width
+through a `window.__folioDrawingActions.setSize` hook that does not exist in the application;
+optional-chained, it was a silent no-op, and the "12 px" and "26 px" workloads were both
+drawn at the preset's own 2 page units. The size control is real and runs 0.5 to 40, so the
+fixture was always reachable. The specs now drive it and read the value back.
+
+**The block fires three seconds after pointer-up.** Raising the post-stroke settle past the
+recovery capture's debounce moves it out of the stroke entirely: six runs out of six at
+2.98 s after the previous pointer-up, against the only three-second constant in the
+application. Its cost is linear in the samples in the document at 0.05–0.07 ms each — the
+1 620 ms case is a 12 page-unit stroke and the 417 ms case is 26 — and the only JavaScript
+frames in a profile of it belong to the project codec. It is the recovery capture, it would
+behave identically with any brush, and more than half of it is not JavaScript at all.
+
+**Pencil's drawing path had no allocation problem.** V8's sampling heap profiler across a
+42-second, 5 000-sample, 26 page-unit stroke: 2.1 MB, about 50 KB a second, 82% of it
+`freezePoint` and `freezeSourceSample` freezing the finished `Stroke` once. Nothing per-frame
+registered above a 4 KB sampling floor. With typed arrays accounted from the runtime's own
+numbers the whole stroke allocates about 9 MB — 0.2 MB a second — and across 5 700 frames
+exactly two intervals exceed one display period: the handover frame, and the capture. So
+nothing was optimized. See [D-045](../DECISIONS.md) and
+[`../performance/pencil-e4-3.md`](../performance/pencil-e4-3.md).
+
+The hitch is real and is persistence's: a capture landing after the artist has begun a new
+mark blocks that mark, and `RECOVERY_MAXIMUM_AGE_MS` interrupts any stroke past thirty
+seconds on purpose. A 5 000-sample stroke encodes to 5.6 MB of JSON.
+
+`pencil@1`'s freeze digests are unmoved; no production Pencil code was touched.
+
 ### Later — Marker
 
 Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,

@@ -158,15 +158,25 @@ pinned value rather than only against each other. Runtime mechanics are delibera
 frozen, because the next phase rewrites them. Every gate was shown able to fail first. See
 D-044.
 
+E4.3B then went looking for the allocation behind the one long Pencil frame and found that
+there was none to find: the block is the recovery capture firing three seconds after the
+previous pointer-up, and Pencil's drawing path allocates 0.2 MB a second with no long task at
+any width. Its cost is 0.05–0.07 ms per sample in the document rather than anything to do
+with brush width, and the only JavaScript frames in a profile of it belong to the project
+codec. E4.3B also found that the fixture those measurements claimed had never been created,
+because the width was set through a hook that does not exist. Nothing was optimized, and the
+long frame is no longer the brush engine's item. Evidence in
+[`performance/pencil-e4-3.md`](performance/pencil-e4-3.md), rule in D-045.
+
 Remaining:
 
-- The long frame at twenty-six page units, which is the next phase. E4.2C scheduled
-  presentation building and fixed a cache-identity defect, but measuring the hitch showed
-  presentation was never its cause: it is a single collection pause that no profiler
-  reproduces. Recorded with its evidence in
-  [`performance/pencil-e4-2.md`](performance/pencil-e4-2.md); it needs a memory pass rather
-  than another scheduling one. It is performance debt and not Pencil visual debt, and it is
-  not solved — the allocation work has to land underneath the E4.3A freeze digests.
+- **Recovery capture cost**, which is where that hitch now belongs. A 5 000-sample stroke
+  encodes to 5.6 MB of JSON, a capture that lands after a new mark has begun blocks it, and
+  `RECOVERY_MAXIMUM_AGE_MS` interrupts any stroke past thirty seconds deliberately. The time
+  is not in the stroke codec: it is `assertJsonTextDepth` walking every character of the
+  encoded text, `sortJsonValue` rebuilding every object with sorted keys, and
+  `JSON.stringify` — all linear in the document and all on the main thread. Measured
+  breakdown in [`performance/pencil-e4-3.md`](performance/pencil-e4-3.md).
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a
