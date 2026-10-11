@@ -68,6 +68,17 @@ export class Stroke {
       throw new InkError("INVALID_STROKE", "A stroke requires source input samples.");
     }
     this.sourceSamples = Object.freeze(sourceSamples.map(freezeSourceSample));
+    // A stroke whose statistics disagree with its own points is incoherent
+    // whatever anyone intends to do with it, so the model refuses it rather
+    // than leaving the serializer to notice. `StrokeBuilder` derives the count
+    // from the points it collected, and the successor constructors carry both
+    // across together, so nothing supported has to change to satisfy this.
+    if (data.statistics.pointCount !== this.points.length) {
+      throw new InkError("INVALID_STROKE", "A stroke's statistics must count its own points.", {
+        pointCount: data.statistics.pointCount,
+        points: this.points.length,
+      });
+    }
     this.style = createStrokeStyle(data.style);
     this.brush =
       data.brush === undefined
