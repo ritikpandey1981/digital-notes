@@ -7,6 +7,7 @@ import {
   Page,
   PageDocument,
   SketchbookDocument,
+  Transform,
   createPageGeometry,
   createPagePaper,
   type PageObject,
@@ -15,6 +16,9 @@ import {
   StrokeBuilder,
   StrokeSmoother,
   createResolvedBrushSnapshot,
+  type BrushFamily,
+  type BrushStrategyId,
+  type InkPointerType,
   type ResolvedBrushSnapshot,
   type Stroke,
   type StrokePointInput,
@@ -33,10 +37,11 @@ import type { FolioProjectSnapshot } from "../project-types";
  * decode alike are still two different files on disk.
  *
  * The digests below were captured from the implementation that existed before
- * Recovery R2 touched anything, so they are evidence about that implementation
- * rather than a description of the current one. They must never be re-blessed
- * to accommodate a change in output. A deliberate format change is a
- * `formatVersion` change, and would arrive with its own goldens.
+ * the phase that pinned them -- the first nine from before Recovery R2, the
+ * Stroke-shaped eight from before Recovery R3 -- so they are evidence about
+ * those implementations rather than a description of the current one. They must
+ * never be re-blessed to accommodate a change in output. A deliberate format
+ * change is a `formatVersion` change, and would arrive with its own goldens.
  *
  * The second gate is the one that generalises. Every object in the output is
  * asserted to carry its keys in the codec's canonical order, so a new fixture
@@ -104,6 +109,85 @@ function stroke(id: string, samples: number): Stroke {
       azimuthAngle: 1.2,
     };
     builder.addPoint(input);
+  }
+  return builder.finalize();
+}
+
+/**
+ * One stroke per durable render strategy, and every other Stroke shape the
+ * encoder has to keep producing the same bytes for.
+ *
+ * Recovery R3 moved the encoder's Stroke validation off the encoded object and
+ * onto the model it was built from, so the corpus exercises the fields that
+ * choice touches: every strategy identity a saved project may name, both sample
+ * arrays at scale, the optional pointer angles present and absent, each pointer
+ * type, and the brush a Stroke built without one falls back to.
+ */
+const STRATEGIES: readonly Readonly<{ kind: BrushStrategyId; family: BrushFamily }>[] =
+  Object.freeze([
+    { kind: "centerline", family: "pen" },
+    { kind: "outline", family: "pen" },
+    { kind: "technical-pen", family: "pen" },
+    { kind: "pressure-pen", family: "pen" },
+    { kind: "pencil", family: "pencil" },
+  ]);
+
+function strategyBrush(kind: BrushStrategyId, family: BrushFamily): ResolvedBrushSnapshot {
+  return createResolvedBrushSnapshot({
+    schemaVersion: 1,
+    presetId: `corpus-${kind}`,
+    presetVersion: 2,
+    family,
+    color: "#1b2a3c",
+    size: 11.5,
+    opacity: 0.93,
+    smoothing: { mode: "catmull-rom", amount: 0.55 },
+    dynamics: {
+      pressureSize: { enabled: true, minimumFactor: 0, maximumFactor: 2, curve: LINEAR },
+      pressureOpacity: {
+        enabled: false,
+        minimumFactor: 1,
+        maximumFactor: 1,
+        curve: { kind: "power", exponent: 2.5 },
+      },
+    },
+    renderer: { version: 1, kind },
+  });
+}
+
+interface StrokeShape {
+  readonly id: string;
+  readonly samples: number;
+  readonly brush?: ResolvedBrushSnapshot;
+  readonly pointerType?: InkPointerType;
+  /** False means each sample omits both optional angles, as a mouse's would. */
+  readonly angles?: boolean;
+  readonly pressure?: (progress: number) => number;
+}
+
+function shapedStroke(shape: StrokeShape): Stroke {
+  const builder = new StrokeBuilder({
+    id: shape.id,
+    timestamp: 0,
+    ...(shape.brush === undefined ? {} : { brush: shape.brush }),
+    smoother: new StrokeSmoother({ mode: "average" }),
+  });
+  const pressureOf = shape.pressure ?? ((progress) => 0.3 + 0.5 * Math.abs(Math.sin(progress * 5)));
+  for (let index = 0; index < shape.samples; index += 1) {
+    const t = shape.samples === 1 ? 0 : index / shape.samples;
+    builder.addPoint({
+      x: 100 + Math.sin(t * 11) * 160 + t * 520,
+      y: 200 + Math.cos(t * 7) * 110,
+      timestamp: index * 4,
+      pressure: pressureOf(t),
+      tiltX: Math.round(Math.sin(t * 3) * 40),
+      tiltY: Math.round(Math.cos(t * 3) * 40),
+      twist: index % 360,
+      pointerType: shape.pointerType ?? "pen",
+      button: 0,
+      buttons: 1,
+      ...(shape.angles === false ? {} : { altitudeAngle: 0.8, azimuthAngle: 1.2 }),
+    });
   }
   return builder.finalize();
 }
@@ -353,6 +437,146 @@ const CORPUS: readonly CorpusEntry[] = Object.freeze([
       return snapshot([page("page-1", [object])]);
     },
   },
+  {
+    label: "tap",
+    build: () => {
+      // One sample. Every count agreement and every "at least one" rule meets
+      // its smallest legal case here.
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: shapedStroke({ id: "stroke-tap", samples: 1 }),
+        createdAt: TIMESTAMP,
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "long-stroke",
+    build: () => {
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: shapedStroke({ id: "stroke-long", samples: 600 }),
+        createdAt: TIMESTAMP,
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "five-thousand-samples",
+    build: () => {
+      // The size class the recovery capture is measured at, pinned byte for
+      // byte rather than only timed.
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: shapedStroke({ id: "stroke-5000", samples: 5000 }),
+        createdAt: TIMESTAMP,
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "pressure-sweep",
+    build: () => {
+      // Pressure walks the whole unit interval, so both ends of the domain and
+      // the statistics derived from them are in the bytes.
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: shapedStroke({
+          id: "stroke-pressure",
+          samples: 120,
+          brush: strategyBrush("pressure-pen", "pen"),
+          pressure: (progress) => progress,
+        }),
+        createdAt: TIMESTAMP,
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "every-strategy",
+    build: () => {
+      const make = factory();
+      const objects = STRATEGIES.map((strategy, index) =>
+        make.createInkObject({
+          id: `object-${strategy.kind}`,
+          stroke: shapedStroke({
+            id: `stroke-${strategy.kind}`,
+            samples: 12,
+            brush: strategyBrush(strategy.kind, strategy.family),
+          }),
+          createdAt: TIMESTAMP,
+          zIndex: index,
+        }),
+      );
+      return snapshot([page("page-1", objects)]);
+    },
+  },
+  {
+    label: "legacy-style-brush",
+    build: () => {
+      // A Stroke built without a resolved brush, which is the pre-17A shape the
+      // model still projects onto `legacy-stroke-style` / `centerline@1`.
+      const object = factory().createInkObject({
+        id: "object-1",
+        stroke: shapedStroke({ id: "stroke-legacy", samples: 10 }),
+        createdAt: TIMESTAMP,
+      });
+      return snapshot([page("page-1", [object])]);
+    },
+  },
+  {
+    label: "pointer-types",
+    build: () => {
+      // A mouse never reports the optional angles; a pen usually does. Both
+      // shapes have to encode, and the absent fields have to stay absent.
+      const make = factory();
+      const mouse = make.createInkObject({
+        id: "object-mouse",
+        stroke: shapedStroke({
+          id: "stroke-mouse",
+          samples: 9,
+          pointerType: "mouse",
+          angles: false,
+        }),
+        createdAt: TIMESTAMP,
+        zIndex: 0,
+      });
+      const touch = make.createInkObject({
+        id: "object-touch",
+        stroke: shapedStroke({ id: "stroke-touch", samples: 9, pointerType: "touch" }),
+        createdAt: TIMESTAMP,
+        zIndex: 1,
+      });
+      return snapshot([page("page-1", [mouse, touch])]);
+    },
+  },
+  {
+    label: "transformed-and-restyled",
+    build: () => {
+      // The two things that happen to a committed stroke: a page transform,
+      // which lives on the object, and a restyle, which rebuilds the brush and
+      // the style around the same process data.
+      const make = factory();
+      const transformed = make.createInkObject({
+        id: "object-transformed",
+        stroke: shapedStroke({ id: "stroke-source", samples: 20 }),
+        createdAt: TIMESTAMP,
+        transform: new Transform({ translation: { x: 12.5, y: -8 }, rotation: 0.35, scale: 1.75 }),
+        zIndex: 0,
+      });
+      const restyled = make.createInkObject({
+        id: "object-restyled",
+        stroke: shapedStroke({
+          id: "stroke-restyled",
+          samples: 20,
+          brush: strategyBrush("outline", "highlighter"),
+        }),
+        createdAt: TIMESTAMP,
+        zIndex: 1,
+      });
+      return snapshot([page("page-1", [transformed, restyled])]);
+    },
+  },
 ]);
 
 /**
@@ -372,6 +596,14 @@ const GOLDEN: Readonly<Record<string, string>> = Object.freeze({
   "dynamic-keys": "16855:n1hnkg",
   "boundary-nesting": "17956:84wtq2",
   "punctuation-in-strings": "10594:9041zx",
+  tap: "5930:fu1bua",
+  "long-stroke": "812299:xvkeej",
+  "five-thousand-samples": "6751593:1rz5jfl",
+  "pressure-sweep": "165005:1ce2yql",
+  "every-strategy": "102268:1cj7gy5",
+  "legacy-style-brush": "18367:kjqd85",
+  "pointer-types": "31793:c2bqly",
+  "transformed-and-restyled": "62794:1350hsx",
 });
 
 /**
