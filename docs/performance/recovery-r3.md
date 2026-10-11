@@ -240,6 +240,14 @@ removing the model's rule fails only the test about the model — because the
 encoder's own check still catches a forged Stroke, which is what defence in
 depth is supposed to look like.
 
+The strongest evidence that the replacement kept its failure semantics is not a
+perturbation but a fact about the suite: **102 of its 105 tests pass against the
+pre-R3 encoder**, unchanged. Every rule produces the identical error code and the
+identical JSON path on both implementations. The three that do not are the three
+things R3 added -- the model's point-count rule, and the two forgeries whose
+`points` is not an array at all, which the old encoder met with a raw TypeError
+out of a function whose job is to refuse things with a code and a path.
+
 The encoder's adversarial cases cannot be built through a constructor, because
 the whole finding is that a constructor will not build them. They are forged onto
 `Stroke.prototype`: 45 of them, one per rule, each asserted down to the error
