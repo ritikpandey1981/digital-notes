@@ -174,18 +174,24 @@ because the width was set through a hook that does not exist. Nothing was optimi
 long frame is no longer the brush engine's item. Evidence in
 [`performance/pencil-e4-3.md`](performance/pencil-e4-3.md), rule in D-045.
 
-**Next: E5 — Marker.** The engine is ready for it and nothing in the queue below blocks
-it. `marker@1` is additive: strategy registration is one entry in a static table keyed by
-durable `(kind, version)` identity, the `marker` family and its two presets and its dock
-glyph all already exist, and no existing strategy's logic has to change to admit a new one.
-A Marker mark is an ordinary `Stroke` with an ordinary `ResolvedBrushSnapshot`, so there is
-no document object type and no `formatVersion` change in it. The reusable primitive is
-Pencil's **dab placement** — an arc-length cursor that walks the smoothed centreline and
-drops a tip every fixed advance, independent of sample rate — which is where an oriented
-chisel tip goes. What is Pencil-specific is everything after placement: depositing grains
-into a cell raster against a paper field, and the runtime cache that holds them. A solid
-shaped tip needs none of that and should not be routed through it. Watercolor, pastel and
-airbrush are not planned for v1. See [`design/marker-readiness.md`](design/marker-readiness.md).
+**E5A — Marker, in production and awaiting review.** `marker@1` is registered, the engine
+draws it, and `marker-felt` resolves to it; `marker-broad` stays on its legacy strategy until
+the catalogue phase. The nib is a capsule of fixed 45-degree page-space orientation, swept by
+tracing its support function, so the mark is one closed contour filled once however long the
+stroke is — no stamps, no batching, and no cache of any kind. Dense placement and self-retrace
+cannot darken within a stroke; separate strokes composite normally. One fill at every length and
+width measured, 0.022 ms a frame of live evaluation at five thousand samples, `formatVersion`
+still 1 and no new durable field. Evidence in
+[`performance/marker-e5a.md`](performance/marker-e5a.md), rule in D-050, background in
+[`design/marker-readiness.md`](design/marker-readiness.md).
+
+**Its appearance is not frozen.** The inspection sheets are the artifact for that decision, and
+two questions are open on them: whether `marker-felt`'s shipped size 8 is a marker, which reads
+closer to a broad pen than the same strategy does at 26 page units, and whether a Marker should
+resolve any pressure response at all — it currently resolves none, so a pen at 0.15 and at 0.95
+draw the same mark, which is the conservative reading of what a marker physically does. Both are
+preset decisions rather than engine ones. Until one is made, the strategy roster carries
+`marker@1 -> VISUALS NOT YET FROZEN` where every other strategy names a freeze gate.
 
 Remaining:
 

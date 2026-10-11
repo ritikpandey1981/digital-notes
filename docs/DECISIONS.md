@@ -1196,3 +1196,58 @@ adjacent in the file so that the asymmetry is visible while editing either one.
 The encode is now 49% cheaper again at 39 MB for identical bytes — about 70% cheaper than
 pre-R2 — and the stage that was 56% of it is 3%. `JSON.stringify` is now the largest remaining
 item at 56%, which is the first time in three phases that it has been true.
+
+## D-050 — A marker is a shape being dragged, and its accumulation falls out of that
+
+**Status:** accepted
+
+`marker@1` is the engine's first *oriented* strategy. Every one before it makes a mark whose
+shape is a function of a radius, so the only things that could vary were width and alpha. A
+marker's nib has a direction, and once it does, the brush draws broad one way and narrow the
+other without varying anything at all. That is the whole character, and it is why this strategy
+needs no texture, no grain and nothing painted inside the mark.
+
+**The nib is a capsule, and that choice is load-bearing.** A rectangle with semicircular ends is
+the simplest convex shape that is directional enough to read as a chisel and rounded enough to
+read as felt rather than as a blade. More importantly its **support function is closed form**:
+the support point in direction `n` is `centre + a*sign(u.n)*u + r*n`. So the swept boundary is a
+curve that can be *traced* — tangent lines along each span, the support arc at each vertex, the
+nib's own outline at each terminal — rather than a union that has to be computed. A strategy
+that had to union stamps would have inherited the contour-count problem D-031 measured; this one
+never enters that regime, and there is nothing to batch.
+
+**Orientation is fixed in page space, deliberately.** A nib that follows the path tangent is a
+calligraphy brush: it rotates through a turn, its swept boundary folds, and corners become
+unstable. Fixed, a corner is two slabs meeting, and thick-to-thin becomes a property of which
+way the artist drew rather than of how fast the tangent happened to turn. Forty-five degrees
+because it is the angle a broad-edge nib is held at and because it leaves horizontal and
+vertical alike, so neither axis is privileged for a reason nobody could predict.
+
+**Neither constant is durable, and that is the rule rather than an accident.** The angle and the
+proportions belong to the strategy version. A Marker that holds the pen differently is
+`marker@2`, which is a reviewed decision with its own goldens, not a field added to everyone's
+files. The brief that opened this phase offered `markerTipAngle`, `markerAspectRatio`,
+`markerHardness` and `markerTextureId` as things that might someday be useful; none was added,
+the serialization gate asserts none of them appears in a `.folio`, and `formatVersion` is still
+1.
+
+**Accumulation is not a rule applied afterwards.** One band is one closed contour filled once
+under the nonzero winding rule, so a stroke that crosses itself is resolved *inside* the fill
+and composited exactly once. Within one stroke, neither dense placement nor a deliberate
+retrace can darken anything: one stroke is one coverage mask. Between strokes, ordinary alpha
+compositing applies and a second Marker crossing the first darkens, which is what a marker is
+expected to do. Both halves are consequences of the representation rather than of a semantic
+bolted on, which is why neither needed an offscreen mask, a passage counter or any of Pencil's
+deposition machinery.
+
+Varying opacity along a stroke is the one case that needs more than one fill, and it reuses
+Pressure Pen's answer: cut at an alpha drift of 1/64, no more often than every sixteen spans,
+with both bands closing on the same straight cross-section so they tile rather than overlap.
+Measured rather than asserted — the same path with the response on and off covers exactly the
+same page.
+
+**Consequence.** The strategy costs one fill of one contour at every length and width measured,
+0.022 ms a frame of live evaluation at five thousand samples, and no cache of any kind. What it
+does not settle is what it should look like: the appearance is a candidate, the roster gate in
+`pencil-visual-freeze.test.ts` carries `VISUALS NOT YET FROZEN` where every other strategy names
+a freeze, and that entry is what will fail until someone approves one.

@@ -453,6 +453,17 @@ tree yet. Only the four structures whose keys the codec cannot know statically -
 object metadata, Ink rendering hints and the two vector payloads -- are sorted, and
 they are sorted where they are small. See D-047 and D-048.
 
+A render strategy is addressed only by its durable `(kind, version)` identity and
+resolved through one static table, so adding one is an addition rather than an
+edit. `marker@1` is the first *oriented* strategy: its nib has a direction fixed
+in page space, so the same brush draws broad one way and narrow the other, and
+its mark is a swept capsule traced from a closed-form support function rather
+than a union of stamps. One stroke is one closed contour filled once, which is
+where its accumulation semantics come from -- dense placement and self-retrace
+cannot darken within a stroke, and separate strokes composite normally. Its nib
+angle and proportions are constants of the strategy version and reach no file.
+See D-050.
+
 Validation has two sides and they are not copies of each other. The decoder re-derives
 everything, because it is where a document nobody in this process wrote arrives. The
 encoder checks the same rules against the model rather than against a transcription of
