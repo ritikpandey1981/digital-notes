@@ -174,6 +174,19 @@ because the width was set through a hook that does not exist. Nothing was optimi
 long frame is no longer the brush engine's item. Evidence in
 [`performance/pencil-e4-3.md`](performance/pencil-e4-3.md), rule in D-045.
 
+**Next: E5 — Marker.** The engine is ready for it and nothing in the queue below blocks
+it. `marker@1` is additive: strategy registration is one entry in a static table keyed by
+durable `(kind, version)` identity, the `marker` family and its two presets and its dock
+glyph all already exist, and no existing strategy's logic has to change to admit a new one.
+A Marker mark is an ordinary `Stroke` with an ordinary `ResolvedBrushSnapshot`, so there is
+no document object type and no `formatVersion` change in it. The reusable primitive is
+Pencil's **dab placement** — an arc-length cursor that walks the smoothed centreline and
+drops a tip every fixed advance, independent of sample rate — which is where an oriented
+chisel tip goes. What is Pencil-specific is everything after placement: depositing grains
+into a cell raster against a paper field, and the runtime cache that holds them. A solid
+shaped tip needs none of that and should not be routed through it. Watercolor, pastel and
+airbrush are not planned for v1. See [`design/marker-readiness.md`](design/marker-readiness.md).
+
 Remaining:
 
 - **Recovery capture cost**, which is where that hitch belonged and which is now answered.
@@ -218,8 +231,6 @@ Remaining:
   pressure curve.
 - A shared velocity derivation, for strategies that want it. Neither pressure-driven
   strategy needs one.
-- Marker: an oriented chisel tip over the stamp primitive spacing and grain already
-  provide. Watercolor, pastel and airbrush are not planned for v1.
 - Pencil hardness as real parameters. Grain strength, edge roughness and spacing are
   strategy constants pinned by `pencil@1`; the phase that ships per-hardness pencils is
   the one that should make them durable.
