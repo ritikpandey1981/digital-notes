@@ -200,8 +200,10 @@ Remaining:
   is no redundant pass left to delete, so going further means either writing JSON by hand or
   moving the work off the drawing thread. Off-main-thread encoding was already priced and
   rejected once — the cheapest payload to move is a string, and the string only exists
-  after the work worth moving — and the mounted block also contains handing that string
-  across the process boundary, which is now larger than the encode it follows.
+  after the work worth moving. The mounted block also contains handing that string across the
+  process boundary, which neither phase touched and which is therefore a larger share of a
+  smaller block; how much larger is not known, because the mounted block fell 27% against the
+  encode's 49% and the two are measured on different documents in different engines.
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a
