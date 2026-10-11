@@ -453,6 +453,19 @@ tree yet. Only the four structures whose keys the codec cannot know statically -
 object metadata, Ink rendering hints and the two vector payloads -- are sorted, and
 they are sorted where they are small. See D-047 and D-048.
 
+Validation has two sides and they are not copies of each other. The decoder re-derives
+everything, because it is where a document nobody in this process wrote arrives. The
+encoder checks the same rules against the model rather than against a transcription of
+it: which fields exist is its own doing and is pinned by the format's byte corpus, so
+it proves the values and not the shape. Most of those rules belong further in -- a
+stroke's samples are validated as they arrive, its smoothed positions are asserted by
+the smoother, its statistics are derived, and its style and brush go through factories
+on every construction -- but the format's own ceilings, on sample counts and string
+lengths, belong to the codec alone and could not be delegated anywhere. A rule in one
+side and not the other means Folio writes a project it cannot open, or refuses work it
+used to accept, so the two live next to each other and are gated by forged inputs on
+both sides. See D-049.
+
 Two separate questions decide when a snapshot is taken, and merging them would make
 the wrong thing true in both directions.
 

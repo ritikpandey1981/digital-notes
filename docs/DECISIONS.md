@@ -1125,3 +1125,74 @@ thing. A test that could only reach it through the model would be testing the mo
 built — roughly 728 ms of the 1332 ms at 39 MB, twice `JSON.stringify` — which is the next
 phase and not this one, because removing it needs a proof that the model's own invariants cover
 every cross-field rule the decode-side parse enforces.
+
+## D-049 — The encoder owes the decoder its rules, not its parser
+
+**Status:** accepted
+
+The project encoder used to build a stroke out of already-validated model fields and then run
+the entire decode-side `parseStroke` over the result. It is an appealing shape — the encoder
+proves its own output with the exact code that will have to read it back — and at thirty-five
+thousand samples it was the single most expensive thing a recovery capture did, larger than
+`JSON.stringify`.
+
+Instrumented, it was not spending its time where the appeal is. **Over 99.8% of it was the two
+per-sample loops**, so every per-stroke rule — id, counts, ordering, style, brush, metrics,
+statistics — could be kept at no measurable cost and was. And within those loops the majority
+was *shape* rather than *value*: the exact-key checks and the record rebuild cost 497 ms against
+280 ms for looking at the numbers, re-deriving which fields existed on an object this same
+function had written field by field microseconds earlier. The count that makes it concrete is
+four `Set` allocations and half an `Object.fromEntries` per sample, 280 265 and 35 014 of them
+for one 39 MB encode, now 13 and 14.
+
+So the shape is no longer re-derived and the values still are. Which fields exist is the
+encoder's own doing and is pinned by the format's byte corpus; what is in them is a property of
+the Stroke, and is checked on the Stroke, where no intermediate object has to exist first.
+
+**The preferred candidate was not available, and finding that out was the phase.** The plan
+hoped the invariants were all guaranteed by a valid in-memory `Stroke`, in which case the
+encoder could emit and trust. They are not. The `Stroke` constructor checks a non-blank id, a
+finite timestamp, at least one point and at least one source sample, delegates style and brush
+to their factories, and freezes the rest without looking at it. What makes production artwork
+valid is one level down — `StrokeBuilder` validates every sample as it arrives and refuses the
+one whose timestamp goes backwards, `StrokeSmoother` asserts its own output so even an injected
+interpolation hook cannot produce a non-finite coordinate, and the statistics are derived rather
+than supplied. Compile-time types prove none of this and were not allowed to stand in for it.
+
+**And one class of rule is the codec's alone.** How many samples a stroke may carry, how many a
+project may, how long an id or a colour may be: a stroke with a 513-character id is a perfectly
+good drawing, and it is the *file* that has a ceiling. Those could never have been delegated
+anywhere, and they are why deleting the encode-side pass outright would have meant writing
+projects Folio then refuses to open.
+
+**One rule moved.** Statistics that disagree with the points they count are incoherent whatever
+anyone intends to do with them, so the constructor now refuses that rather than leaving the
+serializer to notice it; every construction site already satisfied it. Timestamp ordering was
+considered for the same treatment and deliberately left alone: the builder refuses it at the
+source, and a constructor scan would charge every recolour of a long stroke for a rule nothing
+can break by then.
+
+**Reading the containers without shape guards is a property, not an assumption.** The
+constructor rebuilds `points`, `sourceSamples`, each `delta`, `metrics`, both bounds, `center`,
+`dirtyRect`, `statistics`, `style` and `brush` through its own spreads and factories, so by the
+time an instance exists each one is a plain object whose fields may be wrong but whose absence
+cannot throw. A point constructed without a `delta` comes out with `delta` as `{}`, and the
+encoder is what says so — there is a test for exactly that, because it is what licenses the
+production code to read `point.delta.x` directly.
+
+**What is unchanged is the trust boundary.** `parseStroke` is not weakened, moved or bypassed.
+It is still the only way a `.folio` file, a recovery record or any other untrusted input becomes
+a `Stroke`, and it has 31 adversarial cases of its own — including `1e999`, which is a legal
+JSON number and the only way a file on disk can carry an infinity.
+
+**Consequence.** Two sides now state the same rules in two places, which is a real maintenance
+cost and the reason the gate is shaped the way it is: 47 forged Strokes, one per rule, asserted
+down to the error code and the JSON path, built on `Stroke.prototype` because no constructor
+will produce them. A rule added to `parseStroke` and not to `assertEncodableStroke` means Folio
+can write a project it cannot open; a rule added the other way means it refuses work it used to
+accept. Removing the encode-side validation fails 55 tests, and the two halves are deliberately
+adjacent in the file so that the asymmetry is visible while editing either one.
+
+The encode is now 49% cheaper again at 39 MB for identical bytes — about 70% cheaper than
+pre-R2 — and the stage that was 56% of it is 3%. `JSON.stringify` is now the largest remaining
+item at 56%, which is the first time in three phases that it has been true.
