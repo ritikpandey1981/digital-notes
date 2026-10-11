@@ -1186,7 +1186,7 @@ a `Stroke`, and it has 31 adversarial cases of its own — including `1e999`, wh
 JSON number and the only way a file on disk can carry an infinity.
 
 **Consequence.** Two sides now state the same rules in two places, which is a real maintenance
-cost and the reason the gate is shaped the way it is: 47 forged Strokes, one per rule, asserted
+cost and the reason the gate is shaped the way it is: 45 forged Strokes, one per rule, asserted
 down to the error code and the JSON path, built on `Stroke.prototype` because no constructor
 will produce them. A rule added to `parseStroke` and not to `assertEncodableStroke` means Folio
 can write a project it cannot open; a rule added the other way means it refuses work it used to

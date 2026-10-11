@@ -229,7 +229,7 @@ depth is supposed to look like.
 
 The encoder's adversarial cases cannot be built through a constructor, because
 the whole finding is that a constructor will not build them. They are forged onto
-`Stroke.prototype`: 47 of them, one per rule, each asserted down to the error
+`Stroke.prototype`: 45 of them, one per rule, each asserted down to the error
 code and the JSON path. The decoder has 31 of its own, driven through
 `decodeStroke` with a damaged document — including `1e999`, which is a legal JSON
 number and an illegal stroke coordinate, and is the only way a file on disk can
