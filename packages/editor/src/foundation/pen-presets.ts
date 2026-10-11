@@ -163,6 +163,14 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     opacityCurve: Object.freeze({ kind: "power", exponent: 0.55 }),
     renderer: "pressure-pen",
   }),
+  // The one marker on the real engine, and the family's default. Its width,
+  // opacity and smoothing are the ones it already had, so the mark it makes is
+  // the same size and weight it was; what is new is the *shape* being dragged,
+  // an oriented felt nib rather than a round pen line. It resolves no pressure
+  // response, because a marker barely has one -- what varies is which way you
+  // drew, not how hard. Strokes already saved keep naming centerline@1 and keep
+  // rendering as they were drawn. `marker-broad` stays on its legacy strategy
+  // until the catalogue phase.
   createCatalogPreset({
     id: "marker-felt",
     name: "Felt Marker",
@@ -171,7 +179,7 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     size: 8,
     opacity: 0.9,
     smoothing: 0.22,
-    renderer: "centerline",
+    renderer: "marker",
   }),
   createCatalogPreset({
     id: "marker-broad",

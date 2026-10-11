@@ -19,7 +19,9 @@ describe("the Technical Pen preset", () => {
 
     for (const preset of DEFAULT_BRUSH_PRESETS) {
       if (preset.id === TECHNICAL_PEN_ID) continue;
-      expect(["centerline", "outline", "pressure-pen", "pencil"]).toContain(preset.renderer.kind);
+      expect(["centerline", "outline", "pressure-pen", "pencil", "marker"]).toContain(
+        preset.renderer.kind,
+      );
     }
   });
 
@@ -82,7 +84,7 @@ describe("the Technical Pen preset", () => {
 
     store.selectPreset("pen", "pen-brush");
     expect(store.resolvedBrush("pen").renderer.kind).toBe("pressure-pen");
-    expect(store.resolvedBrush("marker").renderer.kind).toBe("centerline");
+    expect(store.resolvedBrush("marker").renderer.kind).toBe("marker");
     expect(store.resolvedBrush("pencil").renderer.kind).toBe("pencil");
   });
 });

@@ -27,7 +27,7 @@ describe("the Pencil preset", () => {
 
     for (const preset of DEFAULT_BRUSH_PRESETS) {
       if (preset.id === PENCIL_ID) continue;
-      expect(["centerline", "outline", "technical-pen", "pressure-pen"]).toContain(
+      expect(["centerline", "outline", "technical-pen", "pressure-pen", "marker"]).toContain(
         preset.renderer.kind,
       );
     }
@@ -132,7 +132,7 @@ describe("the Pencil preset", () => {
     store.selectPreset("pencil", PENCIL_ID);
     expect(store.resolvedBrush("pencil").renderer.kind).toBe("pencil");
     expect(store.resolvedBrush("pen").renderer.kind).toBe("centerline");
-    expect(store.resolvedBrush("marker").renderer.kind).toBe("centerline");
+    expect(store.resolvedBrush("marker").renderer.kind).toBe("marker");
     expect(store.resolvedBrush("highlighter").renderer.kind).toBe("centerline");
   });
 });
