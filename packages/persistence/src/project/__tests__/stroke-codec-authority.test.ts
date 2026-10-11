@@ -255,7 +255,7 @@ describe("the model owns what a drawing is not allowed to be", () => {
     expect(() =>
       createResolvedBrushSnapshot({
         ...brushOf(),
-        renderer: { version: 1, kind: "marker" as BrushStrategyId },
+        renderer: { version: 1, kind: "unshipped-brush" as BrushStrategyId },
       }),
     ).toThrow(TypeError);
   });
@@ -536,7 +536,7 @@ describe("the encoder refuses a Stroke it could not read back", () => {
     ],
     [
       "a strategy name this build cannot draw",
-      forgeNested("brush", { renderer: { version: 1, kind: "marker" } }),
+      forgeNested("brush", { renderer: { version: 1, kind: "unshipped-brush" } }),
       "INVALID_INK",
       "$.stroke.brush.renderer",
     ],
@@ -894,7 +894,7 @@ describe("the decoder refuses a malformed encoded Stroke, unchanged", () => {
       "a strategy name this build cannot draw",
       (value: Record<string, unknown>) =>
         void (((value.brush as Record<string, unknown>).renderer as Record<string, unknown>).kind =
-          "marker"),
+          "unshipped-brush"),
       "INVALID_INK",
       "$.stroke.brush.renderer",
     ],

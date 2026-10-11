@@ -218,9 +218,74 @@ describe("durable brush strategy decoding", () => {
     }
   });
 
+  it("round-trips a Marker stroke without persisting anything about its nib", () => {
+    const record = encodedRecord(createRepresentativeProject());
+    const brush = inkBrush(record);
+    brush.renderer = { version: 1, kind: "marker" };
+    brush.presetId = "marker-felt";
+    brush.family = "marker";
+    brush.size = 8;
+    brush.opacity = 0.9;
+    brush.smoothing = { mode: "average", amount: 0.22 };
+    brush.dynamics = {
+      pressureSize: {
+        enabled: false,
+        minimumFactor: 1,
+        maximumFactor: 1,
+        curve: { kind: "linear", exponent: 1 },
+      },
+      pressureOpacity: {
+        enabled: false,
+        minimumFactor: 1,
+        maximumFactor: 1,
+        curve: { kind: "linear", exponent: 1 },
+      },
+    };
+
+    const encoded = JSON.stringify(record);
+    const decoded = decodeFolioProject(encoded);
+    const stroke = inkStrokes(decoded)[0]!;
+
+    expect(stroke.brush.renderer).toEqual({ version: 1, kind: "marker" });
+    expect(stroke.brush.presetId).toBe("marker-felt");
+    expect(stroke.brush.family).toBe("marker");
+
+    // The nib is reproduced from the strategy version, not read out of the
+    // file: two independent decodes of the same bytes give the same swath.
+    const again = inkStrokes(decodeFolioProject(encoded))[0]!;
+    expect(again).not.toBe(stroke);
+    const bounds = getStrokeVisualLocalBounds(stroke);
+    expect(Number.isFinite(bounds.width)).toBe(true);
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(getStrokeVisualLocalBounds(again)).toEqual(bounds);
+
+    const reencoded = encodeFolioProject(decoded);
+    expect(encodeFolioProject(decodeFolioProject(reencoded))).toBe(reencoded);
+    expect(reencoded).toContain('"kind": "marker"');
+    expect((JSON.parse(reencoded) as { formatVersion: number }).formatVersion).toBe(1);
+    // Nothing about the physical nib is durable. Its angle and its proportions
+    // are constants of `marker@1`, so a Marker that holds the pen differently
+    // is a new strategy version rather than a new field in everyone's files.
+    for (const key of [
+      "nib",
+      "nibAngle",
+      "markerTipAngle",
+      "markerAspectRatio",
+      "markerHardness",
+      "markerTextureId",
+      "orientation",
+      "aspect",
+      "bands",
+      "swath",
+    ]) {
+      expect(reencoded, key).not.toContain(`"${key}"`);
+    }
+  });
+
   it.each([
     ["a strategy no build has", { version: 1, kind: "unknown-brush" }],
-    ["a strategy a later phase will add", { version: 1, kind: "marker" }],
+    ["a strategy a later phase will add", { version: 1, kind: "unshipped-brush" }],
+    ["a future version of Marker", { version: 2, kind: "marker" }],
     ["a future version of Technical Pen", { version: 2, kind: "technical-pen" }],
     ["a future version of Pressure Pen", { version: 2, kind: "pressure-pen" }],
     ["a tilt-reading Pencil that has not shipped", { version: 2, kind: "pencil" }],
