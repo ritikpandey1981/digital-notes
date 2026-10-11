@@ -716,6 +716,14 @@ export class StrokeRenderer {
       this.finalizedSegmentCountValue += Math.max(0, geometry.keptPointCount - 1);
       return;
     }
+    if (geometry.kind === "marker-swath") {
+      this.finalizedSourcePointCountValue += geometry.sourcePointCount;
+      this.finalizedFilteredPointCountValue += geometry.keptPointCount;
+      // A swept swath has spans between kept samples rather than fitted curves,
+      // the same unit of work a segment is elsewhere.
+      this.finalizedSegmentCountValue += Math.max(0, geometry.keptPointCount - 1);
+      return;
+    }
     if (geometry.kind === "material") {
       this.finalizedSourcePointCountValue += geometry.sourcePointCount;
       this.finalizedFilteredPointCountValue += geometry.keptPointCount;

@@ -11,7 +11,7 @@ export type BrushFamily = "pencil" | "pen" | "marker" | "highlighter";
  * version of itself rather than being edited in place.
  */
 export type BrushStrategyId =
-  "centerline" | "outline" | "technical-pen" | "pressure-pen" | "pencil";
+  "centerline" | "outline" | "technical-pen" | "pressure-pen" | "pencil" | "marker";
 
 /** Retained spelling for the public boundary that predates the strategy vocabulary. */
 export type BrushRendererKind = BrushStrategyId;
@@ -32,6 +32,7 @@ const SUPPORTED_BRUSH_STRATEGIES: ReadonlySet<string> = new Set([
   "technical-pen@1",
   "pressure-pen@1",
   "pencil@1",
+  "marker@1",
 ]);
 
 /** The lookup key one durable strategy identity resolves through. */

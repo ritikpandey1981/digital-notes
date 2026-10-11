@@ -141,9 +141,49 @@ export interface MaterialRenderGeometry {
   readonly keptPointCount: number;
 }
 
+/**
+ * One alpha's worth of a swept marker swath.
+ *
+ * `left` and `right` are the two boundaries in forward order; a painter walks
+ * the right one backwards to close the loop. A cap is the nib's own outline at
+ * an end of the stroke, and is empty where a band is cut mid-stroke -- there
+ * the two bands close on the same straight cross-section, so they tile along
+ * the stroke instead of overlapping and a seam between two alphas stays a seam.
+ *
+ * One band is one closed contour and one `fill()`. A stroke whose opacity never
+ * changes is therefore a single contour however long it is, which is what keeps
+ * this strategy clear of the contour-count cost that a stamped medium has to
+ * batch its way around.
+ */
+export interface MarkerSwathBand {
+  /** Resolved page alpha, base opacity already included. */
+  readonly alpha: number;
+  readonly left: readonly Point[];
+  readonly right: readonly Point[];
+  readonly startCap: readonly Point[];
+  readonly endCap: readonly Point[];
+}
+
+/** A solid swath swept by a nib of fixed page-space orientation. */
+export interface MarkerSwathRenderGeometry {
+  readonly kind: "marker-swath";
+  readonly bands: readonly MarkerSwathBand[];
+  /** The centreline with the nib's reach, for hit testing and the eraser. */
+  readonly hitGeometry: readonly BrushHitSample[];
+  /** The angle the strategy fixed the nib at, in radians. Diagnostics and tests. */
+  readonly nibAngle: number;
+  readonly renderedScale: number;
+  readonly bounds: Rect;
+  readonly sourcePointCount: number;
+  readonly keptPointCount: number;
+}
+
 /** Geometry an incremental evaluator can produce. */
 export type LiveRenderGeometry =
-  StrokedPathRenderGeometry | FilledPathRenderGeometry | MaterialRenderGeometry;
+  | StrokedPathRenderGeometry
+  | FilledPathRenderGeometry
+  | MaterialRenderGeometry
+  | MarkerSwathRenderGeometry;
 
 /**
  * Structural evidence that live evaluation reuses settled work rather than

@@ -6,7 +6,12 @@ import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
 import type { LiveBrushEvaluator, LiveRenderGeometry } from "./brush-geometry";
 import { brushSeed } from "./brush-random";
-import { drawFilledPath, drawSmoothStrokeSegments, drawStrokedPath } from "./draw-stroke";
+import {
+  drawFilledPath,
+  drawMarkerSwath,
+  drawSmoothStrokeSegments,
+  drawStrokedPath,
+} from "./draw-stroke";
 import { createOutlineStrokeGeometry, type OutlineStrokeGeometry } from "./outline-geometry";
 import type { PencilMaterialRuntime } from "./pencil-material";
 import {
@@ -14,6 +19,7 @@ import {
   createPencilMaterialGeometry,
   drawPencilMaterial,
 } from "./pencil-material-strategy";
+import { MarkerEvaluator, createMarkerGeometry } from "./marker";
 import { PressurePenEvaluator, createPressurePenGeometry } from "./pressure-pen";
 import { createProfessionalInkPath, type ProfessionalInkPath } from "./professional-ink-path";
 import { TechnicalPenEvaluator, createTechnicalPenGeometry } from "./technical-pen";
@@ -237,6 +243,35 @@ const PENCIL_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>(
   createLiveEvaluator: (brush) => new PencilMaterialEvaluator(brush),
 });
 
+/**
+ * `marker@1`: a solid felt nib of fixed page-space orientation, swept.
+ *
+ * The same settled-prefix contract as the two pens, over a swath rather than a
+ * path or a silhouette. Its character is the shape being dragged: the nib is
+ * oriented, so one diagonal is the widest mark the brush can make and the other
+ * is the narrowest, while horizontal and vertical come out alike.
+ *
+ * Not a deposited medium. It has no material, no cache and no runtime state
+ * beyond the geometry every strategy keeps, and one stroke is one closed
+ * contour filled once -- which is where its accumulation semantics come from
+ * rather than from a rule applied afterwards.
+ */
+const MARKER_STRATEGY: BrushRenderStrategy = Object.freeze<BrushRenderStrategy>({
+  id: "marker",
+  version: 1,
+  createGeometry: (points, brush, renderedScale) =>
+    createMarkerGeometry(points, brush, renderedScale),
+  resolveGeometry: (stroke, renderedScale) =>
+    cachedEvaluatedGeometry(stroke, "marker", renderedScale, () =>
+      createMarkerGeometry(stroke.points, stroke.brush, renderedScale),
+    ),
+  draw: (context, geometry, brush) => {
+    if (geometry.kind !== "marker-swath") return;
+    drawMarkerSwath(context, geometry, brush);
+  },
+  createLiveEvaluator: (brush, renderedScale) => new MarkerEvaluator(brush, renderedScale),
+});
+
 const BRUSH_RENDER_STRATEGIES: ReadonlyMap<string, BrushRenderStrategy> = new Map(
   [
     LEGACY_CENTERLINE_STRATEGY,
@@ -244,6 +279,7 @@ const BRUSH_RENDER_STRATEGIES: ReadonlyMap<string, BrushRenderStrategy> = new Ma
     TECHNICAL_PEN_STRATEGY,
     PRESSURE_PEN_STRATEGY,
     PENCIL_STRATEGY,
+    MARKER_STRATEGY,
   ].map((strategy) => [brushStrategyKey(strategy.id, strategy.version), strategy]),
 );
 

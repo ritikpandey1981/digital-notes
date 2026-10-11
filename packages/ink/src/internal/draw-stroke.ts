@@ -2,7 +2,11 @@ import type { Point } from "@folio/rendering";
 import type { ResolvedBrushSnapshot } from "../brush-model";
 import type { StrokePoint } from "../types";
 import { brushSizeAtPressure } from "./brush-dynamics";
-import type { FilledPathRenderGeometry, StrokedPathRenderGeometry } from "./brush-geometry";
+import type {
+  FilledPathRenderGeometry,
+  MarkerSwathRenderGeometry,
+  StrokedPathRenderGeometry,
+} from "./brush-geometry";
 import type { ProfessionalInkSegment } from "./professional-ink-path";
 
 /**
@@ -105,6 +109,55 @@ export function drawFilledPath(
       if (point !== undefined) context.lineTo(point.x, point.y);
     }
     if (band.roundStart) appendCap(context, band.startCenter, band.startRadius, back);
+    context.closePath();
+    context.fill();
+  }
+  context.restore();
+}
+
+/**
+ * Paints a marker swath: one fill per band, nonzero winding.
+ *
+ * The winding rule is the whole accumulation semantic. A stroke that crosses
+ * itself is one path either way, so Canvas resolves the overlap *inside* the
+ * fill and composites the region exactly once -- which is why passing the nib
+ * over the same page twice in one stroke cannot darken it, and why the event
+ * rate cannot either. Separate strokes are separate fills and do accumulate,
+ * which is what a marker is expected to do.
+ */
+export function drawMarkerSwath(
+  context: CanvasRenderingContext2D,
+  geometry: MarkerSwathRenderGeometry,
+  brush: ResolvedBrushSnapshot,
+): void {
+  const inherited = context.globalAlpha;
+  context.save();
+  context.fillStyle = brush.color;
+  for (const band of geometry.bands) {
+    const outlinePoints = band.left.length + band.right.length + band.startCap.length;
+    if (outlinePoints < 3) continue;
+    context.globalAlpha = inherited * band.alpha;
+    context.beginPath();
+    let started = false;
+    for (const point of band.startCap) {
+      if (started) context.lineTo(point.x, point.y);
+      else {
+        context.moveTo(point.x, point.y);
+        started = true;
+      }
+    }
+    for (const point of band.left) {
+      if (started) context.lineTo(point.x, point.y);
+      else {
+        context.moveTo(point.x, point.y);
+        started = true;
+      }
+    }
+    for (const point of band.endCap) context.lineTo(point.x, point.y);
+    for (let index = band.right.length - 1; index >= 0; index -= 1) {
+      const point = band.right[index];
+      if (point !== undefined) context.lineTo(point.x, point.y);
+    }
     context.closePath();
     context.fill();
   }
