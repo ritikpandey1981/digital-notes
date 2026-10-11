@@ -238,26 +238,37 @@ test("rebuilds Pencil material after the cache is emptied by a page switch", asy
     const before = await sampleArtwork(window, 'canvas[data-folio-layer="page"]', region);
     expect(before.painted).toBeGreaterThan(200);
 
+    // An undo and a redo on the page that holds the mark, first, where there is
+    // only one command in History for them to mean.
+    await window.keyboard.press("Control+z");
+    await window.keyboard.press("Control+y");
+    await window.waitForTimeout(400);
+    const restored = await sampleArtwork(window, 'canvas[data-folio-layer="page"]', region);
+    expect(restored.painted).toBeGreaterThan(200);
+    expect(Math.abs(restored.painted - before.painted)).toBeLessThan(before.painted * 0.15);
+
     // A page switch cancels reconstruction for the page being left. Coming
     // back has to produce the same mark, whether from what survived in the
     // cache or from a rebuild -- which is the whole point of the material
     // being derived rather than stored.
-    const added = await window.evaluate(() => {
-      const actions = (window as unknown as { __folioPageActions?: { addPage?: () => unknown } })
-        .__folioPageActions;
-      return typeof actions?.addPage === "function";
-    });
-    if (added) {
-      await window.evaluate(() => {
-        (
-          window as unknown as { __folioPageActions: { addPage: () => unknown } }
-        ).__folioPageActions.addPage();
-      });
-      await window.waitForTimeout(400);
-    }
+    //
+    // Through the controls a person uses, and read back. This replaced a
+    // `window.__folioPageActions.addPage` hook that never existed: being
+    // optional-chained it skipped the switch silently, so the one manoeuvre
+    // this test is named for had never run. Asserting the active page actually
+    // changed is what makes that failure mode impossible rather than unlikely.
+    const surface = window.getByTestId("canvas-surface");
+    const drawnOn = (await surface.getAttribute("data-active-page-id")) ?? "";
+    expect(drawnOn).not.toBe("");
+    await window.getByTestId("pages-toggle").click();
+    const navigator = window.getByTestId("page-navigator");
+    await expect(navigator).toBeVisible();
+    await navigator.getByTestId("page-add").click();
+    await expect(surface).not.toHaveAttribute("data-active-page-id", drawnOn);
+    await window.waitForTimeout(400);
 
-    await window.keyboard.press("Control+z");
-    await window.keyboard.press("Control+y");
+    await navigator.getByTestId(`page-select-${drawnOn}`).click();
+    await expect(surface).toHaveAttribute("data-active-page-id", drawnOn);
     await window.waitForTimeout(400);
     const after = await sampleArtwork(window, 'canvas[data-folio-layer="page"]', region);
     expect(after.painted).toBeGreaterThan(200);

@@ -846,7 +846,17 @@ test("Pass B shares one motion treatment and never delays interaction", async ()
     const palette = (await window.getByTestId("context-tool-palette").boundingBox())!;
     await window.keyboard.press("Escape");
     // No settling wait at all: the press lands mid-animation, over the very
-    // ground the closing palette still occupies.
+    // ground the closing palette still occupies. That is the point, and it is
+    // why a wait must never be added here -- the defect this catches is an
+    // exiting surface that keeps intercepting input, and a settled palette
+    // cannot exhibit it.
+    //
+    // The same property makes this sensitive to anything that blocks the main
+    // thread between the press and the moves. One full-suite run during
+    // Recovery R2 failed here and in two other stroke-committing cases and has
+    // never recurred in six clean runs since; see `recovery-r2.md`. If it does
+    // recur, measure for a long task across this gesture before suspecting
+    // pointer routing.
     const under = { x: palette.x + palette.width / 2, y: palette.y + palette.height / 2 };
     await window.mouse.move(under.x, under.y);
     await window.mouse.down();
