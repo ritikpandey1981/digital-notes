@@ -20,7 +20,7 @@ import {
   type Stroke,
   type StrokePointInput,
 } from "@folio/ink";
-import { encodeFolioProject } from "../project-codec";
+import { buildFolioProjectTree, encodeFolioProject } from "../project-codec";
 import { canonicalizeJsonValue } from "../../json";
 import { assertEncodableProjectTree } from "../project-validation";
 import type { FolioProjectSnapshot } from "../project-types";
@@ -156,7 +156,13 @@ interface Row {
   readonly totalMinMs: number;
   readonly totalMaxMs: number;
   readonly runs: readonly number[];
-  /** Stages measured on the parsed tree, which is the same shape the codec built. */
+  /**
+   * Building the document the encoder writes, which includes proving every
+   * Stroke in it is encodable. This was the dominant stage until Recovery R3,
+   * when the codec stopped re-parsing the object it had just built.
+   */
+  readonly treeBuildMs: number;
+  /** Stages measured on the tree the codec itself built, in encoder order. */
   readonly walkMs: number;
   readonly stringifyMs: number;
   readonly byteCountMs: number;
@@ -175,7 +181,13 @@ function measure(label: string, strokes: number, samples: number): Row {
   for (let attempt = 0; attempt < REPEATS; attempt += 1) {
     runs.push(millis(() => encodeFolioProject(snapshot)));
   }
-  const tree = JSON.parse(warm) as JsonValue;
+  const treeBuildMs = median(
+    Array.from({ length: REPEATS }, () => millis(() => void buildFolioProjectTree(snapshot))),
+  );
+  // Measured on the tree the codec built, not on one parsed back from the text:
+  // the two hold the same values but not the same object layouts, and the
+  // stages after the build run on the former.
+  const tree = buildFolioProjectTree(snapshot) as unknown as JsonValue;
   const walkMs = median(
     Array.from({ length: REPEATS }, () => millis(() => assertEncodableProjectTree(tree))),
   );
@@ -203,11 +215,12 @@ function measure(label: string, strokes: number, samples: number): Row {
     totalMinMs: Math.min(...runs),
     totalMaxMs: Math.max(...runs),
     runs,
+    treeBuildMs,
     walkMs,
     stringifyMs,
     byteCountMs,
     rebuildMs,
-    remainderMs: Number((total - walkMs - stringifyMs - byteCountMs).toFixed(2)),
+    remainderMs: Number((total - treeBuildMs - walkMs - stringifyMs - byteCountMs).toFixed(2)),
     msPerSample: Number((total / (strokes * samples)).toFixed(4)),
   };
 }
@@ -232,7 +245,8 @@ describe.skipIf(!ENABLED)("what encoding a project costs", () => {
       console.log(
         `${row.label.padEnd(9)} ${String(row.samples).padStart(6)} samples  ${String(row.jsonMb).padStart(6)} MB  ` +
           `median ${String(row.totalMedianMs).padStart(8)} ms  [${String(row.totalMinMs)}..${String(row.totalMaxMs)}]  ` +
-          `walk ${String(row.walkMs).padStart(7)}  stringify ${String(row.stringifyMs).padStart(7)}  ` +
+          `build ${String(row.treeBuildMs).padStart(7)}  walk ${String(row.walkMs).padStart(7)}  ` +
+          `stringify ${String(row.stringifyMs).padStart(7)}  ` +
           `bytes ${String(row.byteCountMs).padStart(6)}  remainder ${String(row.remainderMs).padStart(8)}  ` +
           `(rebuild avoided ${String(row.rebuildMs)})  ` +
           `${String(row.msPerSample)} ms/sample`,

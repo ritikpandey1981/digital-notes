@@ -63,6 +63,26 @@ export interface SerializedStroke {
   readonly statistics: StrokeStatistics;
 }
 
+/**
+ * Encodes one finalized Stroke, after proving the Stroke itself is encodable.
+ *
+ * This used to encode first and then run the whole decode-side `parseStroke`
+ * over its own output. That answered the right question the most expensive way
+ * available: at thirty-five thousand samples it spent four `Set` allocations
+ * and one rebuilt object per sample re-establishing the *shape* of an object
+ * this function had just written field by field from typed model fields, and
+ * only then looked at the values. Measured, it was the largest stage of a
+ * recovery capture -- larger than `JSON.stringify`.
+ *
+ * So the shape is no longer re-derived and the values still are. Which fields
+ * exist is this function's own doing and is asserted by the format's byte
+ * corpus; what is in them is a property of the Stroke, and is checked on the
+ * Stroke, where no intermediate object has to exist to be checked.
+ *
+ * {@link assertEncodableStroke} is what the encoder owes the decoder, not a
+ * duplicate of it. The decoder keeps every rule it had, because the decoder is
+ * where a file nobody in this process wrote arrives.
+ */
 export function encodeStroke(
   stroke: unknown,
   path: string,
@@ -71,7 +91,8 @@ export function encodeStroke(
   if (!(stroke instanceof Stroke)) {
     fail("INVALID_INK", path, "Ink artwork must contain a finalized Stroke instance.");
   }
-  const serialized: SerializedStroke = {
+  assertEncodableStroke(stroke, path, budget);
+  return {
     brush: serializeBrush(stroke.brush),
     id: stroke.id,
     metrics: serializeMetrics(stroke.metrics),
@@ -91,8 +112,308 @@ export function encodeStroke(
     },
     timestamp: stroke.timestamp,
   };
-  parseStroke(serialized, path, budget);
-  return serialized;
+}
+
+/**
+ * Proves one in-memory Stroke is a stroke this format can write and read back.
+ *
+ * Every rule here is a rule {@link parseStroke} enforces on the way in, checked
+ * against the model rather than against a transcription of it, so the two sides
+ * cannot drift into disagreeing about what a `.folio` file may contain. A
+ * project Folio writes and then refuses to open is the failure this prevents,
+ * and it is worse than one it declines to write.
+ *
+ * It is not the first line of defence and does not pretend to be. Almost every
+ * value below is already owned by a narrower boundary: `StrokeBuilder` validates
+ * every sample as it arrives and refuses an out-of-order timestamp at the
+ * source, `createStrokeStyle` and `createResolvedBrushSnapshot` run on every
+ * Stroke the constructor builds, and the constructor itself now rejects
+ * statistics that disagree with their own points. What is genuinely only knowable
+ * here is the *format's* ceilings -- how many samples one stroke may carry, how
+ * many a project may, how long an id or a colour may be -- because those are
+ * properties of the file rather than of the drawing.
+ *
+ * The containers can be read without shape guards, and that is a property of
+ * `Stroke` rather than an assumption: its constructor rebuilds `points`,
+ * `sourceSamples`, `delta`, `metrics`, every bounds, `center`, `dirtyRect`,
+ * `statistics`, `style` and `brush` through its own spreads and factories, so by
+ * the time an instance exists each one is a plain object whose fields may be
+ * wrong but whose absence cannot throw. The adversarial tests construct exactly
+ * that: instances whose fields are wrong.
+ */
+function assertEncodableStroke(stroke: Stroke, path: string, budget: ProjectResourceBudget): void {
+  expectId(stroke.id, `${path}.id`, "INVALID_INK");
+  expectFiniteNumber(stroke.timestamp, `${path}.timestamp`, "INVALID_INK");
+  const points = stroke.points;
+  if (points.length === 0) {
+    fail("INVALID_INK", `${path}.points`, "A finalized Stroke requires processed points.");
+  }
+  assertMaximumCount(
+    points.length,
+    PROJECT_LIMITS.pointsPerStroke,
+    `${path}.points`,
+    "Processed point count",
+  );
+  const sourceSamples = stroke.sourceSamples;
+  if (sourceSamples.length === 0) {
+    fail("INVALID_INK", `${path}.sourceSamples`, "A finalized Stroke requires source samples.");
+  }
+  assertMaximumCount(
+    sourceSamples.length,
+    PROJECT_LIMITS.sourceSamplesPerStroke,
+    `${path}.sourceSamples`,
+    "Source sample count",
+  );
+  addInkSampleCount(budget, points.length + sourceSamples.length, path);
+
+  // The two loops that used to allocate. Nothing in either of them builds an
+  // object or a string unless it is about to throw.
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]!;
+    assertEncodableSample(point, path, "points", index);
+    const delta: Readonly<{ x?: unknown; y?: unknown }> = point.delta;
+    if (!isFiniteNumber(delta.x)) failSample(path, "points", index, "delta.x", FINITE);
+    if (!isFiniteNumber(delta.y)) failSample(path, "points", index, "delta.y", FINITE);
+    const velocity = point.velocity;
+    if (!isFiniteNumber(velocity)) failSample(path, "points", index, "velocity", FINITE);
+    if (velocity < 0) {
+      failSample(path, "points", index, "velocity", "Ink velocity cannot be negative.");
+    }
+    if (!isFiniteNumber(point.acceleration)) {
+      failSample(path, "points", index, "acceleration", FINITE);
+    }
+  }
+  for (let index = 0; index < sourceSamples.length; index += 1) {
+    assertEncodableSample(sourceSamples[index]!, path, "sourceSamples", index);
+  }
+  // Separately, and after both loops, because that is the order the decoder
+  // reports these in: a bad value anywhere is a bad value before an ordering
+  // fault anywhere.
+  assertOrderedTimestamps(points, `${path}.points`);
+  assertOrderedTimestamps(sourceSamples, `${path}.sourceSamples`);
+
+  assertEncodableStyle(stroke.style, `${path}.style`);
+  assertEncodableBrush(stroke.brush, `${path}.brush`);
+  assertEncodableMetrics(stroke.metrics, `${path}.metrics`);
+  assertEncodableStatistics(stroke.statistics, `${path}.statistics`, points.length);
+}
+
+const FINITE = "Expected a finite number.";
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Builds the path only when something is already going to be thrown. */
+function failSample(
+  path: string,
+  collection: "points" | "sourceSamples",
+  index: number,
+  field: string,
+  message: string,
+): never {
+  fail("INVALID_INK", `${path}.${collection}[${String(index)}].${field}`, message);
+}
+
+function assertEncodableSample(
+  sample: StrokePointInput,
+  path: string,
+  collection: "points" | "sourceSamples",
+  index: number,
+): void {
+  const pressure = sample.pressure;
+  if (!isFiniteNumber(pressure)) failSample(path, collection, index, "pressure", FINITE);
+  if (pressure < 0 || pressure > 1) {
+    failSample(path, collection, index, "pressure", "Ink pressure must be between zero and one.");
+  }
+  const pointerType: unknown = sample.pointerType;
+  if (pointerType !== "mouse" && pointerType !== "pen" && pointerType !== "touch") {
+    failSample(path, collection, index, "pointerType", "Ink pointer type is not supported.");
+  }
+  if (!isFiniteNumber(sample.x)) failSample(path, collection, index, "x", FINITE);
+  if (!isFiniteNumber(sample.y)) failSample(path, collection, index, "y", FINITE);
+  if (!isFiniteNumber(sample.timestamp)) failSample(path, collection, index, "timestamp", FINITE);
+  if (!isFiniteNumber(sample.tiltX)) failSample(path, collection, index, "tiltX", FINITE);
+  if (!isFiniteNumber(sample.tiltY)) failSample(path, collection, index, "tiltY", FINITE);
+  if (!isFiniteNumber(sample.twist)) failSample(path, collection, index, "twist", FINITE);
+  if (!isFiniteNumber(sample.button)) failSample(path, collection, index, "button", FINITE);
+  if (!isFiniteNumber(sample.buttons)) failSample(path, collection, index, "buttons", FINITE);
+  // Undefined is the one value the encoder answers by omitting the key, which
+  // is exactly what the decoder's `hasOwnProperty` test accepts. Anything else
+  // reaches the file and has to be a finite number.
+  if (sample.altitudeAngle !== undefined && !isFiniteNumber(sample.altitudeAngle)) {
+    failSample(path, collection, index, "altitudeAngle", FINITE);
+  }
+  if (sample.azimuthAngle !== undefined && !isFiniteNumber(sample.azimuthAngle)) {
+    failSample(path, collection, index, "azimuthAngle", FINITE);
+  }
+}
+
+function assertEncodableStyle(style: StrokeStyle, path: string): void {
+  expectString(style.color, `${path}.color`, "INVALID_INK", { nonBlank: true });
+  const width = expectFiniteNumber(style.width, `${path}.width`, "INVALID_INK");
+  if (width <= 0) fail("INVALID_INK", `${path}.width`, "Stroke width must be positive.");
+  const opacity = expectFiniteNumber(style.opacity, `${path}.opacity`, "INVALID_INK");
+  if (opacity < 0 || opacity > 1) {
+    fail("INVALID_INK", `${path}.opacity`, "Stroke opacity must be between zero and one.");
+  }
+  expectBoolean(style.pressureEnabled, `${path}.pressureEnabled`, "INVALID_INK");
+  if (style.lineCap !== "round" || style.lineJoin !== "round") {
+    fail("INVALID_INK", path, "Stroke cap and join must use the current round contract.");
+  }
+  if (style.brushTextureId !== undefined) {
+    expectString(style.brushTextureId, `${path}.brushTextureId`, "INVALID_INK");
+  }
+}
+
+function assertEncodableBrush(brush: ResolvedBrushSnapshot, path: string): void {
+  if (brush.schemaVersion !== 1) {
+    fail("INVALID_INK", `${path}.schemaVersion`, "Resolved brush schema version must be 1.");
+  }
+  expectId(brush.presetId, `${path}.presetId`, "INVALID_INK");
+  const presetVersion = expectSafeInteger(
+    brush.presetVersion,
+    `${path}.presetVersion`,
+    "INVALID_INK",
+  );
+  if (presetVersion <= 0) {
+    fail("INVALID_INK", `${path}.presetVersion`, "Brush preset version must be positive.");
+  }
+  const family: unknown = brush.family;
+  if (family !== "pencil" && family !== "pen" && family !== "marker" && family !== "highlighter") {
+    fail("INVALID_INK", `${path}.family`, "Resolved brush family is not supported.");
+  }
+  expectString(brush.color, `${path}.color`, "INVALID_INK", { nonBlank: true });
+  const size = expectFiniteNumber(brush.size, `${path}.size`, "INVALID_INK");
+  if (size <= 0) fail("INVALID_INK", `${path}.size`, "Resolved brush size must be positive.");
+  const opacity = expectFiniteNumber(brush.opacity, `${path}.opacity`, "INVALID_INK");
+  if (opacity < 0 || opacity > 1) {
+    fail("INVALID_INK", `${path}.opacity`, "Resolved brush opacity must be between zero and one.");
+  }
+  const smoothingMode: unknown = brush.smoothing.mode;
+  if (
+    smoothingMode !== "none" &&
+    smoothingMode !== "average" &&
+    smoothingMode !== "catmull-rom" &&
+    smoothingMode !== "bezier"
+  ) {
+    fail("INVALID_INK", `${path}.smoothing.mode`, "Brush smoothing mode is not supported.");
+  }
+  const smoothingAmount = expectFiniteNumber(
+    brush.smoothing.amount,
+    `${path}.smoothing.amount`,
+    "INVALID_INK",
+  );
+  if (smoothingAmount < 0 || smoothingAmount > 1) {
+    fail("INVALID_INK", `${path}.smoothing.amount`, "Brush smoothing amount is invalid.");
+  }
+  assertEncodablePressureResponse(brush.dynamics.pressureSize, `${path}.dynamics.pressureSize`);
+  assertEncodablePressureResponse(
+    brush.dynamics.pressureOpacity,
+    `${path}.dynamics.pressureOpacity`,
+  );
+  // The same vocabulary the decoder refuses by name, asked the same way, so a
+  // strategy this build cannot draw cannot be written either.
+  if (!isSupportedBrushStrategy(brush.renderer.kind, brush.renderer.version)) {
+    fail("INVALID_INK", `${path}.renderer`, "Resolved brush render strategy is not supported.", {
+      kind: brush.renderer.kind,
+      version: brush.renderer.version,
+      supported: supportedBrushStrategies(),
+    });
+  }
+}
+
+function assertEncodablePressureResponse(response: BrushPressureResponse, path: string): void {
+  const minimumFactor = expectFiniteNumber(
+    response.minimumFactor,
+    `${path}.minimumFactor`,
+    "INVALID_INK",
+  );
+  const maximumFactor = expectFiniteNumber(
+    response.maximumFactor,
+    `${path}.maximumFactor`,
+    "INVALID_INK",
+  );
+  if (minimumFactor < 0 || maximumFactor < minimumFactor) {
+    fail("INVALID_INK", path, "Pressure factors must be non-negative and ordered.");
+  }
+  const curveKind: unknown = response.curve.kind;
+  if (curveKind !== "linear" && curveKind !== "power") {
+    fail("INVALID_INK", `${path}.curve.kind`, "Pressure curve kind is not supported.");
+  }
+  const exponent = expectFiniteNumber(
+    response.curve.exponent,
+    `${path}.curve.exponent`,
+    "INVALID_INK",
+  );
+  if (exponent <= 0) {
+    fail("INVALID_INK", `${path}.curve.exponent`, "Pressure exponent must be positive.");
+  }
+  expectBoolean(response.enabled, `${path}.enabled`, "INVALID_INK");
+}
+
+function assertEncodableMetrics(metrics: StrokeMetrics, path: string): void {
+  const length = expectFiniteNumber(metrics.length, `${path}.length`, "INVALID_INK");
+  const duration = expectFiniteNumber(metrics.duration, `${path}.duration`, "INVALID_INK");
+  if (length < 0 || duration < 0) {
+    fail("INVALID_INK", path, "Stroke length and duration must be non-negative.");
+  }
+  assertEncodableBounds(metrics.bounds, `${path}.bounds`);
+  assertEncodableBounds(metrics.inflatedBounds, `${path}.inflatedBounds`);
+  assertEncodableRect(metrics.dirtyRect, `${path}.dirtyRect`);
+  assertEncodablePosition(metrics.center, `${path}.center`);
+}
+
+function assertEncodableBounds(bounds: StrokeBounds, path: string): void {
+  assertEncodableRect(bounds, path);
+  assertEncodablePosition(bounds.center, `${path}.center`);
+}
+
+function assertEncodableRect(
+  rect: Readonly<{ x: number; y: number; width: number; height: number }>,
+  path: string,
+): void {
+  const width = expectFiniteNumber(rect.width, `${path}.width`, "INVALID_INK");
+  const height = expectFiniteNumber(rect.height, `${path}.height`, "INVALID_INK");
+  if (width < 0 || height < 0) {
+    fail("INVALID_INK", path, "Rectangle dimensions must be non-negative.");
+  }
+  expectFiniteNumber(rect.x, `${path}.x`, "INVALID_INK");
+  expectFiniteNumber(rect.y, `${path}.y`, "INVALID_INK");
+}
+
+function assertEncodablePosition(position: Readonly<{ x: number; y: number }>, path: string): void {
+  expectFiniteNumber(position.x, `${path}.x`, "INVALID_INK");
+  expectFiniteNumber(position.y, `${path}.y`, "INVALID_INK");
+}
+
+function assertEncodableStatistics(
+  statistics: StrokeStatistics,
+  path: string,
+  pointCount: number,
+): void {
+  const declared = expectSafeInteger(statistics.pointCount, `${path}.pointCount`, "INVALID_INK");
+  if (declared !== pointCount) {
+    fail(
+      "INVALID_INK",
+      `${path}.pointCount`,
+      "Stroke point count does not match processed points.",
+    );
+  }
+  const averagePressure = expectUnitInterval(statistics.averagePressure, `${path}.averagePressure`);
+  const minimumPressure = expectUnitInterval(statistics.minimumPressure, `${path}.minimumPressure`);
+  const maximumPressure = expectUnitInterval(statistics.maximumPressure, `${path}.maximumPressure`);
+  if (minimumPressure > averagePressure || averagePressure > maximumPressure) {
+    fail("INVALID_INK", path, "Stroke pressure statistics are inconsistent.");
+  }
+  const averageVelocity = expectNonNegative(statistics.averageVelocity, `${path}.averageVelocity`);
+  const minimumVelocity = expectNonNegative(statistics.minimumVelocity, `${path}.minimumVelocity`);
+  const maximumVelocity = expectNonNegative(statistics.maximumVelocity, `${path}.maximumVelocity`);
+  if (minimumVelocity > averageVelocity || averageVelocity > maximumVelocity) {
+    fail("INVALID_INK", path, "Stroke velocity statistics are inconsistent.");
+  }
+  expectNonNegative(statistics.averageAcceleration, `${path}.averageAcceleration`);
+  expectNonNegative(statistics.maximumAcceleration, `${path}.maximumAcceleration`);
 }
 
 export function decodeStroke(value: unknown, path: string, budget: ProjectResourceBudget): Stroke {

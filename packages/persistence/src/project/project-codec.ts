@@ -82,6 +82,33 @@ const DEFAULT_PROJECT_TITLE = "Untitled Sketch";
 
 /** Encodes project content as deterministic, versioned, browser-safe JSON. */
 export function encodeFolioProject(project: FolioProjectSnapshot): string {
+  const serialized = buildFolioProjectTree(project);
+  // One walk of the finished tree, before any text exists: it proves the
+  // nesting the decoder will accept and that every value is one JSON can
+  // actually carry. Both used to be separate full passes, and the second of
+  // them could only run after the values it was looking for had already been
+  // dropped by `JSON.stringify`.
+  assertEncodableProjectTree(serialized);
+  const output = constructOrFail(
+    "INVALID_PROJECT",
+    "$",
+    "Folio project could not be encoded as JSON.",
+    () => `${JSON.stringify(serialized, null, 2)}
+`,
+  );
+  assertEncodedOutputWithinLimits(output);
+  return output;
+}
+
+/**
+ * Builds the document the encoder is about to write, and nothing else.
+ *
+ * Split out from {@link encodeFolioProject} so the two halves of a recovery
+ * capture can be measured separately: this half is the model's own cost, and
+ * what follows it is the cost of turning a tree into text. Both were one number
+ * while the expensive half was a validation pass nobody could see.
+ */
+export function buildFolioProjectTree(project: FolioProjectSnapshot): SerializedFolioProjectV1 {
   const projectRecord = expectRecord(
     project,
     "$",
@@ -109,7 +136,8 @@ export function encodeFolioProject(project: FolioProjectSnapshot): string {
     "Page count",
   );
   const identities = createIdentityRegistry();
-  const serialized: SerializedFolioProjectV1 = {
+  // format, formatVersion, metadata, sketchbook: already canonical.
+  return {
     format: "folio-project",
     formatVersion: CURRENT_FOLIO_PROJECT_VERSION,
     metadata,
@@ -117,23 +145,6 @@ export function encodeFolioProject(project: FolioProjectSnapshot): string {
       pages: sketchbook.pages.map((page, index) => encodePage(page, index, budget, identities)),
     },
   };
-  // format, formatVersion, metadata, sketchbook: already canonical.
-
-  // One walk of the finished tree, before any text exists: it proves the
-  // nesting the decoder will accept and that every value is one JSON can
-  // actually carry. Both used to be separate full passes, and the second of
-  // them could only run after the values it was looking for had already been
-  // dropped by `JSON.stringify`.
-  assertEncodableProjectTree(serialized);
-  const output = constructOrFail(
-    "INVALID_PROJECT",
-    "$",
-    "Folio project could not be encoded as JSON.",
-    () => `${JSON.stringify(serialized, null, 2)}
-`,
-  );
-  assertEncodedOutputWithinLimits(output);
-  return output;
 }
 
 /** Decodes one v1 document into real validated immutable Folio model instances. */
