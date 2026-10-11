@@ -327,6 +327,18 @@ describe("the encoder refuses a Stroke it could not read back", () => {
     ["no processed points", forge({ points: [] }), "INVALID_INK", "$.stroke.points"],
     ["no source samples", forge({ sourceSamples: [] }), "INVALID_INK", "$.stroke.sourceSamples"],
     [
+      "points that are not an array at all",
+      forge({ points: { length: 3 } }),
+      "INVALID_INK",
+      "$.stroke.points",
+    ],
+    [
+      "source samples that are not an array at all",
+      forge({ sourceSamples: { length: 3 } }),
+      "INVALID_INK",
+      "$.stroke.sourceSamples",
+    ],
+    [
       "more points than one stroke may carry",
       forge({ points: new Array<unknown>(1_000_001) }),
       "RESOURCE_LIMIT",

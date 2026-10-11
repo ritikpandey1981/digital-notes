@@ -144,7 +144,11 @@ export function encodeStroke(
 function assertEncodableStroke(stroke: Stroke, path: string, budget: ProjectResourceBudget): void {
   expectId(stroke.id, `${path}.id`, "INVALID_INK");
   expectFiniteNumber(stroke.timestamp, `${path}.timestamp`, "INVALID_INK");
-  const points = stroke.points;
+  // Asked the way the decoder asks it, including for the array itself: a
+  // forged instance is the only way a Stroke can hold something that is not
+  // one, and it should be refused rather than thrown over.
+  const points: readonly StrokePoint[] = stroke.points;
+  if (!Array.isArray(points)) fail("INVALID_INK", `${path}.points`, "Expected an array.");
   if (points.length === 0) {
     fail("INVALID_INK", `${path}.points`, "A finalized Stroke requires processed points.");
   }
@@ -154,7 +158,10 @@ function assertEncodableStroke(stroke: Stroke, path: string, budget: ProjectReso
     `${path}.points`,
     "Processed point count",
   );
-  const sourceSamples = stroke.sourceSamples;
+  const sourceSamples: readonly StrokePointInput[] = stroke.sourceSamples;
+  if (!Array.isArray(sourceSamples)) {
+    fail("INVALID_INK", `${path}.sourceSamples`, "Expected an array.");
+  }
   if (sourceSamples.length === 0) {
     fail("INVALID_INK", `${path}.sourceSamples`, "A finalized Stroke requires source samples.");
   }
