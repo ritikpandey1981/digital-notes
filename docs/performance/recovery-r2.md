@@ -162,6 +162,40 @@ pressure monotonicity. That is a phase, not a line, and it is now the one worth
 doing: a custom JSON writer would attack the second-largest stage while the
 largest sits untouched.
 
+## One full Electron run that has never recurred
+
+Recorded because it happened, not because it was ever explained. One full
+Electron run on this phase failed three tests, all with the same signature: a
+drawn stroke that did not commit.
+
+| run | code | result |
+| --- | --- | --- |
+| twice after R1 | `bb85f1f` | 133 passed |
+| **R2, first run** | R2 | **3 failed** |
+| control, re-run | `bb85f1f` | 133 passed |
+| R2, second run | R2 | 133 passed |
+| the three specs, `--repeat-each=3` | R2 | 9 passed |
+| twice after R3 | R3 | 133 passed |
+
+Six clean full runs against one failing one, and it could not be attributed.
+The control passing means it cannot be called pre-existing flakiness; the
+non-reproduction means it cannot be called a regression either.
+
+What *is* established is why those three are sensitive to a main-thread block at
+all. The pass-B case presses the pointer mid-animation over a closing palette
+with no settling wait, deliberately: an exiting surface that kept intercepting
+input would lose the stroke, and that is the defect it exists to catch. So any
+block landing between the press and the moves fails it for a reason that is not
+the defect under test. Recovery captures are 130—360 ms blocks whose timing both
+codec phases moved.
+
+The settling wait that would make it stable is the one change that must not be
+made, because it would remove the coverage. R1 already removed the larger half
+of the exposure by refusing to *start* a capture while a pointer is down; what
+remains is a capture already running when the press arrives. If it recurs, that
+is the first thing to measure, and the run history above is the baseline to
+measure it against.
+
 ## Not changed
 
 R1's scheduling is untouched: the mounted collision test still shows no capture

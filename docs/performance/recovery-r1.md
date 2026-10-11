@@ -153,6 +153,35 @@ with no concurrency at all. Off-main-thread encoding was priced and rejected for
 cheapest payload to transfer is a string, and the string only exists after the work worth
 moving.
 
+## What was priced and rejected, with the numbers
+
+Off-main-thread encoding keeps being the obvious idea, so the audit that
+preceded this phase priced every boundary that preserves the codec's contract
+rather than arguing about it. The harness that produced these has since been
+retired -- it measured two passes the codec no longer makes -- so the figures
+live here. At 39 MB, on the machine above:
+
+| boundary | renderer pays | worker pays | why it fails |
+| --- | --- | --- | --- |
+| clone the live project | 534 ms | — | `structuredClone` drops prototypes, so the codec refuses the result: no `SketchbookDocument` survives the trip |
+| clone the finished JSON tree | 370 ms clone + 192 ms `postMessage` | 837 ms | the renderer still builds the tree, then pays the clone synchronously on its own thread |
+| transfer the finished text | 9 ms | 400 ms | the cheapest payload there is, and it only exists *after* the work worth moving |
+| transfer sample columns as typed arrays | 11 ms read + 1 ms transfer | — | the only boundary cheap in both directions, and a change to what a capture *is* rather than to when it runs |
+
+That is the shape of the whole result: **the cheapest payload to move is a
+string, and the string only exists after the work you wanted to move.** The one
+genuinely cheap boundary is a different capture representation, not a scheduling
+change, and it is not this phase or the two after it.
+
+`JSON.stringify` is also atomic. The depth scan and the key sort both chunk
+exactly, byte-identically; `stringify` does not, so cooperative chunking cannot
+reach a frame budget either.
+
+And the cost is a function of sample count rather than of which brush drew them.
+Three strokes of 5000 samples, same payload within 34 bytes: `pencil@1`
+302.8 ms, `pressure-pen@1` 290.0 ms, `technical-pen@1` 291.8 ms. A strategy
+added later inherits this cost per sample and adds nothing of its own to it.
+
 ## Regressions
 
 `tests/e2e/electron-recovery-input-deferral.spec.ts`, three mounted tests, each on its own
