@@ -145,7 +145,6 @@ describe("marker@1 cost", () => {
     const last = median(frames.slice(-10));
     expect(last).toBeLessThanOrEqual(Math.max(first, 0.05) * 8);
     if (process.env.FOLIO_PERFORMANCE_BASELINE === "1") {
-      // eslint-disable-next-line no-console
       console.log(
         `marker live frames: first ${String(first)} ms, last ${String(last)} ms, ` +
           `max ${String(Math.max(...frames))} ms over ${String(frames.length)} frames`,
@@ -178,7 +177,6 @@ describe("marker@1 cost", () => {
       }
     }
     if (process.env.FOLIO_PERFORMANCE_BASELINE === "1") {
-      // eslint-disable-next-line no-console
       console.log(`marker committed rebuild\n  ${rows.join("\n  ")}`);
     }
     expect(rows).toHaveLength(6);

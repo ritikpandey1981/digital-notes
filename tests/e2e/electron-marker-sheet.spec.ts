@@ -124,12 +124,6 @@ async function setSize(window: Page, size: string): Promise<void> {
   ).toHaveAttribute("data-property-value", size);
 }
 
-async function objectCount(window: Page): Promise<number> {
-  return Number(
-    await window.getByTestId("canvas-surface").getAttribute("data-document-object-count"),
-  );
-}
-
 test("draws the Marker inspection sheet", async () => {
   test.skip(
     process.env.FOLIO_MARKER_SHEET !== "1",
