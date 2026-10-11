@@ -5,7 +5,6 @@ import type { StrokePoint } from "../types";
 import {
   alphaAt,
   buildMaterial,
-  inkedCells,
   pencilBrush,
   samplePoint,
   straight,
@@ -45,20 +44,15 @@ describe("hybrid Pencil material", () => {
     }
   });
 
-  it("reveals more of the same sheet as pressure rises, never a different one", () => {
-    // This is the property the whole page-space addressing exists to protect:
-    // a firmer stroke's graphite is a *superset* of a lighter one's, so pressing
-    // harder can only ever add grains and never move them.
-    const brush = pencilBrush();
-    const light = inkedCells(buildMaterial(straight(0.25), brush));
-    const medium = inkedCells(buildMaterial(straight(0.55), brush));
-    const firm = inkedCells(buildMaterial(straight(0.95), brush));
-    expect(light.size).toBeGreaterThan(0);
-    expect(medium.size).toBeGreaterThan(light.size);
-    expect(firm.size).toBeGreaterThan(medium.size);
-    for (const cell of light) expect(medium.has(cell)).toBe(true);
-    for (const cell of medium) expect(firm.has(cell)).toBe(true);
-  });
+  // The superset property -- a firmer pass adds grains and never moves them --
+  // is asserted in `pencil-visual-freeze.test.ts`, which owns it and states it
+  // twice: once on the preset as shipped, and once with the size response held
+  // off so a displacement of a single cell breaks the chain. The copy that used
+  // to live here was the first form on a straight run, and measurably weaker:
+  // with a pressure-dependent shift of a whole cell injected into placement, it
+  // passed while the freeze suite's sharp form failed. Two subtly different
+  // definitions of one durable property is worse than one, so this defers to
+  // the authority rather than restating it.
 
   it("deposits monotonically more material as pressure rises", () => {
     const brush = pencilBrush();

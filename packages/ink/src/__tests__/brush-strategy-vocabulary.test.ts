@@ -143,6 +143,41 @@ describe("brush strategy vocabulary", () => {
     });
   });
 
+  it("draws every strategy from the snapshot, never from the legacy Stroke style", () => {
+    // `Stroke.style` and `ResolvedBrushSnapshot` both carry a colour, an
+    // opacity and a width, and the snapshot is the render authority: the style
+    // record is the pre-17A projection kept so that artwork saved before the
+    // engine had snapshots still resolves. Which of the two a strategy reads is
+    // not a matter of taste -- a strategy reading the style would render
+    // something other than the brush the artist resolved, and would do it only
+    // for strokes whose two disagree.
+    //
+    // Asserted across the whole registry rather than per strategy, so the next
+    // one to be added inherits the rule instead of having to be told it.
+    for (const key of registeredBrushStrategies()) {
+      const separator = key.lastIndexOf("@");
+      const kind = key.slice(0, separator);
+      const version = Number(key.slice(separator + 1));
+      const brush = snapshot({ version, kind } as BrushRendererDefinition);
+      const drawn = strokeWith(brush);
+      const divergent = new Stroke({
+        id: drawn.id,
+        timestamp: drawn.timestamp,
+        points: drawn.points,
+        sourceSamples: drawn.sourceSamples,
+        // Nothing a renderer could mistake for the snapshot's own values.
+        style: { ...drawn.style, color: "#ff00ff", width: 97, opacity: 0.11 },
+        brush: drawn.brush,
+        metrics: drawn.metrics,
+        statistics: drawn.statistics,
+      });
+      expect(divergent.style.width).not.toBe(divergent.brush.size);
+      expect(JSON.stringify(resolveStrokeRenderGeometry(divergent)), key).toBe(
+        JSON.stringify(resolveStrokeRenderGeometry(drawn)),
+      );
+    }
+  });
+
   it("refuses to render a forged strategy instead of substituting a nearby one", () => {
     const forged = forgedSnapshot("technical-pen", 99);
     const stroke = strokeWith(snapshot({ version: 1, kind: "centerline" }));
