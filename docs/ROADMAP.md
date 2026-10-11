@@ -196,14 +196,22 @@ Remaining:
   [`performance/recovery-r3.md`](performance/recovery-r3.md), rule in D-049.
 
   `JSON.stringify` is now the largest remaining stage at 56% of the encode, and the model's
-  own cost is 3%. That is a different shape of problem from the three phases before it: there
-  is no redundant pass left to delete, so going further means either writing JSON by hand or
-  moving the work off the drawing thread. Off-main-thread encoding was already priced and
-  rejected once — the cheapest payload to move is a string, and the string only exists
-  after the work worth moving. The mounted block also contains handing that string across the
-  process boundary, which neither phase touched and which is therefore a larger share of a
-  smaller block; how much larger is not known, because the mounted block fell 27% against the
-  encode's 49% and the two are measured on different documents in different engines.
+  own cost is 3%. One redundant pass does remain and is worth naming rather than claiming
+  otherwise: `assertEncodableProjectTree` walks every node the codec has just built, including
+  the seventy thousand sample objects R3 now proves on the model and the metadata and rendering
+  hints that `validateJsonValue` has already walked more strictly. What it uniquely knows is
+  *absolute document depth*, which nothing else does, so deleting it means making depth a
+  property of emission — every object literal in the codec knowing its own nesting level.
+  That is 154 ms of 570 at 39 MB, and it buys that by making encode/decode depth symmetry
+  implicit, which is the one invariant this codec has actually got wrong before (D-048). The
+  trade is bad at the current block size and is recorded here rather than taken.
+
+  Off-main-thread encoding was already priced and rejected once — the cheapest payload to
+  move is a string, and the string only exists after the work worth moving. The mounted block
+  also contains handing that string across the process boundary, which neither phase touched
+  and which is therefore a larger share of a smaller block; how much larger is not known,
+  because the mounted block fell 27% against the encode's 49% and the two are measured on
+  different documents in different engines.
 
 - Taper: a function of position along the stroke, not a pressure response, and it has no
   durable representation yet. Deferred deliberately rather than faked by bending a

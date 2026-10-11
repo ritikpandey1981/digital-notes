@@ -149,6 +149,19 @@ the sum of the stages is about 49 ms and each stage is an independent median, so
 the arithmetic no longer resolves the model's own cost precisely; at 5.57 MB the
 same residual is negative. That is the instrument's floor, not a discovery.
 
+One redundant pass does remain, and it is better named than claimed away. The
+walk visits every node the codec has just built -- including the seventy
+thousand sample objects whose numbers `assertEncodableStroke` has already proved
+on the model, and the metadata and rendering hints that `validateJsonValue` has
+already walked more strictly on the way past. What it uniquely knows is
+*absolute document depth*, which nothing else in the encoder does, so deleting it
+means making depth a property of emission: every object literal in the codec
+would have to know its own nesting level. That is 154 ms, and it would buy them
+by making encode/decode depth symmetry implicit -- which is the one invariant
+this codec has actually got wrong before, and the reason D-048 is written the way
+it is. At a 359 ms mounted block that lands on an idle thread, the trade is a bad
+one. It is recorded rather than taken.
+
 ### Memory
 
 Heap growth across one encode, over a collected baseline, medians of three runs:
