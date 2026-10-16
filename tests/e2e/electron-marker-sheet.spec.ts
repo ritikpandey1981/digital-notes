@@ -6,8 +6,15 @@ import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
  * The Marker inspection sheet: what `marker@1` actually looks like.
  *
  * Drawn with the real production renderer through the real slot, preset and
- * input path, at a deterministic set of positions, so two runs of the same
- * build produce the same sheet and two builds can be compared side by side.
+ * input path, at a deterministic set of positions, so two builds can be
+ * compared side by side.
+ *
+ * How deterministic, measured rather than assumed: two runs of the same build
+ * gave byte-identical detail and comparison images, and sheets differing on 143
+ * of 1.6 million pixels by at most 11 of 255 -- the brush cursor ring at the
+ * last point drawn, and a hover state on the colour rail. No mark differed.
+ * Nothing here compares screenshots, so that costs nothing today; it is written
+ * down because the first person who tries to will want to know.
  *
  * This exists to be *looked at*. Nothing here asserts a pixel: what it asserts
  * is that every case drew something and that the console stayed quiet. The
