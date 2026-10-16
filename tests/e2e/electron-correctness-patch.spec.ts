@@ -58,7 +58,11 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await activateDockSlot(window, "marker");
     await expect(palette).toBeHidden();
     await expect(surface).toHaveAttribute("data-drawing-color", "#1f2937");
-    await expect(surface).toHaveAttribute("data-drawing-width", "8");
+    // Twelve since the Marker preset was tuned, and the change does this
+    // assertion a favour: the Pen slot was just set to eight a few lines above,
+    // so while Marker's own default was also eight, state leaking across slots
+    // would have passed here unnoticed. It cannot now.
+    await expect(surface).toHaveAttribute("data-drawing-width", "12");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.9");
 
     const highlighterButton = toolDock.locator('button[data-dock-slot="highlighter"]');
@@ -182,7 +186,7 @@ test("preserves independent Shape state, contextual hints, modal stacking, and i
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.8");
     await activateDockSlot(window, "marker");
     await expect(surface).toHaveAttribute("data-drawing-color", "#1f2937");
-    await expect(surface).toHaveAttribute("data-drawing-width", "8");
+    await expect(surface).toHaveAttribute("data-drawing-width", "12");
     await expect(surface).toHaveAttribute("data-drawing-opacity", "0.9");
     await activateDockSlot(window, "highlighter");
     await expect(surface).toHaveAttribute("data-drawing-color", "#facc15");
