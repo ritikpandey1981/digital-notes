@@ -163,20 +163,32 @@ export const DEFAULT_BRUSH_PRESETS: readonly BrushPreset[] = Object.freeze([
     opacityCurve: Object.freeze({ kind: "power", exponent: 0.55 }),
     renderer: "pressure-pen",
   }),
-  // The one marker on the real engine, and the family's default. Its width,
-  // opacity and smoothing are the ones it already had, so the mark it makes is
-  // the same size and weight it was; what is new is the *shape* being dragged,
-  // an oriented felt nib rather than a round pen line. It resolves no pressure
-  // response, because a marker barely has one -- what varies is which way you
-  // drew, not how hard. Strokes already saved keep naming centerline@1 and keep
-  // rendering as they were drawn. `marker-broad` stays on its legacy strategy
-  // until the catalogue phase.
+  // The one marker on the real engine, and the family's default. What it drags
+  // is an oriented felt nib rather than a round pen line, so the mark is broad
+  // one way and narrow the other and nothing inside it is painted or textured.
+  //
+  // Twelve page units rather than the eight it carried as a round line. The
+  // width is the only thing the review moved, and it moved for a reason that is
+  // about the nib rather than about taste: an oriented nib is legible only once
+  // the mark is wide enough for its two directions to differ visibly, and at
+  // eight the difference was there but the weight read as a broad pen. Opacity,
+  // smoothing and colour are untouched.
+  //
+  // It resolves no pressure response, because a marker barely has one -- what
+  // varies is which way you drew, not how hard. That is a decision, not an
+  // omission: the strategy consumes both responses generically, so a later
+  // preset can enable one without engine work.
+  //
+  // Strokes already saved keep naming centerline@1 and keep rendering as they
+  // were drawn, and changing this default changes none of them -- a saved
+  // stroke carries the width it was drawn at. `marker-broad` stays on its
+  // legacy strategy until the catalogue phase.
   createCatalogPreset({
     id: "marker-felt",
     name: "Felt Marker",
     family: "marker",
     color: "#1f2937",
-    size: 8,
+    size: 12,
     opacity: 0.9,
     smoothing: 0.22,
     renderer: "marker",

@@ -38,16 +38,23 @@ describe("the Marker preset", () => {
     expect(broad?.family).toBe("marker");
   });
 
-  it("keeps the width, opacity and smoothing the preset already shipped", () => {
-    // The strategy changed; the configuration did not. A migration that also
-    // retuned the preset would make it impossible to say which of the two
-    // changed what a person sees.
+  it("is twelve page units wide, which is the width the review chose", () => {
+    // The migration deliberately changed the strategy and nothing else, so the
+    // first sheets showed what the *existing* preset drew: at eight page units
+    // the nib character was present but the mark read as a broad pen. Twelve is
+    // the reviewed answer, and it is the only thing that moved -- opacity,
+    // smoothing and colour are still the ones the preset shipped with, so the
+    // weight and the hand of the brush are unchanged and only the scale at
+    // which the nib becomes legible is different.
+    //
+    // This is a product choice about what the Marker slot draws. It is not part
+    // of `marker@1`'s identity, and the engine's own gates do not read it.
     const preset = DEFAULT_BRUSH_PRESETS.find(({ id }) => id === MARKER_FELT_ID);
     expect(preset).toBeDefined();
     if (preset === undefined) return;
     expect(preset.renderer).toEqual({ version: 1, kind: "marker" });
     expect(preset.family).toBe("marker");
-    expect(preset.defaults.size).toBe(8);
+    expect(preset.defaults.size).toBe(12);
     expect(preset.defaults.opacity).toBe(0.9);
     expect(preset.defaults.smoothing).toEqual({ mode: "average", amount: 0.22 });
   });

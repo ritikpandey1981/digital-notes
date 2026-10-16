@@ -9,9 +9,19 @@ import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
  * input path, at a deterministic set of positions, so two runs of the same
  * build produce the same sheet and two builds can be compared side by side.
  *
- * This exists to be *looked at*. The appearance of `marker@1` is not frozen and
- * nothing here asserts a pixel: what it asserts is that every case drew
- * something and that the console stayed quiet. The decision is a person's.
+ * This exists to be *looked at*. Nothing here asserts a pixel: what it asserts
+ * is that every case drew something and that the console stayed quiet. The
+ * decision the sheet exists for is a person's.
+ *
+ * Three artifacts, which are the three questions:
+ *
+ * 1. the **sheet**, at the canonical preset's own width, covering every path
+ *    shape a nib can be embarrassed by, plus a mouse row and three pen rows;
+ * 2. the **detail**, a close crop of two crossing diagonals, where the nib's
+ *    edge and the darkening between separate strokes are legible;
+ * 3. the **comparison strip**, the same five marks at 8, 12, 14 and 26 page
+ *    units, top to bottom. That one is diagnostic: it exists to show what the
+ *    chosen width is being chosen *against*, not to reopen the choice.
  *
  * Opt in with `FOLIO_MARKER_SHEET=1`; `MARKER_LABEL` names the run. Sheets land
  * in `test-results/marker/`, which is gitignored.
@@ -20,6 +30,10 @@ import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
 const REPOSITORY_ROOT = process.cwd();
 const LABEL = process.env.MARKER_LABEL ?? "current";
 const OUT = "test-results/marker";
+
+/** The canonical preset's own width, and the widths it is compared against. */
+const PRESET_WIDTH = 12;
+const COMPARISON_WIDTHS = [8, 12, 14, 26] as const;
 
 async function launch() {
   return electron.launch({
@@ -111,17 +125,70 @@ function zigzag(start: Point, width: number, height: number, legs: number): Poin
   return points;
 }
 
-async function setSize(window: Page, size: string): Promise<void> {
+/**
+ * Out, around a radius barely wider than the nib, and back alongside itself.
+ *
+ * The hardest thing to ask of a swept shape: the normal rotates through half a
+ * turn in a short distance, which is where a boundary that was computed rather
+ * than traced would fold, spike, or leave a hole on the inside of the turn.
+ */
+function uTurn(from: Point, length: number, radius: number): Point[] {
+  const turn = { x: from.x + length, y: from.y + radius };
+  return [
+    ...straight(from, { x: turn.x, y: from.y }),
+    ...arc(turn, radius, -Math.PI / 2, Math.PI / 2, 24).slice(1),
+    ...straight({ x: turn.x, y: from.y + radius * 2 }, { x: from.x, y: from.y + radius * 2 }),
+  ];
+}
+
+/** One stroke that crosses itself twice, without ever retracing its own line. */
+function figureEight(centre: Point, rx: number, ry: number, steps = 90): Point[] {
+  return Array.from({ length: steps + 1 }, (_unused, index) => {
+    const t = (index / steps) * Math.PI * 2;
+    return { x: centre.x + Math.sin(t * 2) * rx, y: centre.y + Math.sin(t) * ry };
+  });
+}
+
+/** Out and back along the same line, in one stroke: the retrace case. */
+function retrace(from: Point, to: Point, steps = 20): Point[] {
+  return [...straight(from, to, steps), ...straight(to, from, steps).slice(1)];
+}
+
+async function setSize(window: Page, size: number): Promise<void> {
+  const text = String(size);
   await openSlotToolOptions(window, "marker");
   const palette = window.getByTestId("context-tool-palette");
   const field = palette.getByLabel("Size value");
-  await field.fill(size);
+  await field.fill(text);
   await field.press("Enter");
   await window.keyboard.press("Escape");
   await expect(palette).toHaveCount(0);
   await expect(
     window.getByTestId("drawing-property-rail").locator('button[data-property-key="strokeWidth"]'),
-  ).toHaveAttribute("data-property-value", size);
+  ).toHaveAttribute("data-property-value", text);
+}
+
+/**
+ * Picks a zoom from the viewport menu.
+ *
+ * The detail sheet is drawn at three hundred percent rather than cropped out
+ * of the sheet above, because a crop of a twelve-unit mark is a twelve-pixel
+ * mark however tightly it is cropped. Zooming also asks the strategy a real
+ * question: the committed geometry is rebuilt at the new scale, so if the nib
+ * were approximated anywhere this is where the edge would coarsen.
+ */
+async function setZoom(window: Page, label: string, expected: number): Promise<void> {
+  await window.getByRole("button", { name: /^Zoom options,/ }).click();
+  await expect(window.getByRole("menu")).toBeVisible();
+  await window.getByRole("menuitem", { name: label }).click();
+  await expect(window.getByRole("menu")).toHaveCount(0);
+  await expect
+    .poll(async () =>
+      Number(
+        await window.getByTestId("viewport-controls").getAttribute("data-viewport-zoom"),
+      ).toFixed(2),
+    )
+    .toBe(expected.toFixed(2));
 }
 
 test("draws the Marker inspection sheet", async () => {
@@ -147,17 +214,21 @@ test("draws the Marker inspection sheet", async () => {
     // outside the paper is unreachable artwork and the editor refuses it, so a
     // sheet positioned in viewport coordinates silently loses its left column.
     const session = await electronApp.context().newCDPSession(window);
-    const paper = await window.evaluate(() => {
-      const element = document.querySelector('[data-testid="canvas-surface"]');
-      const read = (name: string): number => Number(element?.getAttribute(name) ?? "0");
-      return {
-        x: read("data-viewport-page-x"),
-        y: read("data-viewport-page-y"),
-        width: read("data-viewport-page-width"),
-        height: read("data-viewport-page-height"),
-      };
-    });
-    expect(paper.width).toBeGreaterThan(400);
+    const readPaper = async () =>
+      window.evaluate(() => {
+        const element = document.querySelector('[data-testid="canvas-surface"]');
+        const read = (name: string): number => Number(element?.getAttribute(name) ?? "0");
+        return {
+          x: read("data-viewport-page-x"),
+          y: read("data-viewport-page-y"),
+          width: read("data-viewport-page-width"),
+          height: read("data-viewport-page-height"),
+        };
+      });
+    let paper = await readPaper();
+    const fitZoom = Number(
+      await window.getByTestId("viewport-controls").getAttribute("data-viewport-zoom"),
+    );
     const MARGIN = 40;
     // The top of the paper sits under the window chrome, and a press that lands
     // on chrome is not a press on the canvas: the first run of this sheet lost
@@ -169,6 +240,10 @@ test("draws the Marker inspection sheet", async () => {
       y: paper.y + TOP + y,
     });
     const span = { width: paper.width - MARGIN * 2, height: paper.height - TOP - MARGIN };
+    // Asserted rather than assumed: a layout that ran off the paper would lose
+    // cases one at a time, and each loss reads as whichever case came next.
+    expect(span.width, "paper is wide enough for the sheet").toBeGreaterThanOrEqual(1000);
+    expect(span.height, "paper is tall enough for the sheet").toBeGreaterThanOrEqual(660);
 
     /** Draws one case and proves it reached the document. */
     let drawn = 0;
@@ -178,95 +253,134 @@ test("draws the Marker inspection sheet", async () => {
       await expect(surface, label).toHaveAttribute("data-document-object-count", String(drawn));
     };
 
-    // ---- Sheet one: the default preset width, every path shape. ----
-    await setSize(window, "8");
+    const clear = async (): Promise<void> => {
+      for (let undo = 0; undo < drawn + 2; undo += 1) await window.keyboard.press("Control+z");
+      await expect(surface).toHaveAttribute("data-document-object-count", "0");
+      drawn = 0;
+    };
+
+    // ================ Sheet: the canonical preset, every shape ================
+    await setSize(window, PRESET_WIDTH);
 
     // Taps, which must show the nib rather than a dot.
-    for (const [index, x] of [0, 40, 80].entries()) {
-      await draw(`tap ${String(index)}`, () => drawMouse(window, [at(x, 10)]));
+    for (const [index, x] of [0, 36, 72].entries()) {
+      await draw(`tap ${String(index)}`, () => drawMouse(window, [at(x, 20)]));
     }
 
-    // The four orientations the fixed nib is meant to differ across.
-    await draw("horizontal", () => drawMouse(window, straight(at(150, 10), at(350, 10))));
-    await draw("vertical", () => drawMouse(window, straight(at(400, 0), at(400, 120))));
-    await draw("diagonal down", () => drawMouse(window, straight(at(450, 0), at(580, 120))));
-    await draw("diagonal up", () => drawMouse(window, straight(at(640, 120), at(770, 0))));
-
-    // Short and long runs.
-    await draw("short", () => drawMouse(window, straight(at(0, 170), at(60, 170))));
-    await draw("long", () => drawMouse(window, straight(at(0, 210), at(span.width - 20, 230), 40)));
-
-    // Curves, a tight turn, a loop, a zigzag.
-    await draw("arc", () => drawMouse(window, arc(at(110, 350), 90, Math.PI, Math.PI * 2)));
-    await draw("tight turn", () =>
+    // Short, and the four orientations a fixed nib is meant to differ across.
+    await draw("short horizontal", () => drawMouse(window, straight(at(130, 20), at(200, 20))));
+    await draw("vertical", () => drawMouse(window, straight(at(250, 0), at(250, 120))));
+    await draw("diagonal down", () => drawMouse(window, straight(at(300, 0), at(420, 120))));
+    await draw("diagonal up", () => drawMouse(window, straight(at(470, 120), at(590, 0))));
+    await draw("curve", () => drawMouse(window, arc(at(700, 70), 60, Math.PI, Math.PI * 2)));
+    await draw("corner", () =>
       drawMouse(window, [
-        ...straight(at(260, 290), at(400, 290)),
-        ...straight(at(400, 290), at(400, 420)).slice(1),
+        ...straight(at(820, 0), at(940, 0)),
+        ...straight(at(940, 0), at(940, 120)).slice(1),
       ]),
     );
-    await draw("loop", () => drawMouse(window, arc(at(540, 350), 60, 0, Math.PI * 2, 60)));
-    await draw("zigzag", () => drawMouse(window, zigzag(at(670, 300), 220, 90, 7)));
 
-    // Crossings, and separate overlapping strokes: the one place a Marker is
-    // expected to darken.
-    await draw("cross a", () => drawMouse(window, straight(at(20, 530), at(300, 530))));
-    await draw("cross b", () => drawMouse(window, straight(at(160, 470), at(160, 600))));
-    await draw("cross c", () => drawMouse(window, straight(at(60, 590), at(280, 490))));
+    // The long run, the hard turns, and the two crossing cases that must not
+    // darken: a stroke crossing itself, and a stroke drawn back over itself.
+    await draw("long horizontal", () =>
+      drawMouse(window, straight(at(0, 170), at(span.width - 20, 185), 40)),
+    );
+    await draw("u-turn", () => drawMouse(window, uTurn(at(0, 240), 130, 22)));
+    await draw("loop", () => drawMouse(window, arc(at(260, 262), 50, 0, Math.PI * 2, 60)));
+    await draw("zigzag", () => drawMouse(window, zigzag(at(370, 220), 200, 70, 6)));
+    await draw("self-crossing", () => drawMouse(window, figureEight(at(660, 262), 60, 50)));
+    await draw("retrace", () => drawMouse(window, retrace(at(800, 250), at(980, 250))));
 
-    // Dense shading, which is where a stamped brush would show its lanes.
-    for (let row = 0; row < 7; row += 1) {
+    // Two separate strokes crossing, which is the one place a Marker is
+    // expected to darken, and dense shading, where a stamped brush shows lanes.
+    await draw("overlap a", () => drawMouse(window, straight(at(0, 380), at(240, 380))));
+    await draw("overlap b", () => drawMouse(window, straight(at(120, 330), at(120, 440))));
+    // Eight apart, which at this width is closer than the mark is wide: the
+    // rows have to overlap or the case proves nothing. Spaced further, they
+    // abut and leave a hairline of paper between them, and the sheet would be
+    // measuring its own layout rather than the brush.
+    for (let row = 0; row < 9; row += 1) {
       await draw(`shading ${String(row)}`, () =>
-        drawMouse(window, straight(at(400, 490 + row * 11), at(640, 490 + row * 11))),
+        drawMouse(window, straight(at(300, 340 + row * 8), at(560, 340 + row * 8))),
       );
     }
 
-    await window.waitForTimeout(500);
-    await window.screenshot({ path: `${OUT}/${LABEL}-sheet-default-8pu.png` });
-    expect(drawn, "every default-width case drew").toBe(23);
-
-    // ---- Sheet two: pressure, by pointer type, at a broader width. ----
-    for (let undo = 0; undo < drawn + 2; undo += 1) {
-      await window.keyboard.press("Control+z");
-    }
-    await expect(surface).toHaveAttribute("data-document-object-count", "0");
-    drawn = 0;
-    await setSize(window, "26");
-
-    await draw("mouse broad", () => drawMouse(window, straight(at(0, 40), at(420, 40), 30)));
+    // Pointer type and pressure, four rows adjacent so they can be compared by
+    // eye. `marker-felt` resolves no pressure response, so these four rows are
+    // *expected* to be indistinguishable.
+    await draw("mouse", () => drawMouse(window, straight(at(0, 500), at(420, 500), 30)));
     for (const [index, pressure] of [0.15, 0.5, 0.95].entries()) {
       await draw(`pen ${String(pressure)}`, () =>
         drawPen(
           session,
-          straight(at(0, 130 + index * 90), at(420, 130 + index * 90), 30),
+          straight(at(0, 535 + index * 35), at(420, 535 + index * 35), 30),
           pressure,
         ),
       );
     }
-    // A broad nib through a tight turn and a loop, where a swept shape is most
-    // likely to fold or spike.
-    await draw("broad arc", () =>
-      drawPen(session, arc(at(700, 220), 110, Math.PI * 0.75, Math.PI * 2.1, 70), 0.7),
-    );
-    await draw("broad zigzag", () => drawPen(session, zigzag(at(880, 60), 180, 120, 6), 0.7));
-    await draw("broad tap", () => drawPen(session, [at(980, 400)], 0.8));
-    await draw("broad down", () => drawPen(session, straight(at(0, 480), at(500, 620), 30), 0.6));
-    await draw("broad up", () => drawPen(session, straight(at(0, 620), at(500, 480), 30), 0.6));
+
+    // The detail pair: two opposed diagonals crossing, at the preset's width.
+    await draw("detail down", () => drawMouse(window, straight(at(520, 500), at(700, 640))));
+    await draw("detail up", () => drawMouse(window, straight(at(520, 640), at(700, 500))));
 
     await window.waitForTimeout(500);
-    await window.screenshot({ path: `${OUT}/${LABEL}-sheet-broad-26pu.png` });
-    expect(drawn, "every broad-width case drew").toBe(9);
+    await window.screenshot({ path: `${OUT}/${LABEL}-sheet-12pu.png` });
+    expect(drawn, "every case on the sheet drew").toBe(32);
 
-    // A close look at the two broad diagonals, where the nib's edge is most
-    // legible and where a chisel should read differently in each direction.
+    // ====================== Detail: the same width, at 300% =====================
+    await clear();
+    await setZoom(window, "300%", 3);
+    paper = await readPaper();
+    const detail = { x: 520, y: 360 };
+    const near = (x: number, y: number): Point => ({ x: detail.x + x, y: detail.y + y });
+    // On paper, asserted: at this zoom the page is larger than the window, so
+    // the only way this region is off the sheet is if the view moved.
+    expect(paper.x).toBeLessThan(detail.x);
+    expect(paper.y).toBeLessThan(detail.y);
+    expect(paper.x + paper.width).toBeGreaterThan(detail.x + 460);
+    expect(paper.y + paper.height).toBeGreaterThan(detail.y + 200);
+
+    await draw("detail tap", () => drawMouse(window, [near(30, 60)]));
+    await draw("detail down", () => drawMouse(window, straight(near(110, 0), near(270, 160))));
+    await draw("detail up", () => drawMouse(window, straight(near(110, 160), near(270, 0))));
+    await draw("detail horizontal", () =>
+      drawMouse(window, straight(near(320, 40), near(450, 40))),
+    );
+    await draw("detail vertical", () => drawMouse(window, straight(near(400, 90), near(400, 180))));
+    await window.waitForTimeout(400);
     await window.screenshot({
-      path: `${OUT}/${LABEL}-detail-broad-diagonals.png`,
-      clip: {
-        x: at(0, 450).x,
-        y: at(0, 450).y,
-        width: 540,
-        height: 220,
-      },
+      path: `${OUT}/${LABEL}-detail-12pu.png`,
+      clip: { x: detail.x - 20, y: detail.y - 30, width: 500, height: 250 },
     });
+    expect(drawn, "every detail case drew").toBe(5);
+
+    // ===================== Comparison strip: 8, 12, 14, 26 ====================
+    // Diagnostic only. The same five marks per width, top to bottom in the
+    // order above, so the chosen width can be seen against its neighbours.
+    await clear();
+    await setZoom(window, "Fit Page", fitZoom);
+    paper = await readPaper();
+    for (const [index, width] of COMPARISON_WIDTHS.entries()) {
+      const top = index * 160;
+      await setSize(window, width);
+      await draw(`${String(width)}pu tap`, () => drawMouse(window, [at(10, top + 50)]));
+      await draw(`${String(width)}pu horizontal`, () =>
+        drawMouse(window, straight(at(70, top + 50), at(300, top + 50))),
+      );
+      await draw(`${String(width)}pu diagonal down`, () =>
+        drawMouse(window, straight(at(360, top + 5), at(480, top + 105))),
+      );
+      await draw(`${String(width)}pu diagonal up`, () =>
+        drawMouse(window, straight(at(540, top + 105), at(660, top + 5))),
+      );
+      await draw(`${String(width)}pu curve`, () =>
+        drawMouse(window, arc(at(780, top + 55), 50, Math.PI, Math.PI * 2)),
+      );
+    }
+
+    await window.waitForTimeout(500);
+    await window.screenshot({ path: `${OUT}/${LABEL}-comparison-8-12-14-26.png` });
+    expect(drawn, "every comparison case drew").toBe(COMPARISON_WIDTHS.length * 5);
 
     expect(consoleErrors, "no console errors while drawing the sheet").toEqual([]);
   } finally {

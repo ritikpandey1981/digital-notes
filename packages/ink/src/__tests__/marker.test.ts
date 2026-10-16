@@ -597,6 +597,55 @@ describe("marker@1 pressure", () => {
     expect(coverage(banded)).toEqual(coverage(marker(createMarkerGeometry(points, flat, 1))));
   });
 
+  it("draws the shipped Marker configuration identically at every pressure", () => {
+    // `marker-felt` resolves neither response, so a pen pressed lightly and a
+    // pen pressed hard must leave the same mark, and so must a mouse. This is
+    // the pin for that, and it is deliberately the whole geometry rather than
+    // the hit radii: a configuration that leaked pressure into the swath while
+    // leaving the footprint alone would pass the weaker check.
+    //
+    // The configuration here is the preset's own -- twelve page units, 0.9
+    // opacity, 0.22 average smoothing, both responses off -- which
+    // `marker-preset.test.ts` pins from the catalogue side. Together the two
+    // say that what ships is pressure-neutral; separately, neither does.
+    const felt = markerBrush({ size: 12, opacity: 0.9, smoothing: 0.22 });
+    expect(felt.dynamics.pressureSize.enabled).toBe(false);
+    expect(felt.dynamics.pressureOpacity.enabled).toBe(false);
+
+    const curve = (progress: number) => ({
+      x: 70 + progress * 200,
+      y: 150 - Math.sin(progress * Math.PI) * 55,
+    });
+    const at = (pressure: number): StrokePoint[] => {
+      const points: StrokePoint[] = [];
+      for (let index = 0; index < 90; index += 1) {
+        const t = index / 89;
+        const where = curve(t);
+        points.push(processed({ ...sample(where.x, where.y, index, pressure) }));
+      }
+      return points;
+    };
+
+    const reference = marker(createMarkerGeometry(at(0.15), felt, 1));
+    const referenceDigest = digest(reference);
+    const referenceCoverage = coverage(reference);
+    for (const pressure of [0.5, 0.95]) {
+      const geometry = marker(createMarkerGeometry(at(pressure), felt, 1));
+      expect(digest(geometry), `pen at ${String(pressure)}`).toBe(referenceDigest);
+      expect(coverage(geometry), `pen at ${String(pressure)}`).toEqual(referenceCoverage);
+    }
+
+    // And a mouse, which arrives with a synthetic 0.5 and a rule of its own.
+    const mouse = resolveBrushForPointerType(felt, "mouse");
+    const mouseGeometry = marker(createMarkerGeometry(at(0.5), mouse, 1));
+    expect(digest(mouseGeometry)).toBe(referenceDigest);
+    expect(coverage(mouseGeometry)).toEqual(referenceCoverage);
+
+    // One band at the preset's own opacity, whatever the hand did.
+    expect(reference.bands).toHaveLength(1);
+    expect(reference.bands[0]?.alpha).toBeCloseTo(0.9, 6);
+  });
+
   it("gives a mouse the Marker exactly as configured, still as marker@1", () => {
     const configured = markerBrush({
       pressureSize: { enabled: true, minimumFactor: 0.6, maximumFactor: 1.4, curve: LINEAR },

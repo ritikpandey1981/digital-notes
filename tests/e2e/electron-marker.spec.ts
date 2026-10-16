@@ -83,15 +83,25 @@ async function paintedCells(
   }, region);
 }
 
-async function strokeBrushes(
-  window: Page,
-): Promise<readonly { presetId: string; rendererKind: string; family: string }[]> {
+interface StrokeBrush {
+  readonly presetId: string;
+  readonly rendererKind: string;
+  readonly family: string;
+  readonly size: number;
+}
+
+async function strokeBrushes(window: Page): Promise<readonly StrokeBrush[]> {
   return window.evaluate(() => {
     const raw =
       document
         .querySelector('[data-testid="canvas-surface"]')
         ?.getAttribute("data-document-stroke-brushes") ?? "[]";
-    return JSON.parse(raw) as { presetId: string; rendererKind: string; family: string }[];
+    return JSON.parse(raw) as {
+      presetId: string;
+      rendererKind: string;
+      family: string;
+      size: number;
+    }[];
   });
 }
 
@@ -117,6 +127,14 @@ test("draws with Marker through the ordinary slot, colour and input path", async
     await expect(surface).toHaveAttribute("data-drawing-brush-family", "marker");
     await expect(surface).toHaveAttribute("data-drawing-preset-id", "marker-felt");
     await expect(markerSlot).toHaveAttribute("data-slot-glyph", "brush");
+    // Twelve page units, which the visual review chose over the eight the
+    // preset carried as a round line. Asserted where a person reads it rather
+    // than only in the catalogue, because the rail is what the slot resolved.
+    await expect(
+      window
+        .getByTestId("drawing-property-rail")
+        .locator('button[data-property-key="strokeWidth"]'),
+    ).toHaveAttribute("data-property-value", "12");
 
     // 2. Draw. The live renderer names the new strategy while the stroke is
     //    still in progress, which is the wiring this spec exists to prove.
@@ -155,6 +173,9 @@ test("draws with Marker through the ordinary slot, colour and input path", async
     expect(brushes[0]!.rendererKind).toBe("marker");
     expect(brushes[0]!.presetId).toBe("marker-felt");
     expect(brushes[0]!.family).toBe("marker");
+    // And the width reached the stroke, which is the only form of it that
+    // outlives the session.
+    expect(brushes[0]!.size).toBe(12);
 
     // 5. Undo and redo keep the strategy, so the document round-trips through
     //    History without reinterpreting what drew the mark.
