@@ -367,14 +367,18 @@ test("draws the Marker inspection sheet", async () => {
       await draw(`${String(width)}pu horizontal`, () =>
         drawMouse(window, straight(at(70, top + 50), at(300, top + 50))),
       );
+      // Exactly forty-five degrees, both of them, because the whole point of
+      // the strip is the contrast between drawing along the nib and across it
+      // and those are the two directions that reach it. A diagonal that is
+      // merely diagonal lands somewhere in between and understates the brush.
       await draw(`${String(width)}pu diagonal down`, () =>
-        drawMouse(window, straight(at(360, top + 5), at(480, top + 105))),
+        drawMouse(window, straight(at(360, top), at(470, top + 110))),
       );
       await draw(`${String(width)}pu diagonal up`, () =>
-        drawMouse(window, straight(at(540, top + 105), at(660, top + 5))),
+        drawMouse(window, straight(at(530, top + 110), at(640, top))),
       );
       await draw(`${String(width)}pu curve`, () =>
-        drawMouse(window, arc(at(780, top + 55), 50, Math.PI, Math.PI * 2)),
+        drawMouse(window, arc(at(760, top + 55), 50, Math.PI, Math.PI * 2)),
       );
     }
 
