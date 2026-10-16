@@ -1044,6 +1044,14 @@ per-object command producing an ordinary History entry, and it is undoable.
 
 ## 26. Catalogue mapping
 
+> **Audited in E6A.** The per-row notes below were written before four of the
+> six strategies existed. What the catalogue actually contains, what each of the
+> ten presets should render with, and the plan for getting there are in
+> [`brush-catalogue-e6.md`](brush-catalogue-e6.md). Two things that table cannot
+> show: the forty-five entries are *library identities* carrying no
+> configuration, backed by nine distinct presets; and the one preset no modern
+> engine can serve honestly is the highlighter, which needs multiply.
+
 Forty-five identities, nine backing presets, and a target of **four** strategies plus two
 frozen legacy entries. No strategy is created to serve a name.
 

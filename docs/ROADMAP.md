@@ -200,8 +200,20 @@ measured quantities, with four independent paths asserted against the frozen val
 against each other. The strategy roster now reads six of six, every shipped strategy naming a
 gate that pins what it draws. Rule in D-051.
 
-**Next: E6 — catalogue mapping.** `marker-broad` and the rest of the Marker library identities
-are still on `centerline@1`; mapping them is the catalogue phase's, not a brush phase's.
+**E6A — the catalogue audited, nothing migrated.** Ten presets carry durable configuration;
+forty-five library identities carry none and point at nine of them, so the catalogue offers
+forty-five names and nine distinct marks. Four presets have a modern engine that fits them
+better than what they have — `pen-fineliner` to `technical-pen@1`, `marker-broad` to `marker@1`,
+`pencil-2b` and `pencil-4b` to `pencil@1` — which would take the four engines from 47% to 93% of
+the library. `pencil-mechanical` is a genuine fork between a clean fine line and thin graphite.
+The one preset no modern engine serves honestly is the highlighter: it needs multiply, and
+nothing composites anything but source-over. No migration is low enough risk to ship unlooked
+at, so the next step is five sheets rather than five edits. Plan, counts and E6B steps in
+[`design/brush-catalogue-e6.md`](design/brush-catalogue-e6.md).
+
+**Next: E6 visual prototypes**, then the migrations the sheets approve. The larger win after
+that is not a strategy at all — nine marks under forty-five labels is preset work, and the
+configurable surface it needs already exists.
 
 Remaining:
 
