@@ -31,12 +31,18 @@ import type { StrokePoint, StrokePointInput } from "../types";
 /**
  * What `marker@1` draws, stated as things that can fail.
  *
- * The appearance is **not frozen**: it is awaiting review, and nothing here
- * pins a pixel. What is settled are the properties a later visual decision must
- * not quietly break -- that the same samples give the same geometry, that a
+ * This is the *why*: that the same samples give the same geometry, that a
  * terminal is a whole nib rather than a taper, that the mark is a function of
  * the path and not of how many events described it, and that one stroke is one
- * coverage mask however often it crosses itself.
+ * coverage mask however often it crosses itself. Nothing here pins a number a
+ * person chose, which is deliberate -- these are the properties any proposed
+ * Marker has to have, and they are the gate on whether a change is acceptable
+ * at all.
+ *
+ * The appearance itself is frozen, and the absolute values live in
+ * [`marker-visual-freeze.test.ts`](marker-visual-freeze.test.ts). Every claim
+ * below would still hold if a change moved the whole swath by a tenth of a
+ * unit; that file is what notices.
  */
 
 const LINEAR = Object.freeze({ kind: "linear" as const, exponent: 1 });

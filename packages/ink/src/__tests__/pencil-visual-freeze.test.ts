@@ -609,30 +609,29 @@ describe("the frozen strategy suite", () => {
     // A strategy may not ship without something in this list. The expectation
     // names the file that pins it, so a failure here says which strategy
     // arrived -- or which gate went missing -- rather than only that a count
-    // changed.
+    // changed. A newly registered strategy resolves to `UNGATED` and fails on
+    // sight, which is the point: shipping a brush and pinning what it draws are
+    // one decision, not two.
     //
-    // `marker@1` is deliberately the one entry that does not name a freeze. It
-    // is registered and reachable from a preset, but its appearance is awaiting
-    // review, and pinning pixels before anyone has approved them would freeze a
-    // candidate rather than a decision. What gates it meanwhile is determinism
-    // and shape -- the same geometry from the same samples, a complete nib at
-    // every terminal, and no dependence on event density. The phase that
-    // approves the appearance replaces this entry with a real freeze, and this
-    // expectation is what will fail until it does.
+    // Every shipped strategy now names a freeze. `marker@1` was the one entry
+    // that did not, while its appearance was a candidate awaiting review; that
+    // review happened, the answer was yes, and
+    // [`marker-visual-freeze.test.ts`](marker-visual-freeze.test.ts) is what
+    // replaced the placeholder.
     const gates: Readonly<Record<string, string>> = Object.freeze({
       "centerline@1": "legacy-strategy-freeze.test.ts",
       "outline@1": "legacy-strategy-freeze.test.ts",
       "technical-pen@1": "engine-strategy-freeze.test.ts",
       "pressure-pen@1": "engine-strategy-freeze.test.ts",
       "pencil@1": "engine-strategy-freeze.test.ts + pencil-visual-freeze.test.ts",
-      "marker@1": "marker.test.ts (determinism and shape; VISUALS NOT YET FROZEN)",
+      "marker@1": "marker-visual-freeze.test.ts",
     });
     const roster = supportedBrushStrategies().map(
       (identity) => `${identity} -> ${gates[identity] ?? "UNGATED"}`,
     );
     expect(roster).toEqual([
       "centerline@1 -> legacy-strategy-freeze.test.ts",
-      "marker@1 -> marker.test.ts (determinism and shape; VISUALS NOT YET FROZEN)",
+      "marker@1 -> marker-visual-freeze.test.ts",
       "outline@1 -> legacy-strategy-freeze.test.ts",
       "pencil@1 -> engine-strategy-freeze.test.ts + pencil-visual-freeze.test.ts",
       "pressure-pen@1 -> engine-strategy-freeze.test.ts",

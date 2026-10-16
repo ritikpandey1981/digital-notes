@@ -249,6 +249,11 @@ describe("durable brush strategy decoding", () => {
     expect(stroke.brush.renderer).toEqual({ version: 1, kind: "marker" });
     expect(stroke.brush.presetId).toBe("marker-felt");
     expect(stroke.brush.family).toBe("marker");
+    // Eight, although the catalogue's `marker-felt` is twelve now. A saved
+    // stroke carries the brush it was drawn with, so retuning a preset cannot
+    // reach back into artwork -- which is the whole reason the snapshot is in
+    // the file rather than a preset id to look up.
+    expect(stroke.brush.size).toBe(8);
 
     // The nib is reproduced from the strategy version, not read out of the
     // file: two independent decodes of the same bytes give the same swath.
