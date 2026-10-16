@@ -1248,6 +1248,55 @@ same page.
 
 **Consequence.** The strategy costs one fill of one contour at every length and width measured,
 0.022 ms a frame of live evaluation at five thousand samples, and no cache of any kind. What it
-does not settle is what it should look like: the appearance is a candidate, the roster gate in
-`pencil-visual-freeze.test.ts` carries `VISUALS NOT YET FROZEN` where every other strategy names
-a freeze, and that entry is what will fail until someone approves one.
+did not settle was what it should look like; that was the next decision, and D-051 is it.
+
+## D-051 — Marker's appearance is approved, and twelve page units is part of what was approved
+
+**Status:** accepted
+
+The user drew with the production Marker and approved it, so `marker@1`'s artistic output is
+artwork's business from here. Two things were decided at once, and they are worth keeping
+apart, because only one of them is the engine's.
+
+**The nib was approved as built.** Forty-five degrees in page space, 0.42 thickness, the
+capsule, the placement spacing, the terminals, the tap, one coverage per stroke, retrace,
+accumulation between strokes, the pressure implementation, the live evaluator. Nothing in
+`packages/ink` changed in the phase that tuned the preset, and the thirteen geometry digests
+recorded before the change were identical after it. A Marker that holds the pen differently
+is `marker@2`.
+
+**The width was a product decision, and it is not part of that identity.** The migration
+deliberately moved the strategy and nothing else, so the first sheets showed what the
+*existing* preset drew: at eight page units the nib character was present -- one diagonal
+visibly wider than the other -- but the weight read as a broad pen. Twelve is the reviewed
+answer. Measured across the strip that decided it, the broad direction went from 8.5 to 12.7
+screen pixels while the narrow one barely moved, so what grew is the *contrast*, which is the
+thing a person actually sees. Opacity, smoothing, colour and both disabled responses are
+untouched. `marker-broad` stays on its legacy strategy until the catalogue phase.
+
+**Pressure neutrality is a decision too, not an omission.** `marker-felt` resolves neither
+response, so a pen at 0.15 and at 0.95 and a mouse all leave the same mark -- the conservative
+reading of what a marker physically does, and what varies on one is which way it was drawn.
+The strategy consumes both responses generically, which is tested separately, so a later
+preset can enable one without engine work.
+
+**What is pinned, and what is not.** Thirteen shapes, each able to fail differently, plus the
+two rendered scales a resized object is drawn at. Quantities as well as digests where a digest
+would hide which thing moved: the nib's four directional widths, a tap's circumradius and
+inradius, and a cap's reach past the endpoint. Four independent paths to the same value --
+committed, live stepped sample by sample, cold reconstruction, and every pressure and pointer
+type -- asserted *against* the frozen constant rather than against each other, for the reason
+D-044 gives. Not pinned: how the swath is evaluated, how placement is decided, what is cached,
+how it is painted. Those are the next phase's to change.
+
+One pin had to be measured rather than assumed. A retrace does not cover the *same* cells as
+the one-way run; it falls about eleven short, and the cause is the sampled path rather than
+the brush -- a hundred and twenty samples mirrored about the halfway point never place one at
+the turnaround. What is exactly true is stronger and is what the semantic actually claims:
+**not one cell** of the retrace falls outside what the one-way run already covered.
+
+**Consequence.** The roster reads six of six, every shipped strategy naming a gate that pins
+what it draws, and a newly registered strategy resolves to `UNGATED` and fails on sight. A
+refinement to Marker's approved appearance is `marker@2`, never an edit to a pinned digest.
+Retuning `marker-felt`'s width again is a preset change and touches none of this -- which is
+the whole reason the two decisions are recorded apart.

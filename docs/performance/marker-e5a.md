@@ -1,9 +1,17 @@
 # A marker is a shape being dragged
 
-**`marker@1` visuals are not frozen.** This records what was built and what it
-measures; the appearance is a candidate awaiting review, and the roster gate in
-`pencil-visual-freeze.test.ts` says so in the one place a later phase cannot
-miss it.
+**`marker@1` is approved and frozen.** The user drew with the production
+Marker and said yes, so what the nib leaves on the page is artwork's business
+now. The pinned values live in
+[`marker-visual-freeze.test.ts`](../../packages/ink/src/__tests__/marker-visual-freeze.test.ts),
+the rules in [D-050](../DECISIONS.md) and [D-051](../DECISIONS.md). This records
+what was built, what it measures, and how the appearance was decided.
+
+One number changed with the approval and it is not the engine's: the shipped
+`marker-felt` is **twelve page units**, not the eight it carried as a round
+line. Everything below about the nib is unchanged by that, and was unchanged by
+it at the time — the thirteen geometry digests taken before the preset edit were
+identical after it.
 
 Every other strategy in the engine makes a mark whose shape is a function of a
 radius. A marker's is not. Its nib is *oriented*, so the same brush draws broad
@@ -86,8 +94,8 @@ cross-section** so they tile along the stroke instead of overlapping. Measured:
 the same path with the response on and off covers exactly the same page, which
 is what proves the cut neither gaps nor doubles.
 
-Both shipped Marker presets resolve neither response, so in production this is
-one fill.
+`marker-felt` resolves neither response, so in production this is one fill.
+`marker-broad` is still on its legacy strategy until the catalogue phase.
 
 ## Measured
 
@@ -126,44 +134,88 @@ geometry every strategy keeps — one evaluator per live stroke, and an
 eight-entry per-stroke cache of committed geometry keyed by scale, both already
 built.
 
-## The visual question this phase does not answer
+## How the width was decided
 
-The engine draws a chisel. Whether `marker-felt`'s shipped **size 8** is a
-marker is a different question, and it belongs to whoever approves the
-appearance.
+The engine draws a chisel. Whether the *shipped preset* was a marker was a
+different question, and it was decided by looking.
 
-The migration deliberately changed the strategy and nothing else: the preset's
-width, opacity and smoothing are the ones it already had, so the sheets show
-exactly what the existing preset now draws rather than what a retuned one would.
-At 8 page units the mark reads closer to a broad pen than to a marker — the nib
-character is there and one diagonal is visibly wider than the other, but the
-overall weight is light. At 26 page units it is unmistakable: solid swaths,
-angled terminals, strong thick-to-thin by direction.
+The migration deliberately changed the strategy and nothing else, so the first
+sheets showed exactly what the existing preset now drew rather than what a
+retuned one would. At eight page units the nib character was there — one
+diagonal visibly wider than the other — but the weight read as a broad pen.
+Twelve is the reviewed answer. Measured off the comparison strip, in screen
+pixels at 108% zoom:
 
-Both sheets are in the artifacts below so the comparison is one glance rather
-than an argument. Changing the default is a product decision about what people's
-Marker slot draws, not an engine one.
+| size | tap chord | horizontal / vertical | along the nib | across the nib | ratio |
+| --- | --- | --- | --- | --- | --- |
+| 8 | 4 | 8.0 | 4.2 | 8.5 | 0.50 |
+| **12** | **8** | **10.0** | **5.7** | **12.7** | **0.44** |
+| 14 | 9 | 12.0 | 6.4 | 15.6 | 0.41 |
+| 26 | 16 | 24.0 | 12.0 | 28.3 | 0.43 |
 
-Pressure is the other open question, and it is already answered the conservative
-way: `marker-felt` resolves neither response, so the sheet's pen rows at 0.15,
-0.5 and 0.95 are identical to each other and to the mouse row *by design*. A
-marker barely responds to pressure; what varies is which way you drew. The
-strategy consumes both responses generically, so enabling one is a preset
-change rather than engine work.
+What the width bought is **contrast**: the broad direction grew by half again
+while the narrow one barely moved. The ratios cluster on the engine's 0.42; the
+spread is pixel quantisation at the thin end, not the brush. The same quantities
+read off the geometry rather than the screen are 9.961463 axis-aligned, 5.04
+along the nib and exactly 12 across it, and those three are pinned.
+
+An early version of that strip understated the brush and had to be corrected:
+its diagonals were 120 by 100 rather than square, so neither of them was the
+extreme, and the measured ratio came out between 0.46 and 0.55 depending on the
+row. Close to forty-five degrees is not forty-five degrees in the one picture
+whose job is to show the difference.
+
+Pressure was the other question, and the conservative answer was kept:
+`marker-felt` resolves neither response, so the pen rows at 0.15, 0.5 and 0.95
+are identical to each other and to the mouse row *by design*. A marker barely
+responds to pressure; what varies is which way you drew. The strategy consumes
+both responses generically — tested separately — so enabling one later is a
+preset change rather than engine work.
+
+## What the sheet measured
+
+Read off the production renderer's own pixels rather than asserted by eye. Ink
+is `#1f2937` at 0.9 on this paper, so one coat predicts luminance 61.3 and two
+predict 42.0.
+
+| | |
+| --- | --- |
+| a plain run, 1060 px long | 10–11 ink rows and darkness 61.0 at every x sampled |
+| a figure-eight's crossings | 61.0 — the same as its own arm, no two-coat pixel anywhere |
+| a retrace, out and back | 61.0, the luminance profile of a plain line |
+| two separate strokes crossing | arm 61.0, crossing 41.9 |
+| nine shading rows closer than the mark is wide | lightest pixel inside the block 61.0, so no paper shows through; profile alternates 61 / 42 with no third level |
+| mouse vs pen at 0.15, 0.50, 0.95 | 0 of 431 columns differ, identical darkness |
+| a loop, 180 radial scans | band 5.5–14.0 px as direction turns, 0 broken scans, interior clean |
+| a tap | an 8 px angled chord, which is the capsule's own horizontal section |
+
+The two crossing numbers are the accumulation semantics in their most direct
+form: within a stroke the page never takes a second coat, between strokes it
+takes exactly one more.
 
 ## Artifacts
 
 Regenerate with `FOLIO_MARKER_SHEET=1 MARKER_LABEL=<name>`; they land in
 `test-results/marker/`, which is gitignored.
 
-- `<label>-sheet-default-8pu.png` — taps, four orientations, short and long
-  runs, an arc, a tight turn, a loop, a zigzag, three crossings and seven rows
-  of dense shading, at the preset's own width
-- `<label>-sheet-broad-26pu.png` — a mouse row and three pen rows at 0.15, 0.5
-  and 0.95 pressure, a broad arc, a broad zigzag, a tap and two opposed
-  diagonals, at 26 page units
-- `<label>-detail-broad-diagonals.png` — a close look at the two diagonals
-  crossing, where the nib's edge and the between-stroke darkening are legible
+- `<label>-sheet-12pu.png` — at the preset's own width: three taps, a short run,
+  the four orientations, a curve, a corner, a long run, a U-turn, a loop, a
+  zigzag, a self-crossing figure-eight, a retrace, two separate strokes crossing,
+  nine rows of dense shading, and a mouse row above three pen rows
+- `<label>-detail-12pu.png` — the same width drawn at 300%, where the chisel
+  terminals and the nib's edge are legible; zooming also asks the strategy a
+  real question, since the committed geometry is rebuilt at the new scale
+- `<label>-comparison-8-12-14-26.png` — five marks per width, top to bottom,
+  with both diagonals squared to forty-five degrees. Diagnostic: it shows what
+  the chosen width was chosen against
+
+How deterministic, measured rather than assumed: two runs of the same build give
+byte-identical detail and comparison images, and sheets differing on 143 of 1.6
+million pixels by at most 11 of 255 — the brush cursor ring at the last point
+drawn, and a hover state on the colour rail. No mark differs. Nothing compares
+screenshots today, so that costs nothing; it is written down because the first
+person who tries to will want to know.
 
 The sheet asserts that every case drew and that the console stayed quiet. It
-asserts nothing about a pixel, because there is nothing to assert yet.
+asserts nothing about a pixel; the pixels are pinned in the freeze suite
+instead, where a failure can say which shape moved.

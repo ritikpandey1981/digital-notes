@@ -255,7 +255,7 @@ validated, and already the field the dispatcher reads. Use it.
 type BrushStrategyId =
   | "centerline"      // frozen legacy
   | "outline"         // frozen legacy
-  | "technical-pen";  // pressure-pen and pencil have since shipped; marker joins next
+  | "technical-pen";  // pressure-pen, pencil and marker have all since shipped
 
 interface BrushRendererDefinition {
   readonly version: number;        // widened from the literal 1
@@ -678,7 +678,7 @@ linear across fills. An early Pencil that emitted a contour per mark rather than
 measured 195 ms a frame at a *quarter* of that length, and killed the renderer at full
 length.
 
-Two rules follow, and Marker will need both:
+Two rules follow for any strategy that emits a stream of marks:
 
 1. **Merge before you emit.** Marks that overlap along the stroke are one contour, not
    many. This is a property of the geometry, not an optimization of the painter: the
@@ -1056,8 +1056,8 @@ frozen legacy entries. No strategy is created to serve a name.
 | HB Pencil, Hard Pencil, Layout Pencil, Blueline Pencil | `pencil-hb` | **`pencil@1`, shipped** | hardness, grain strength, coverage, default colour | Blueline's non-black default is a preset default, not a strategy |
 | Soft Pencil, 2B Pencil, Sketch Pencil, Contour Pencil | `pencil-2b` | `pencil` | hardness, grain, pressure range | |
 | 4B Pencil, 6B Pencil, Shading Pencil, Broad Lead | `pencil-4b` | `pencil` | hardness, grain, size, edge roughness | tilt shading is deferred; these are the presets that will want it first |
-| Fine Marker, Felt Marker, Bullet Marker, Sketch Marker, Layout Marker, Slim Marker | `marker-felt` | `marker` | round tip, size, flow | |
-| Broad Marker, Chisel Marker, Wide Marker, Studio Marker, Block Marker, Flat Marker | `marker-broad` | `marker` | **chisel** tip: width, height, angle; flow | tip angle fixed to the preset, or driven by azimuth? needs a product decision |
+| Fine Marker, Felt Marker, Bullet Marker, Sketch Marker, Layout Marker, Slim Marker | `marker-felt` | **`marker@1`, shipped** | size | the tip is an oriented chisel, not round: its angle and proportions are constants of the strategy version and reach no file. Twelve page units by product decision (D-051) |
+| Broad Marker, Chisel Marker, Wide Marker, Studio Marker, Block Marker, Flat Marker | `marker-broad` | `marker` | size | still on `centerline@1` pending E6. The angle question is answered for `marker@1`: fixed in page space, by the strategy version, never per preset and never from azimuth |
 | *(no library identity)* | `highlighter-default` | `marker` | very low alpha, high flow | highlighter wants multiplicative overlap, which Folio's single-alpha compositing does not express today |
 | *(existing artwork only)* | — | `centerline@1`, `outline@1` | frozen | none |
 
@@ -1069,8 +1069,12 @@ Marker terminology, since the four words are used loosely everywhere:
   tip's own density profile. Independent of both of the above.
 - **compositing** — how overlapping marks combine. Folio composites source-over with one
   alpha today, and within a single stroke `outline@1` deliberately fills once so joins do
-  not accumulate. Whether two *separate* marker strokes should darken where they cross is
-  an unanswered product question, not an engine detail.
+  not accumulate. Whether two *separate* marker strokes darken where they cross was an open
+  product question; `marker@1` answers it yes, and neither half of that needed a rule. One
+  stroke is one closed contour filled once under the nonzero winding rule, so nothing it
+  does to itself can deposit twice; two strokes are two fills, so they composite. Measured
+  on the production renderer: one coat reads 61 against this paper, two read 42, which is
+  ordinary source-over twice and no third level anywhere.
 
 ## 27. Phase scope
 
@@ -1413,12 +1417,68 @@ seconds on purpose. A 5 000-sample stroke encodes to 5.6 MB of JSON.
 
 `pencil@1`'s freeze digests are unmoved; no production Pencil code was touched.
 
-### Later — Marker
+### E5A — Marker
 
-Durable: tip profile (round or chisel), tip width, height and angle, flow, coverage,
-spacing. Derived: the stamp stream and its alpha accumulation. The within-stroke rule is
-already settled by `outline@1`'s precedent — apply stroke opacity once, so a stroke does not
-darken at its own joins. Between separate strokes is the open question in §26.
+Shipped, and not as the design sketched above it. The plan here was a stamp stream with
+flow, coverage and spacing as durable fields; what shipped has none of them and persists
+nothing about the nib at all.
+
+The nib is a **capsule** — a rectangle with semicircular ends — at a fixed forty-five degrees
+in page space, 0.42 of the brush's width thick. That choice is load-bearing rather than
+aesthetic: a capsule's support function is closed form, `centre + a·sign(u·n)·u + r·n`, so the
+swept boundary is **traced** — the two tangent lines per span, the support arc at each vertex,
+the nib's own outline at each terminal — instead of being a union of stamps that has to be
+computed. The two rules above exist because a stamp stream must earn its contour count;
+Marker never enters that regime. One contour per fill, measured at 220, 1000 and 5000 samples
+and at 2, 8, 16 and 32 page units. There is nothing to batch and no batch size to tune.
+
+Orientation does not follow the tangent, deliberately. A nib that rotates through a turn is a
+calligraphy brush: its swept boundary folds and corners go unstable. Fixed, a corner is two
+slabs meeting, and thick-to-thin becomes a property of which way the artist drew.
+
+`formatVersion` is still 1 and no durable field was added — not `markerTipAngle`, not
+`markerAspectRatio`, not `markerHardness`, not `markerTextureId`. The angle and the
+proportions are constants of the strategy version, so a Marker that holds the pen differently
+is `marker@2`. A serialization gate asserts none of those names reaches a `.folio`.
+
+Costs: committed rebuild 0.40 ms at 220 samples, 1.48 ms at 1000, 3.45 ms at 5000; live
+evaluation over 5000 samples at twelve a frame costs 0.027 ms in the first frames and 0.022 ms
+in the last, so the tail is bounded by the smoothing window rather than by the stroke. No
+cache of any kind — no material runtime, no tile raster, no coverage mask. Every existing
+frozen digest is unmoved. See [D-050](../DECISIONS.md) and
+[`marker-e5a.md`](../performance/marker-e5a.md).
+
+### E5B — The Marker visual freeze
+
+The user drew with the production Marker and approved it, so `marker@1`'s artistic output is
+frozen from here. One product decision came with the approval: `marker-felt` is **twelve page
+units**, not the eight it carried as a round line. The migration had deliberately changed the
+strategy and nothing else, so the first sheets showed what the existing preset drew, and at
+eight the nib character was present but the weight read as a broad pen. Across the comparison
+strip the broad direction grew from 8.5 to 12.7 screen pixels while the narrow one barely
+moved: what the width bought is contrast. Opacity, smoothing, colour and both disabled
+pressure responses are untouched, and no engine constant moved — the thirteen geometry digests
+taken before the preset edit were identical after it.
+
+Pressure is neutral by design and is now pinned as such: a pen at 0.15, at 0.50 and at 0.95
+and a mouse all resolve to one digest. Strategy-level coverage that `marker@1` *can* consume
+either response when a snapshot enables one is kept separately, because the preset is neutral
+and the engine is not.
+
+The freeze pins thirteen shapes and the two rendered scales, with quantities as well as
+digests where a digest would hide which thing moved: the nib's four directional widths, a
+tap's circumradius and inradius, a cap's reach past the endpoint. Four paths — committed,
+live stepped sample by sample, cold reconstruction, and every pressure and pointer type — are
+asserted against the frozen constant rather than against each other, for the reason D-044
+gives. Not frozen: evaluation, placement, caching, painting.
+
+One pin had to be measured rather than assumed. A retrace does not cover the same cells as
+the one-way run — it falls about eleven short, because a hundred and twenty samples mirrored
+about the halfway point never place one at the turnaround — so the pin is the thing that is
+exactly true and is what the semantic claims: not one cell of the retrace falls outside what
+the one-way run already covered.
+
+The roster now reads six of six. See [D-051](../DECISIONS.md).
 
 ## 28. E2 performance acceptance
 

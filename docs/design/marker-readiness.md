@@ -1,12 +1,14 @@
 # What Marker will find already built
 
-> **Superseded in part by E5A.** `marker@1` now exists: it is registered, the
-> engine draws it, and `marker-felt` resolves to it. The readiness answers below
-> held up, and the one worth re-reading is the placement note — what Marker
-> actually reused is the *idea* of distance-based placement rather than
-> `placement.ts` itself, because a swept capsule traces its own boundary from a
-> closed-form support function and never needs a stream of tips at all. See
-> [`../performance/marker-e5a.md`](../performance/marker-e5a.md) and D-050.
+> **Superseded in part by E5A and E5B.** `marker@1` exists, is registered, is
+> drawn by the engine, and is now approved and frozen; `marker-felt` resolves to
+> it at twelve page units. The readiness answers below held up, and the one
+> worth re-reading is the placement note — what Marker actually reused is the
+> *idea* of distance-based placement rather than `placement.ts` itself, because
+> a swept capsule traces its own boundary from a closed-form support function
+> and never needs a stream of tips at all. See
+> [`../performance/marker-e5a.md`](../performance/marker-e5a.md), D-050 and
+> D-051.
 
 A readiness audit, not a design. It answers the architectural questions E5 has
 to answer anyway, and records what was cleaned up before it so that none of the

@@ -12,8 +12,8 @@ import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
  * name the new strategy; and that nothing in the editor had to learn what a nib
  * is.
  *
- * It does not judge the appearance. That is what the inspection sheet is for,
- * and the appearance is not frozen.
+ * It does not judge the appearance. The inspection sheet was for that, and the
+ * appearance is settled now: `marker-visual-freeze.test.ts` pins it.
  */
 
 const REPOSITORY_ROOT = process.cwd();

@@ -613,9 +613,9 @@ describe("the frozen strategy suite", () => {
     // sight, which is the point: shipping a brush and pinning what it draws are
     // one decision, not two.
     //
-    // Every shipped strategy now names a freeze. `marker@1` was the one entry
-    // that did not, while its appearance was a candidate awaiting review; that
-    // review happened, the answer was yes, and
+    // Every shipped strategy names a freeze. `marker@1` was the one entry that
+    // did not, while its appearance was still a candidate; it was reviewed, the
+    // answer was yes, and
     // [`marker-visual-freeze.test.ts`](marker-visual-freeze.test.ts) is what
     // replaced the placeholder.
     const gates: Readonly<Record<string, string>> = Object.freeze({

@@ -18,7 +18,9 @@ import { activateDockSlot, openSlotToolOptions } from "./dock-helpers";
  *
  * This exists to be *looked at*. Nothing here asserts a pixel: what it asserts
  * is that every case drew something and that the console stayed quiet. The
- * decision the sheet exists for is a person's.
+ * decision it was built for has been taken -- `marker-felt` at twelve page
+ * units, approved, pinned in `marker-visual-freeze.test.ts` -- and the sheet
+ * stays because the next appearance question will want the same picture.
  *
  * Three artifacts, which are the three questions:
  *
